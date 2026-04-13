@@ -1,0 +1,10 @@
+node_modules/
+dist/
+apps/web/dist/
+apps/api/dist/
+apps/api/data/*.db
+*.log
+release/
+.claude/
+CLAUDE.md
+Design.md
