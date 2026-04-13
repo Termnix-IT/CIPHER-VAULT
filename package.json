@@ -1,0 +1,22 @@
+{
+  "name": "password-manager",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "scripts": {
+    "dev": "concurrently -n api,web -c yellow,cyan \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:web": "npm --workspace apps/web run dev",
+    "dev:api": "npm --workspace apps/api run dev",
+    "build:web": "npm --workspace apps/web run build",
+    "build:api": "npm --workspace apps/api run build",
+    "build": "npm run build:web && npm run build:api",
+    "start": "npm --workspace apps/api run start",
+    "package": "npm run build && pwsh -File scripts/package-release.ps1"
+  }
+}
