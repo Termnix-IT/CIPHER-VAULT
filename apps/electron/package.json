@@ -1,0 +1,20 @@
+{
+  "name": "@password-manager/electron",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/apps/electron/src/main.js",
+  "dependencies": {
+    "@password-manager/shared": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.8.7",
+    "electron": "^41.2.1",
+    "typescript": "^5.6.3"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/prepare-preload.mjs",
+    "dev": "npm run build && electron dist/apps/electron/src/main.js",
+    "start": "electron dist/apps/electron/src/main.js"
+  }
+}

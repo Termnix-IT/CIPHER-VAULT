@@ -65,6 +65,19 @@ npm run dev:web   # フロントエンドのみ
 npm run dev:api   # API のみ（ビルド→実行）
 ```
 
+### Electron デスクトップ起動
+
+```bash
+# 事前に一度だけ Electron 依存をインストール
+npm install
+
+# Electron + Vite で起動
+npm run dev:desktop
+```
+
+Electron 版は `preload + IPC` 経由でローカル処理へ直接接続します。
+開発時は `apps/api/dist` を参照するため、`dev:desktop` / `build:desktop` を使ってください。
+
 ---
 
 ## ビルド・配布
@@ -77,6 +90,15 @@ npm run build
 npm run start
 # → http://localhost:3001 を開く
 
+# Electron 向けビルド
+npm run build:desktop
+
+# ビルド済み Electron を起動
+npm run start:desktop
+
+# Windows 向けインストーラー / portable を作成
+npm run package:desktop
+
 # 配布用パッケージを作成
 npm run package
 # → release/ フォルダが生成される
@@ -84,6 +106,22 @@ npm run package
 
 `release/` フォルダを丸ごと渡し、受け取り側は `start.bat` を実行します。
 初回起動時に必要なランタイム依存を自動インストールします。
+
+`npm run package:desktop` を実行すると `dist-desktop/` に Windows 用の `NSIS installer` と `portable exe` が出力されます。
+成果物名は `-setup` と `-portable` で分かれます。
+配布用アイコンは `build/icon.ico` を参照します。
+実行中ウィンドウのアイコンは `build/icon.png` を参照します。
+
+### `setup` と `portable` の違い
+
+- `setup` はインストーラー版です。通常利用のユーザー向けで、ショートカット作成やインストール先管理がしやすいです。
+- `portable` はインストール不要の実行版です。すぐ試したい場合や、インストールしにくい環境で便利です。
+- このアプリでは、どちらもデータ保存先は Electron の `userData` 配下です。`portable` でも exe の横に DB を置く方式ではありません。
+
+### 配布方法
+
+- OSS として公開する場合、`setup` と `portable` を `GitHub Releases` や公開ダウンロードページに載せて配布する形で問題ありません。
+- 一般ユーザー向けには `setup` を主導線にし、`portable` は補助的な選択肢として併記するのが分かりやすいです。
 
 ---
 
@@ -99,6 +137,9 @@ PasswordManeger/
 │   │       ├── routes/       # HTTP ルーティング
 │   │       ├── services/     # ビジネスロジック（暗号化・エントリ管理等）
 │   │       └── server.ts     # エントリーポイント
+│   ├── electron/     # Electron メインプロセス
+│   │   └── src/
+│   │       └── main.ts
 │   └── web/          # React フロントエンド（ポート 5173）
 │       └── src/
 │           ├── components/   # BinaryRain 等の共通コンポーネント
@@ -123,3 +164,5 @@ PasswordManeger/
 ---
 
 詳細な設計については [Design.md](./Design.md) を参照してください。
+
+Desktop 起動手順とパッケージ化手順は [docs/デスクトップ起動・配布手順書.md](C:/Users/lugep/デスクトップ/Google%20Drive/ProjectFolder/PasswordManeger/docs/デスクトップ起動・配布手順書.md:1) を参照してください。

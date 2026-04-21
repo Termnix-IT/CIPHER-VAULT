@@ -1,4 +1,4 @@
-import type { VaultMetadataRecord } from "../../../../packages/shared/src/types.js";
+import type { VaultMetadataRecord } from "@password-manager/shared/types";
 import { database } from "../db/database.js";
 
 type VaultMetadataRow = {

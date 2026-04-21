@@ -1,4 +1,4 @@
-import type { VaultSetupPayload, VaultUnlockPayload } from "../../../../packages/shared/src/types.js";
+import type { VaultSetupPayload, VaultUnlockPayload } from "@password-manager/shared/types";
 import { HttpError } from "../lib/errors.js";
 import {
   clearActiveVaultKey,

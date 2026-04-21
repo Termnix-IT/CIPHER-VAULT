@@ -1,22 +1,75 @@
 {
   "name": "password-manager",
+  "productName": "CIPHER VAULT",
+  "description": "Local-first desktop password manager built with Electron, React, and SQLite.",
+  "author": "lugep",
   "private": true,
   "version": "0.1.0",
+  "main": "apps/electron/dist/apps/electron/src/main.js",
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
+  "dependencies": {
+    "better-sqlite3": "^12.9.0"
+  },
   "devDependencies": {
-    "concurrently": "^9.1.2"
+    "concurrently": "^9.1.2",
+    "electron-builder": "^26.0.12"
   },
   "scripts": {
-    "dev": "concurrently -n api,web -c yellow,cyan \"npm run dev:api\" \"npm run dev:web\"",
-    "dev:web": "npm --workspace apps/web run dev",
-    "dev:api": "npm --workspace apps/api run dev",
-    "build:web": "npm --workspace apps/web run build",
-    "build:api": "npm --workspace apps/api run build",
+    "dev": "npm run build:shared && concurrently -n api,web -c yellow,cyan \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:desktop": "npm run build:api && concurrently -n web,electron -c cyan,green \"npm run dev:web\" \"npm --workspace apps/electron run dev\"",
+    "dev:web": "npm run build:shared && npm --workspace apps/web run dev",
+    "dev:api": "npm run build:shared && npm --workspace apps/api run dev",
+    "build:shared": "npm --workspace packages/shared run build",
+    "build:web": "npm run build:shared && npm --workspace apps/web run build",
+    "build:api": "npm run build:shared && npm --workspace apps/api run build",
+    "build:electron": "npm run build:shared && npm --workspace apps/electron run build",
     "build": "npm run build:web && npm run build:api",
+    "build:desktop": "npm run build && npm run build:electron",
+    "package:desktop": "npm run build:desktop && electron-builder --win nsis portable",
     "start": "npm --workspace apps/api run start",
+    "start:desktop": "npm --workspace apps/electron run start",
     "package": "npm run build && pwsh -File scripts/package-release.ps1"
+  },
+  "build": {
+    "appId": "com.lugep.ciphervault",
+    "icon": "build/icon.ico",
+    "directories": {
+      "output": "dist-desktop"
+    },
+    "files": [
+      "apps/electron/dist/**/*",
+      "apps/api/dist/**/*",
+      "apps/web/dist/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/*.node",
+      "node_modules/better-sqlite3/**/*"
+    ],
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "artifactName": "${productName}-${version}-${arch}-setup.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "runAfterFinish": false,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-${arch}-portable.${ext}"
+    }
   }
 }

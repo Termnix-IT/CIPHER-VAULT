@@ -4,7 +4,7 @@ import type {
   PasswordEntryUpsertPayload,
   VaultSetupPayload,
   VaultUnlockPayload
-} from "../../../../packages/shared/src/types.js";
+} from "@password-manager/shared/types";
 import { HttpError } from "../lib/errors.js";
 import { readJsonBody } from "../lib/json.js";
 import { serveAppShell, tryServeStaticAsset } from "../lib/static.js";

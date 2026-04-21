@@ -4,8 +4,9 @@ import type {
   PasswordEntrySummary,
   PasswordEntryUpsertPayload,
   VaultStatus
-} from "../../../packages/shared/src/types";
+} from "@password-manager/shared/types";
 import {
+  copyText,
   createEntry,
   deleteEntry,
   fetchEntries,
@@ -214,7 +215,7 @@ export function App() {
 
   async function handleCopyToClipboard(value: string, label: string) {
     try {
-      await navigator.clipboard.writeText(value);
+      await copyText(value);
       setCopyMessage(`${label}をコピーしました`);
       window.setTimeout(() => {
         setCopyMessage("");
@@ -256,6 +257,7 @@ export function App() {
       <main className="app-shell">
         <div className="cipher-auth-shell">
           <p className="loading-text">&gt; 保管庫を読み込み中...</p>
+          {errorMessage ? <p className="form-error">{errorMessage}</p> : null}
         </div>
       </main>
     );

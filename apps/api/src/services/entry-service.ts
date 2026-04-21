@@ -3,7 +3,7 @@ import type {
   PasswordEntry,
   PasswordEntrySummary,
   PasswordEntryUpsertPayload
-} from "../../../../packages/shared/src/types.js";
+} from "@password-manager/shared/types";
 import { database } from "../db/database.js";
 import { HttpError } from "../lib/errors.js";
 import { decryptSecret, encryptSecret, hasActiveVaultKey } from "./crypto-service.js";
