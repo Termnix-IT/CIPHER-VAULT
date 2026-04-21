@@ -149,8 +149,8 @@ PasswordManeger/
 ├── packages/
 │   └── shared/       # 共通 TypeScript 型定義
 ├── docs/             # 設計ドキュメント
-├── scripts/          # リリーススクリプト
-└── CLAUDE.md         # Claude Code 向けガイド
+└── scripts/          # リリーススクリプト
+
 ```
 
 ---
@@ -163,6 +163,5 @@ PasswordManeger/
 
 ---
 
-詳細な設計については [Design.md](./Design.md) を参照してください。
 
 Desktop 起動手順とパッケージ化手順は [docs/デスクトップ起動・配布手順書.md](C:/Users/lugep/デスクトップ/Google%20Drive/ProjectFolder/PasswordManeger/docs/デスクトップ起動・配布手順書.md:1) を参照してください。
