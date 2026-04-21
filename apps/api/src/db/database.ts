@@ -1,33 +1,18 @@
 import Database from "better-sqlite3";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-function resolveSchemaPath() {
-  const candidates = [
-    path.resolve(__dirname, "./schema.sql"),
-    path.resolve(process.cwd(), "apps/api/src/db/schema.sql"),
-    path.resolve(process.cwd(), "src/db/schema.sql")
-  ];
-
-  const existing = candidates.find((candidate) => existsSync(candidate));
-
-  if (!existing) {
-    throw new Error("schema.sql was not found");
-  }
-
-  return existing;
-}
-
-const schemaPath = resolveSchemaPath();
 
 function resolveDataDirectory() {
+  const override = process.env.PASSWORD_MANAGER_DATA_DIR;
+
+  if (override) {
+    return path.resolve(override);
+  }
+
   const candidates = [
     path.resolve(process.cwd(), "apps/api/data"),
     path.resolve(process.cwd(), "data"),
-    path.resolve(__dirname, "../../data")
+    path.resolve(import.meta.dirname, "../../data")
   ];
 
   const existing = candidates.find((candidate) => existsSync(candidate));
@@ -44,8 +29,29 @@ if (!existsSync(dataDirectory)) {
 export const database = new Database(databasePath);
 
 export function initializeDatabase() {
-  const schema = readFileSync(schemaPath, "utf-8");
-  database.exec(schema);
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS vault_metadata (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      password_salt TEXT NOT NULL,
+      password_verifier TEXT NOT NULL,
+      kdf_params TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS password_entries (
+      id TEXT PRIMARY KEY,
+      service_name TEXT NOT NULL,
+      login_id TEXT NOT NULL,
+      encrypted_password TEXT NOT NULL,
+      encrypted_notes TEXT,
+      url TEXT,
+      tags TEXT NOT NULL,
+      group_name TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
 }
 
 initializeDatabase();

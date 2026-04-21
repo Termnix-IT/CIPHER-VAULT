@@ -57,3 +57,17 @@ export type VaultMetadataRecord = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type PasswordManagerDesktopApi = {
+  fetchVaultStatus: () => Promise<VaultStatus>;
+  setupVault: (payload: VaultSetupPayload) => Promise<VaultStatus>;
+  unlockVault: (payload: VaultUnlockPayload) => Promise<{ isUnlocked: boolean }>;
+  lockVault: () => Promise<{ isUnlocked: boolean }>;
+  fetchEntries: () => Promise<{ items: PasswordEntrySummary[] }>;
+  fetchEntry: (id: string) => Promise<PasswordEntry>;
+  createEntry: (payload: PasswordEntryUpsertPayload) => Promise<PasswordEntry>;
+  updateEntry: (id: string, payload: PasswordEntryUpsertPayload) => Promise<PasswordEntry>;
+  deleteEntry: (id: string) => Promise<{ success: boolean }>;
+  generatePassword: (options?: PasswordGenerationOptions) => Promise<PasswordGenerationResult>;
+  copyText: (value: string) => Promise<void>;
+};

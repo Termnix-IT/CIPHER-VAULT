@@ -3,6 +3,12 @@ import path from "node:path";
 import type { ServerResponse } from "node:http";
 
 function resolveWebDistPath() {
+  const overridePath = process.env.PASSWORD_MANAGER_WEB_DIST;
+
+  if (overridePath && existsSync(overridePath)) {
+    return path.resolve(overridePath);
+  }
+
   const workspacePath = path.resolve(process.cwd(), "apps/web/dist");
 
   if (existsSync(workspacePath)) {

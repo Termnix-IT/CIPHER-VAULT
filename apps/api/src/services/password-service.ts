@@ -1,5 +1,5 @@
 import { randomInt } from "node:crypto";
-import type { PasswordGenerationOptions, PasswordGenerationResult } from "../../../../packages/shared/src/types.js";
+import type { PasswordGenerationOptions, PasswordGenerationResult } from "@password-manager/shared/types";
 import { HttpError } from "../lib/errors.js";
 
 const UPPERCASE = "ABCDEFGHJKLMNPQRSTUVWXYZ";

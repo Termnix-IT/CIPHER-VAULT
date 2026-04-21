@@ -4,7 +4,7 @@ import type {
   PasswordEntry,
   PasswordEntrySummary,
   PasswordEntryUpsertPayload,
-} from "../../../../packages/shared/src/types";
+} from "@password-manager/shared/types";
 
 type VaultDashboardProps = {
   entries: PasswordEntrySummary[];

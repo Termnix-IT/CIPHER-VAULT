@@ -27,7 +27,7 @@ $releasePackageJson = @'
     "start": "node dist/apps/api/src/server.js"
   },
   "dependencies": {
-    "better-sqlite3": "^11.7.0"
+    "better-sqlite3": "^12.9.0"
   }
 }
 '@
