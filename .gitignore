@@ -10,6 +10,7 @@ packages/shared/src/*.d.ts
 *.log
 release/
 dist-desktop/
+docs/
 .claude/
 CLAUDE.md
 Design.md
