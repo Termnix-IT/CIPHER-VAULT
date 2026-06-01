@@ -1,5 +1,5 @@
 import type { FormEvent } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   PasswordEntry,
   PasswordEntrySummary,
@@ -119,15 +119,24 @@ export function VaultDashboard({
     };
   }, []);
 
-  const normalized = searchTerm.trim().toLowerCase();
-  const filteredEntries = !normalized
-    ? entries
-    : entries.filter(
-        (entry) =>
-          entry.serviceName.toLowerCase().includes(normalized) ||
-          entry.loginId.toLowerCase().includes(normalized) ||
-          entry.tags.some((tag) => tag.toLowerCase().includes(normalized))
+  const normalizedSearchTerm = searchTerm.trim().toLocaleLowerCase("ja-JP");
+  const filteredEntries = useMemo(() => {
+    if (!normalizedSearchTerm) return entries;
+
+    return entries.filter((entry) => {
+      const searchableFields = [
+        entry.serviceName,
+        entry.loginId,
+        entry.group ?? "",
+        ...entry.tags,
+      ];
+
+      return searchableFields.some((field) =>
+        field.toLocaleLowerCase("ja-JP").includes(normalizedSearchTerm)
       );
+    });
+  }, [entries, normalizedSearchTerm]);
+  const isSearching = normalizedSearchTerm.length > 0;
 
   // Group entries by group field (only used when isGroupedView and no search)
   const groupedEntries = (() => {
@@ -284,11 +293,27 @@ export function VaultDashboard({
               <input
                 className="search-input"
                 type="search"
-                placeholder="サービス名・ID・タグで検索_"
+                placeholder="サービス名・ID・グループ・タグで検索_"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
+              {isSearching ? (
+                <button
+                  className="search-clear-btn"
+                  type="button"
+                  onClick={() => setSearchTerm("")}
+                  aria-label="検索条件をクリア"
+                  title="検索条件をクリア"
+                >
+                  ×
+                </button>
+              ) : null}
             </div>
+            {isSearching ? (
+              <p className="search-result-count">
+                {filteredEntries.length} / {entries.length} 件
+              </p>
+            ) : null}
           </div>
 
           <div className="sidebar-actions">
@@ -422,12 +447,15 @@ export function VaultDashboard({
 
             {!isLoading && filteredEntries.length === 0 ? (
               <p className="empty-state-text">
-                &gt; エントリが見つかりません。上から追加してください。
+                &gt;{" "}
+                {isSearching
+                  ? "一致するエントリがありません。検索条件を見直してください。"
+                  : "エントリが見つかりません。上から追加してください。"}
               </p>
             ) : null}
 
             {/* Grouped view (only when no search term) */}
-            {!isLoading && isGroupedView && !normalized
+            {!isLoading && isGroupedView && !isSearching
               ? groupedEntries.map((group) => (
                   <div key={group.name}>
                     <button
@@ -485,7 +513,7 @@ export function VaultDashboard({
               : null}
 
             {/* Flat view (default, or when searching) */}
-            {!isLoading && (!isGroupedView || normalized)
+            {!isLoading && (!isGroupedView || isSearching)
               ? filteredEntries.map((entry, index) => (
                   <article
                     key={entry.id}

@@ -655,8 +655,45 @@ body::after {
   outline: none;
 }
 
+.search-clear-btn {
+  width: 22px;
+  height: 22px;
+  border: 1px solid rgba(0, 255, 255, 0.18);
+  background: transparent;
+  color: rgba(0, 255, 255, 0.55);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease,
+    background 0.15s ease;
+}
+
+.search-clear-btn:hover {
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+  background: rgba(0, 255, 255, 0.06);
+}
+
+.search-clear-btn:focus-visible {
+  outline: 1px solid var(--accent-cyan);
+  outline-offset: 2px;
+}
+
 .search-prompt:focus-within {
   border-bottom-color: var(--accent-cyan);
+}
+
+.search-result-count {
+  margin-top: 6px;
+  color: rgba(212, 160, 32, 0.78);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-align: right;
 }
 
 .sidebar-actions {
