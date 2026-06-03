@@ -23,6 +23,22 @@ import { VaultDashboard } from "./pages/VaultDashboard";
 
 const AUTO_LOCK_TIMEOUT_MS = 5 * 60 * 1000;
 
+function AppTitleBar() {
+  return (
+    <div className="app-titlebar" role="banner">
+      <div className="app-titlebar-brand">
+        <span className="app-titlebar-mark" aria-hidden="true" />
+        <span className="app-titlebar-name">CIPHER VAULT</span>
+      </div>
+      <div className="app-titlebar-status" aria-hidden="true">
+        <span>LOCAL-FIRST</span>
+        <span className="app-titlebar-sep">/</span>
+        <span>AES-256-GCM</span>
+      </div>
+    </div>
+  );
+}
+
 export function App() {
   const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null);
   const [entries, setEntries] = useState<PasswordEntrySummary[]>([]);
@@ -255,6 +271,7 @@ export function App() {
   if (vaultStatus === null) {
     return (
       <main className="app-shell">
+        <AppTitleBar />
         <div className="cipher-auth-shell">
           <p className="loading-text">&gt; 保管庫を読み込み中...</p>
           {errorMessage ? <p className="form-error">{errorMessage}</p> : null}
@@ -265,6 +282,7 @@ export function App() {
 
   return (
     <main className="app-shell">
+      <AppTitleBar />
       {vaultStatus.isUnlocked ? (
         <VaultDashboard
           entries={entries}

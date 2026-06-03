@@ -89,6 +89,84 @@ body::after {
   z-index: 1;
 }
 
+.app-titlebar {
+  height: 38px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(138px, 1fr);
+  align-items: center;
+  gap: 16px;
+  padding: 0 154px 0 16px;
+  border-bottom: 1px solid rgba(0, 255, 255, 0.2);
+  background:
+    linear-gradient(90deg, rgba(0, 255, 255, 0.06), transparent 34%),
+    rgba(1, 10, 15, 0.94);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 20;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.app-titlebar::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 -1px;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(0, 255, 255, 0.55) 18%,
+    rgba(212, 160, 32, 0.35) 48%,
+    rgba(0, 255, 255, 0.2) 78%,
+    transparent 100%
+  );
+  pointer-events: none;
+}
+
+.app-titlebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.app-titlebar-mark {
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--accent-cyan);
+  box-shadow:
+    0 0 10px rgba(0, 255, 255, 0.55),
+    inset 0 0 6px rgba(0, 255, 255, 0.2);
+  flex-shrink: 0;
+}
+
+.app-titlebar-name {
+  color: var(--accent-cyan);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-shadow: 0 0 12px rgba(0, 255, 255, 0.32);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-titlebar-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: rgba(190, 225, 225, 0.5);
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
+.app-titlebar-sep {
+  color: rgba(212, 160, 32, 0.75);
+}
+
 /* =============================
    SHARED BUTTON
    ============================= */
@@ -228,7 +306,7 @@ body::after {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  min-height: 100vh;
+  min-height: 0;
 }
 
 /* Corner system markers */
@@ -1262,6 +1340,20 @@ body::after {
    RESPONSIVE
    ============================= */
 @media (max-width: 860px) {
+  .app-titlebar {
+    grid-template-columns: minmax(0, 1fr) minmax(120px, auto);
+    padding-right: 148px;
+  }
+
+  .app-titlebar-status {
+    justify-content: flex-end;
+  }
+
+  .app-titlebar-status span:first-child,
+  .app-titlebar-sep {
+    display: none;
+  }
+
   .dashboard-body {
     grid-template-columns: 1fr;
     grid-template-rows: auto 1fr;

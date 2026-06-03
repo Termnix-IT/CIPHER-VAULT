@@ -220,6 +220,12 @@ async function createMainWindow(appRoot: string) {
     autoHideMenuBar: true,
     backgroundColor: "#08111d",
     icon: existsSync(iconPath) ? iconPath : undefined,
+    titleBarStyle: "hidden",
+    titleBarOverlay: {
+      color: "#010a0f",
+      symbolColor: "#00ffff",
+      height: 38
+    },
     webPreferences: {
       preload: getPreloadPath(),
       sandbox: false,
