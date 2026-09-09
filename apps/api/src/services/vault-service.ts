@@ -1,4 +1,4 @@
-import type { VaultSetupPayload, VaultUnlockPayload } from "@password-manager/shared/types";
+import type { VaultResetPayload, VaultSetupPayload, VaultUnlockPayload } from "@password-manager/shared/types";
 import { HttpError } from "../lib/errors.js";
 import {
   clearActiveVaultKey,
@@ -8,7 +8,7 @@ import {
   setActiveVaultKey,
   verifyMasterPassword
 } from "./crypto-service.js";
-import { getVaultMetadata, saveVaultMetadata } from "./vault-store.js";
+import { getVaultMetadata, resetVaultData, saveVaultMetadata } from "./vault-store.js";
 
 let isUnlocked = false;
 
@@ -75,5 +75,20 @@ export function lockVault() {
 
   return {
     isUnlocked
+  };
+}
+
+export function resetVault(payload: VaultResetPayload) {
+  if (payload?.confirmation !== "RESET_ALL_DATA") {
+    throw new HttpError(400, "保管庫のリセット確認が必要です");
+  }
+
+  clearActiveVaultKey();
+  isUnlocked = false;
+  resetVaultData();
+
+  return {
+    isConfigured: false,
+    isUnlocked: false
   };
 }

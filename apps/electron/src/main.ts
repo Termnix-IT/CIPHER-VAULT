@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type {
   PasswordGenerationOptions,
   PasswordEntryUpsertPayload,
+  VaultResetPayload,
   VaultSetupPayload,
   VaultUnlockPayload
 } from "@password-manager/shared/types";
@@ -22,6 +23,7 @@ type VaultServiceModule = {
   setupVault: (payload: VaultSetupPayload) => { isConfigured: boolean; isUnlocked: boolean };
   unlockVault: (payload: VaultUnlockPayload) => { isUnlocked: boolean };
   lockVault: () => { isUnlocked: boolean };
+  resetVault: (payload: VaultResetPayload) => { isConfigured: boolean; isUnlocked: boolean };
 };
 
 type EntryServiceModule = {
@@ -169,6 +171,9 @@ function registerIpcHandlers(services: AppServices) {
     invokeSafely(() => services.vault.unlockVault(payload))
   );
   ipcMain.handle("vault:lock", () => invokeSafely(() => services.vault.lockVault()));
+  ipcMain.handle("vault:reset", (_event, payload: VaultResetPayload) =>
+    invokeSafely(() => services.vault.resetVault(payload))
+  );
   ipcMain.handle("entries:list", () => invokeSafely(() => services.entries.listEntries()));
   ipcMain.handle("entries:getById", (_event, id: string) => invokeSafely(() => services.entries.getEntryById(id)));
   ipcMain.handle("entries:create", (_event, payload: PasswordEntryUpsertPayload) =>

@@ -14,6 +14,7 @@ import {
   fetchVaultStatus,
   generatePassword,
   lockVault,
+  resetVault,
   setupVault,
   unlockVault,
   updateEntry
@@ -147,6 +148,20 @@ export function App() {
       await refreshVaultStatus();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "保管庫をロックできませんでした");
+    }
+  }
+
+  async function handleResetVault() {
+    try {
+      setIsSubmitting(true);
+      setErrorMessage("");
+      await resetVault({ confirmation: "RESET_ALL_DATA" });
+      await refreshVaultStatus();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "保管庫をリセットできませんでした");
+      throw error;
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -310,6 +325,7 @@ export function App() {
           isSubmitting={isSubmitting}
           errorMessage={errorMessage}
           onSubmit={handleVaultSubmit}
+          onReset={handleResetVault}
         />
       )}
     </main>

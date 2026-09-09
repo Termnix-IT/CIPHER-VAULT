@@ -49,6 +49,10 @@ export type VaultUnlockPayload = {
   masterPassword: string;
 };
 
+export type VaultResetPayload = {
+  confirmation: "RESET_ALL_DATA";
+};
+
 export type VaultMetadataRecord = {
   id: number;
   passwordSalt: string;
@@ -63,6 +67,7 @@ export type PasswordManagerDesktopApi = {
   setupVault: (payload: VaultSetupPayload) => Promise<VaultStatus>;
   unlockVault: (payload: VaultUnlockPayload) => Promise<{ isUnlocked: boolean }>;
   lockVault: () => Promise<{ isUnlocked: boolean }>;
+  resetVault: (payload: VaultResetPayload) => Promise<VaultStatus>;
   fetchEntries: () => Promise<{ items: PasswordEntrySummary[] }>;
   fetchEntry: (id: string) => Promise<PasswordEntry>;
   createEntry: (payload: PasswordEntryUpsertPayload) => Promise<PasswordEntry>;

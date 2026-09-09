@@ -26,6 +26,14 @@ const upsertVaultMetadataStatement = database.prepare(
      updated_at = excluded.updated_at`
 );
 
+const deleteAllEntriesStatement = database.prepare("DELETE FROM password_entries");
+const deleteVaultMetadataStatement = database.prepare("DELETE FROM vault_metadata");
+
+const resetVaultDataTransaction = database.transaction(() => {
+  deleteAllEntriesStatement.run();
+  deleteVaultMetadataStatement.run();
+});
+
 function mapRowToRecord(row: VaultMetadataRow): VaultMetadataRecord {
   return {
     id: row.id,
@@ -52,4 +60,8 @@ export function saveVaultMetadata(record: VaultMetadataRecord) {
     created_at: record.createdAt,
     updated_at: record.updatedAt
   });
+}
+
+export function resetVaultData() {
+  resetVaultDataTransaction();
 }

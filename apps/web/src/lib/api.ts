@@ -5,6 +5,7 @@ import type {
   PasswordEntry,
   PasswordEntrySummary,
   PasswordEntryUpsertPayload,
+  VaultResetPayload,
   VaultSetupPayload,
   VaultStatus,
   VaultUnlockPayload
@@ -83,6 +84,18 @@ export function lockVault() {
 
   return request<{ isUnlocked: boolean }>("/vault/lock", {
     method: "POST"
+  });
+}
+
+export function resetVault(payload: VaultResetPayload) {
+  const desktopApi = getDesktopApi();
+  if (desktopApi) {
+    return desktopApi.resetVault(payload);
+  }
+
+  return request<VaultStatus>("/vault/reset", {
+    method: "POST",
+    body: JSON.stringify(payload)
   });
 }
 

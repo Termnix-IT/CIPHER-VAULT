@@ -3,6 +3,7 @@ import type {
   PasswordGenerationOptions,
   PasswordManagerDesktopApi,
   PasswordEntryUpsertPayload,
+  VaultResetPayload,
   VaultSetupPayload,
   VaultUnlockPayload
 } from "@password-manager/shared/types";
@@ -12,6 +13,7 @@ const passwordManagerApi: PasswordManagerDesktopApi = {
   setupVault: (payload: VaultSetupPayload) => ipcRenderer.invoke("vault:setup", payload),
   unlockVault: (payload: VaultUnlockPayload) => ipcRenderer.invoke("vault:unlock", payload),
   lockVault: () => ipcRenderer.invoke("vault:lock"),
+  resetVault: (payload: VaultResetPayload) => ipcRenderer.invoke("vault:reset", payload),
   fetchEntries: () => ipcRenderer.invoke("entries:list"),
   fetchEntry: (id: string) => ipcRenderer.invoke("entries:getById", id),
   createEntry: (payload: PasswordEntryUpsertPayload) => ipcRenderer.invoke("entries:create", payload),

@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
   PasswordGenerationOptions,
   PasswordEntryUpsertPayload,
+  VaultResetPayload,
   VaultSetupPayload,
   VaultUnlockPayload
 } from "@password-manager/shared/types";
@@ -10,7 +11,7 @@ import { readJsonBody } from "../lib/json.js";
 import { serveAppShell, tryServeStaticAsset } from "../lib/static.js";
 import { generatePassword } from "../services/password-service.js";
 import { createEntry, deleteEntry, getEntryById, listEntries, updateEntry } from "../services/entry-service.js";
-import { getVaultStatus, lockVault, setupVault, unlockVault } from "../services/vault-service.js";
+import { getVaultStatus, lockVault, resetVault, setupVault, unlockVault } from "../services/vault-service.js";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown) {
   response.writeHead(statusCode, { "Content-Type": "application/json; charset=utf-8" });
@@ -48,6 +49,12 @@ export async function router(request: IncomingMessage, response: ServerResponse)
 
     if (method === "POST" && url === "/vault/lock") {
       sendJson(response, 200, lockVault());
+      return;
+    }
+
+    if (method === "POST" && url === "/vault/reset") {
+      const payload = await readJsonBody<VaultResetPayload>(request);
+      sendJson(response, 200, resetVault(payload));
       return;
     }
 
