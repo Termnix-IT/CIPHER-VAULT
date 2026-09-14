@@ -4,6 +4,7 @@ import { BinaryRain } from "../components/BinaryRain";
 import { useGlitchDecode } from "../lib/useGlitchDecode";
 
 type LockScreenProps = {
+  onDirtyChange: (dirty: boolean) => void;
   isConfigured: boolean;
   isSubmitting: boolean;
   errorMessage: string;
@@ -24,6 +25,7 @@ function createResetConfirmationCode() {
 }
 
 export function LockScreen({
+  onDirtyChange,
   isConfigured,
   isSubmitting,
   errorMessage,
@@ -38,6 +40,8 @@ export function LockScreen({
   const [hasAttemptedReset, setHasAttemptedReset] = useState(false);
   const resetCodeInputRef = useRef<HTMLInputElement>(null);
   const decodedTitle = useGlitchDecode("CIPHER VAULT", 900); // タイトルは英語維持
+  useEffect(() => { onDirtyChange(Boolean(masterPassword || resetCodeInput)); }, [masterPassword, resetCodeInput, onDirtyChange]);
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
   useEffect(() => {
     if (resetStep === "confirmation") {

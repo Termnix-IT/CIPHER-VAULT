@@ -7,6 +7,7 @@ import type {
 } from "@password-manager/shared/types";
 
 type VaultDashboardProps = {
+  onDirtyChange: (dirty: boolean) => void;
   entries: PasswordEntrySummary[];
   isLoading: boolean;
   isCreating: boolean;
@@ -46,6 +47,7 @@ function useUptime(): string {
 }
 
 export function VaultDashboard({
+  onDirtyChange,
   entries,
   isLoading,
   isCreating,
@@ -88,6 +90,18 @@ export function VaultDashboard({
   const [editNotes, setEditNotes] = useState("");
   const [editTagInput, setEditTagInput] = useState("");
   const [editGroupInput, setEditGroupInput] = useState("");
+
+  useEffect(() => {
+    const creating = [serviceName, loginId, password, url, notes, tagInput, groupInput].some(Boolean);
+    const editing = selectedEntry !== null && (
+      editServiceName !== selectedEntry.serviceName || editLoginId !== selectedEntry.loginId ||
+      editPassword !== selectedEntry.password || editUrl !== selectedEntry.url || editNotes !== selectedEntry.notes ||
+      editTagInput !== selectedEntry.tags.join(", ") || editGroupInput !== (selectedEntry.group ?? "")
+    );
+    onDirtyChange(creating || editing);
+  }, [serviceName, loginId, password, url, notes, tagInput, groupInput, selectedEntry,
+    editServiceName, editLoginId, editPassword, editUrl, editNotes, editTagInput, editGroupInput, onDirtyChange]);
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
   // Copy glitch state
   const [glitchField, setGlitchField] = useState<string | null>(null);

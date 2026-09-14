@@ -1,8 +1,9 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain } from "electron";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { registerUpdateHandlers } from "./update-service.js";
 import type {
   PasswordGenerationOptions,
   PasswordEntryUpsertPayload,
@@ -255,6 +256,13 @@ async function bootstrap() {
 
   const services = await loadAppServices(appRoot);
   registerIpcHandlers(services);
+  const version = app.isPackaged ? app.getVersion() : JSON.parse(readFileSync(path.join(appRoot, "package.json"), "utf8")).version as string;
+  registerUpdateHandlers(() => mainWindow, () => { services.vault.lockVault(); }, version);
+  const { database } = await importModule<{ database: { open: boolean; close: () => void } }>(getApiBuildPath(appRoot, "db/database.js"));
+  app.on("will-quit", () => {
+    services.vault.lockVault();
+    if (database.open) database.close();
+  });
   await createMainWindow(appRoot);
 }
 

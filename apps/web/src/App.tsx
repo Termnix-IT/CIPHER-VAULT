@@ -21,14 +21,15 @@ import {
 } from "./lib/api";
 import { LockScreen } from "./pages/LockScreen";
 import { VaultDashboard } from "./pages/VaultDashboard";
+import { AppInfo } from "./components/AppInfo";
 
 const AUTO_LOCK_TIMEOUT_MS = 5 * 60 * 1000;
 
-function AppTitleBar() {
+function AppTitleBar({ hasUnsavedChanges = false, isSaving = false }: { hasUnsavedChanges?: boolean; isSaving?: boolean }) {
   return (
     <div className="app-titlebar" role="banner">
       <div className="app-titlebar-brand">
-        <span className="app-titlebar-mark" aria-hidden="true" />
+        <img className="app-titlebar-icon" src="./icon.png" alt="" />
         <span className="app-titlebar-name">CIPHER VAULT</span>
       </div>
       <div className="app-titlebar-status" aria-hidden="true">
@@ -36,6 +37,7 @@ function AppTitleBar() {
         <span className="app-titlebar-sep">/</span>
         <span>AES-256-GCM</span>
       </div>
+      <AppInfo hasUnsavedChanges={hasUnsavedChanges} isSaving={isSaving} />
     </div>
   );
 }
@@ -53,7 +55,18 @@ export function App() {
   const [isGeneratingPassword, setIsGeneratingPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const autoLockTimerRef = useRef<number | null>(null);
+
+  useEffect(() => window.passwordManager?.onUpdateState((state) => {
+    if (state.status === "installing") {
+      // The main process has locked the vault, even if starting the installer fails.
+      setVaultStatus((current) => current ? { ...current, isUnlocked: false } : current);
+      setEntries([]);
+      setSelectedEntry(null);
+      setCopyMessage("");
+    }
+  }), []);
 
   useEffect(() => {
     void refreshVaultStatus();
@@ -297,9 +310,10 @@ export function App() {
 
   return (
     <main className="app-shell">
-      <AppTitleBar />
+      <AppTitleBar hasUnsavedChanges={hasUnsavedChanges} isSaving={isSubmitting || isCreatingEntry || isUpdatingEntry || isDeletingEntry} />
       {vaultStatus.isUnlocked ? (
         <VaultDashboard
+          onDirtyChange={setHasUnsavedChanges}
           entries={entries}
           isLoading={isLoadingEntries}
           isCreating={isCreatingEntry}
@@ -321,6 +335,7 @@ export function App() {
         />
       ) : (
         <LockScreen
+          onDirtyChange={setHasUnsavedChanges}
           isConfigured={vaultStatus.isConfigured}
           isSubmitting={isSubmitting}
           errorMessage={errorMessage}

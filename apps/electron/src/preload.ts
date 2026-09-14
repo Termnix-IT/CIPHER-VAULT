@@ -9,6 +9,16 @@ import type {
 } from "@password-manager/shared/types";
 
 const passwordManagerApi: PasswordManagerDesktopApi = {
+  getUpdateState: () => ipcRenderer.invoke("updates:state"),
+  checkForUpdates: () => ipcRenderer.invoke("updates:check"),
+  downloadUpdate: () => ipcRenderer.invoke("updates:download"),
+  installUpdate: (hasUnsavedChanges) => ipcRenderer.invoke("updates:install", hasUnsavedChanges),
+  openReleasePage: () => ipcRenderer.invoke("updates:releases"),
+  onUpdateState: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: import("@password-manager/shared/types").AppUpdateState) => listener(state);
+    ipcRenderer.on("updates:state", handler);
+    return () => ipcRenderer.removeListener("updates:state", handler);
+  },
   fetchVaultStatus: () => ipcRenderer.invoke("vault:getStatus"),
   setupVault: (payload: VaultSetupPayload) => ipcRenderer.invoke("vault:setup", payload),
   unlockVault: (payload: VaultUnlockPayload) => ipcRenderer.invoke("vault:unlock", payload),

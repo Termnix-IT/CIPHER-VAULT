@@ -63,6 +63,12 @@ export type VaultMetadataRecord = {
 };
 
 export type PasswordManagerDesktopApi = {
+  getUpdateState: () => Promise<AppUpdateState>;
+  checkForUpdates: () => Promise<void>;
+  downloadUpdate: () => Promise<void>;
+  installUpdate: (hasUnsavedChanges: boolean) => Promise<false | void>;
+  openReleasePage: () => Promise<void>;
+  onUpdateState: (listener: (state: AppUpdateState) => void) => () => void;
   fetchVaultStatus: () => Promise<VaultStatus>;
   setupVault: (payload: VaultSetupPayload) => Promise<VaultStatus>;
   unlockVault: (payload: VaultUnlockPayload) => Promise<{ isUnlocked: boolean }>;
@@ -75,4 +81,13 @@ export type PasswordManagerDesktopApi = {
   deleteEntry: (id: string) => Promise<{ success: boolean }>;
   generatePassword: (options?: PasswordGenerationOptions) => Promise<PasswordGenerationResult>;
   copyText: (value: string) => Promise<void>;
+};
+
+export type AppUpdateState = {
+  status: "idle" | "checking" | "available" | "current" | "downloading" | "downloaded" | "installing" | "error" | "unsupported";
+  currentVersion: string;
+  latestVersion?: string;
+  releaseNotes?: string;
+  progress?: number;
+  message?: string;
 };
