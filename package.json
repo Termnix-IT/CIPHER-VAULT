@@ -4,7 +4,7 @@
   "description": "Local-first desktop password manager built with Electron, React, and SQLite.",
   "author": "lugep",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "main": "apps/electron/dist/apps/electron/src/main.js",
   "workspaces": [
     "apps/*",
@@ -31,6 +31,7 @@
     "build:desktop": "npm run build && npm run build:electron",
     "package:desktop": "npm run build:desktop && electron-builder --win nsis portable --publish never",
     "test:updates": "npm run build:electron && node --test tests/manual-updater.test.mjs",
+    "test:api": "npm run build:api && node scripts/run-api-tests.mjs",
     "start": "npm --workspace apps/api run start",
     "start:desktop": "npm --workspace apps/electron run start",
     "package": "npm run build && pwsh -File scripts/package-release.ps1"

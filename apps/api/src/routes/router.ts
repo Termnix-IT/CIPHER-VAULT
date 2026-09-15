@@ -20,11 +20,15 @@ function sendJson(response: ServerResponse, statusCode: number, payload: unknown
 
 export async function router(request: IncomingMessage, response: ServerResponse) {
   const method = request.method ?? "GET";
-  const url = request.url ?? "/";
-  const entryMatch = url.match(/^\/entries\/([^/]+)$/);
-  const pathname = new URL(url, "http://localhost").pathname;
-
   try {
+    let url: string;
+    try {
+      url = new URL(request.url ?? "/", "http://localhost").pathname;
+    } catch {
+      throw new HttpError(400, "URLの形式が正しくありません");
+    }
+    const entryMatch = url.match(/^\/entries\/([^/]+)$/);
+    const pathname = url;
     if (method === "GET" && url === "/health") {
       sendJson(response, 200, { ok: true });
       return;

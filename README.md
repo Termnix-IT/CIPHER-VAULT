@@ -172,7 +172,9 @@ CIPHER-VAULT/
 
 - `packages/shared/src/types.ts` に型を追加した場合、Web・API 両方が参照するため両側でのビルド確認を推奨
 - API は Node.js の標準 `http` モジュールのみ使用（フレームワークなし）
-- データベースファイルは `apps/api/data/` に保存される（`.gitignore` 対象）
+- Web/APIのDBは既定で `apps/api/data/`、Electron版は `userData/data/` に保存される
+- API・保存・Web配布の回帰確認は `npm run test:api`、更新制御は `npm run test:updates` を実行する
+- 保管庫検証値の変更と旧版互換性については [v0.2.1の修正](docs/リリースノート/v0.2.1.md) を参照する
 
 文書の一覧と公開判断基準は [docs/README.md](docs/README.md) を参照してください。
 Desktop起動とパッケージ化の詳細は [docs/開発・配布手順.md](docs/開発・配布手順.md) を参照してください。

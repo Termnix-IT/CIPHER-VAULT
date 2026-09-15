@@ -275,8 +275,8 @@ export function App() {
       clearAutoLockTimer();
       await lockVault();
       setCopyMessage("");
-      setErrorMessage("5分間操作がなかったため保管庫をロックしました");
       await refreshVaultStatus();
+      setErrorMessage("5分間操作がなかったため保管庫をロックしました");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "自動ロックに失敗しました");
     }

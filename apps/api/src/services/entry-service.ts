@@ -65,7 +65,7 @@ function requireUnlockedVault() {
 function parseTags(tags: string) {
   try {
     const parsed = JSON.parse(tags) as string[];
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? parsed.filter((tag) => typeof tag === "string") : [];
   } catch {
     return [];
   }
@@ -93,16 +93,24 @@ function mapRowToEntry(row: PasswordEntryRow): PasswordEntry {
 }
 
 function validatePayload(payload: PasswordEntryUpsertPayload) {
-  if (!payload.serviceName?.trim()) {
+  if (typeof payload?.serviceName !== "string" || !payload.serviceName.trim()) {
     throw new HttpError(400, "サービス名は必須です");
   }
 
-  if (!payload.loginId?.trim()) {
+  if (typeof payload.loginId !== "string" || !payload.loginId.trim()) {
     throw new HttpError(400, "ログインIDは必須です");
   }
 
-  if (!payload.password) {
+  if (typeof payload.password !== "string" || !payload.password) {
     throw new HttpError(400, "パスワードは必須です");
+  }
+  for (const field of ["notes", "url", "group"] as const) {
+    if (payload[field] != null && typeof payload[field] !== "string") {
+      throw new HttpError(400, `${field}は文字列で指定してください`);
+    }
+  }
+  if (payload.tags != null && (!Array.isArray(payload.tags) || payload.tags.some((tag) => typeof tag !== "string"))) {
+    throw new HttpError(400, "タグは文字列の配列で指定してください");
   }
 }
 

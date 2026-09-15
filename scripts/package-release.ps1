@@ -1,9 +1,26 @@
 $ErrorActionPreference = "Stop"
 
-$root = (Get-Location).Path
+$root = Split-Path -Parent $PSScriptRoot
 $releaseDir = Join-Path $root "release"
 
+foreach ($source in @("apps/api/dist", "apps/web/dist")) {
+  if (-not (Test-Path -LiteralPath (Join-Path $root $source) -PathType Container)) {
+    throw "Build output missing: $source. Run npm run build first."
+  }
+}
 if (Test-Path $releaseDir) {
+  $resolvedRelease = (Resolve-Path -LiteralPath $releaseDir).Path
+  if ($resolvedRelease -ne [IO.Path]::GetFullPath((Join-Path $root "release")) -or
+      ((Get-Item -LiteralPath $releaseDir).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    throw "Unsafe release output path: $releaseDir"
+  }
+  $existingData = Join-Path $releaseDir "data"
+  if (Test-Path -LiteralPath $existingData) {
+    if (((Get-Item -LiteralPath $existingData).Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+        @(Get-ChildItem -LiteralPath $existingData -Force).Count -gt 0) {
+      throw "Release data exists. Move the existing release folder to a safe location before packaging."
+    }
+  }
   Remove-Item -LiteralPath $releaseDir -Recurse -Force
 }
 
@@ -12,11 +29,6 @@ New-Item -ItemType Directory -Path (Join-Path $releaseDir "data") | Out-Null
 
 Copy-Item -LiteralPath (Join-Path $root "apps/api/dist") -Destination (Join-Path $releaseDir "dist") -Recurse
 Copy-Item -LiteralPath (Join-Path $root "apps/web/dist") -Destination (Join-Path $releaseDir "web") -Recurse
-
-$databasePath = Join-Path $root "apps/api/data/password-manager.db"
-if (Test-Path $databasePath) {
-  Copy-Item -LiteralPath $databasePath -Destination (Join-Path $releaseDir "data/password-manager.db")
-}
 
 $releasePackageJson = @'
 {

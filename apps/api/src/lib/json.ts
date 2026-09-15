@@ -1,4 +1,5 @@
 import type { IncomingMessage } from "node:http";
+import { HttpError } from "./errors.js";
 
 export async function readJsonBody<T>(request: IncomingMessage): Promise<T> {
   const chunks: Buffer[] = [];
@@ -11,5 +12,9 @@ export async function readJsonBody<T>(request: IncomingMessage): Promise<T> {
     return {} as T;
   }
 
-  return JSON.parse(Buffer.concat(chunks).toString("utf-8")) as T;
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf-8")) as T;
+  } catch {
+    throw new HttpError(400, "JSONの形式が正しくありません");
+  }
 }

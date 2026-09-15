@@ -3,6 +3,7 @@ dist/
 apps/web/dist/
 apps/api/dist/
 apps/api/data/*.db
+apps/api/data/*.db-*
 *.tsbuildinfo
 packages/shared/src/*.js
 packages/shared/src/*.js.map

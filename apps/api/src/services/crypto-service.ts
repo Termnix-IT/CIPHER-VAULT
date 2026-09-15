@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 
 const KEY_LENGTH = 32;
 const IV_LENGTH = 12;
@@ -14,29 +14,37 @@ export function deriveVaultKey(masterPassword: string, salt: string) {
 }
 
 export function deriveVerifier(masterPassword: string, salt: string) {
-  return deriveVaultKey(masterPassword, salt).toString("base64");
+  const key = deriveVaultKey(masterPassword, salt);
+  try {
+    return createHmac("sha256", key).update("CIPHER VAULT password verifier v1").digest("base64");
+  } finally {
+    key.fill(0);
+  }
 }
 
 export function verifyMasterPassword(
   masterPassword: string,
   salt: string,
-  expectedVerifier: string
+  expectedVerifier: string,
+  legacy = false
 ) {
-  const actual = Buffer.from(deriveVerifier(masterPassword, salt), "base64");
+  const actual = legacy ? deriveVaultKey(masterPassword, salt) : Buffer.from(deriveVerifier(masterPassword, salt), "base64");
   const expected = Buffer.from(expectedVerifier, "base64");
-
-  if (actual.length !== expected.length) {
-    return false;
+  try {
+    return actual.length === expected.length && timingSafeEqual(actual, expected);
+  } finally {
+    actual.fill(0);
+    expected.fill(0);
   }
-
-  return timingSafeEqual(actual, expected);
 }
 
 export function setActiveVaultKey(key: Buffer) {
+  clearActiveVaultKey();
   activeVaultKey = Buffer.from(key);
 }
 
 export function clearActiveVaultKey() {
+  activeVaultKey?.fill(0);
   activeVaultKey = null;
 }
 

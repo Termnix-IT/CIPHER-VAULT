@@ -8,6 +8,14 @@ const NUMBERS = "23456789";
 const SYMBOLS = "!@#$%^&*()-_=+[]{}?";
 
 export function generatePassword(options: PasswordGenerationOptions = {}): PasswordGenerationResult {
+  if (!options || typeof options !== "object" || Array.isArray(options)) {
+    throw new HttpError(400, "生成条件はオブジェクトで指定してください");
+  }
+  for (const field of ["includeUppercase", "includeLowercase", "includeNumbers", "includeSymbols"] as const) {
+    if (options[field] !== undefined && typeof options[field] !== "boolean") {
+      throw new HttpError(400, "文字種の指定は真偽値で指定してください");
+    }
+  }
   const length = options.length ?? 20;
   const groups = [
     options.includeUppercase !== false ? UPPERCASE : "",
@@ -16,7 +24,7 @@ export function generatePassword(options: PasswordGenerationOptions = {}): Passw
     options.includeSymbols !== false ? SYMBOLS : ""
   ].filter(Boolean);
 
-  if (length < 12 || length > 64) {
+  if (!Number.isInteger(length) || length < 12 || length > 64) {
     throw new HttpError(400, "パスワードの長さは12文字以上64文字以下で指定してください");
   }
 

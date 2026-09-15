@@ -27,6 +27,8 @@ if (!existsSync(dataDirectory)) {
 }
 
 export const database = new Database(databasePath);
+// Clear deleted SQLite cell contents; this does not erase old backups or filesystem snapshots.
+database.pragma("secure_delete = ON");
 
 export function initializeDatabase() {
   database.exec(`
@@ -57,10 +59,9 @@ export function initializeDatabase() {
 initializeDatabase();
 
 // Migration: add group_name column to existing databases
-try {
+const columns = database.pragma("table_info(password_entries)") as { name: string }[];
+if (!columns.some((column) => column.name === "group_name")) {
   database.exec("ALTER TABLE password_entries ADD COLUMN group_name TEXT");
-} catch {
-  // Column already exists — safe to ignore
 }
 
 export function getDatabasePath() {
