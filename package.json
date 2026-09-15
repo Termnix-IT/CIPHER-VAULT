@@ -4,7 +4,7 @@
   "description": "Local-first desktop password manager built with Electron, React, and SQLite.",
   "author": "lugep",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "main": "apps/electron/dist/apps/electron/src/main.js",
   "workspaces": [
     "apps/*",
@@ -37,7 +37,11 @@
   },
   "build": {
     "appId": "com.lugep.ciphervault",
-    "publish": { "provider": "github", "owner": "Termnix-IT", "repo": "CIPHER-VAULT" },
+    "publish": {
+      "provider": "github",
+      "owner": "Termnix-IT",
+      "repo": "CIPHER-VAULT"
+    },
     "icon": "build/icon.ico",
     "directories": {
       "output": "dist-desktop"
@@ -53,7 +57,7 @@
       "**/*.node",
       "node_modules/better-sqlite3/**/*"
     ],
-    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "artifactName": "CIPHER-VAULT-${version}-${arch}.${ext}",
     "win": {
       "signAndEditExecutable": true,
       "target": [
@@ -62,7 +66,7 @@
       ]
     },
     "nsis": {
-      "artifactName": "${productName}-${version}-${arch}-setup.${ext}",
+      "artifactName": "CIPHER-VAULT-${version}-${arch}-setup.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
@@ -72,7 +76,7 @@
       "installerHeaderIcon": "build/icon.ico"
     },
     "portable": {
-      "artifactName": "${productName}-${version}-${arch}-portable.${ext}"
+      "artifactName": "CIPHER-VAULT-${version}-${arch}-portable.${ext}"
     }
   }
 }
