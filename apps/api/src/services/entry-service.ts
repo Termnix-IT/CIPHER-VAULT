@@ -19,25 +19,26 @@ type PasswordEntryRow = {
   group_name: string | null;
   created_at: string;
   updated_at: string;
+  password_changed_at: string | null;
 };
 
 const listEntriesStatement = database.prepare(
-  `SELECT id, service_name, login_id, encrypted_password, encrypted_notes, url, tags, group_name, created_at, updated_at
+  `SELECT id, service_name, login_id, encrypted_password, encrypted_notes, url, tags, group_name, created_at, updated_at, password_changed_at
    FROM password_entries
    ORDER BY updated_at DESC`
 );
 
 const getEntryStatement = database.prepare(
-  `SELECT id, service_name, login_id, encrypted_password, encrypted_notes, url, tags, group_name, created_at, updated_at
+  `SELECT id, service_name, login_id, encrypted_password, encrypted_notes, url, tags, group_name, created_at, updated_at, password_changed_at
    FROM password_entries
    WHERE id = ?`
 );
 
 const insertEntryStatement = database.prepare(
   `INSERT INTO password_entries (
-    id, service_name, login_id, encrypted_password, encrypted_notes, url, tags, group_name, created_at, updated_at
+    id, service_name, login_id, encrypted_password, encrypted_notes, url, tags, group_name, created_at, updated_at, password_changed_at
    ) VALUES (
-    @id, @service_name, @login_id, @encrypted_password, @encrypted_notes, @url, @tags, @group_name, @created_at, @updated_at
+    @id, @service_name, @login_id, @encrypted_password, @encrypted_notes, @url, @tags, @group_name, @created_at, @updated_at, @password_changed_at
    )`
 );
 
@@ -50,13 +51,14 @@ const updateEntryStatement = database.prepare(
        url = @url,
        tags = @tags,
        group_name = @group_name,
+       password_changed_at = @password_changed_at,
        updated_at = @updated_at
    WHERE id = @id`
 );
 
 const deleteEntryStatement = database.prepare("DELETE FROM password_entries WHERE id = ?");
 
-function requireUnlockedVault() {
+export function requireUnlockedVault() {
   if (!hasActiveVaultKey()) {
     throw new HttpError(423, "保管庫はロックされています");
   }
@@ -88,11 +90,12 @@ function mapRowToEntry(row: PasswordEntryRow): PasswordEntry {
     password: decryptSecret(row.encrypted_password),
     notes: row.encrypted_notes ? decryptSecret(row.encrypted_notes) : "",
     url: row.url ?? "",
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    passwordChangedAt: row.password_changed_at
   };
 }
 
-function validatePayload(payload: PasswordEntryUpsertPayload) {
+export function validatePayload(payload: PasswordEntryUpsertPayload) {
   if (typeof payload?.serviceName !== "string" || !payload.serviceName.trim()) {
     throw new HttpError(400, "サービス名は必須です");
   }
@@ -151,6 +154,7 @@ export function createEntry(payload: PasswordEntryUpsertPayload) {
     tags: JSON.stringify(payload.tags ?? []),
     group_name: payload.group?.trim() || null,
     created_at: now,
+    password_changed_at: now,
     updated_at: now
   });
 
@@ -167,6 +171,7 @@ export function updateEntry(id: string, payload: PasswordEntryUpsertPayload) {
     throw new HttpError(404, "エントリが見つかりません");
   }
 
+  const now = new Date().toISOString();
   updateEntryStatement.run({
     id,
     service_name: payload.serviceName.trim(),
@@ -176,7 +181,9 @@ export function updateEntry(id: string, payload: PasswordEntryUpsertPayload) {
     url: payload.url?.trim() || null,
     tags: JSON.stringify(payload.tags ?? []),
     group_name: payload.group?.trim() || null,
-    updated_at: new Date().toISOString()
+    updated_at: now,
+    password_changed_at: decryptSecret(existing.encrypted_password) === payload.password
+      ? existing.password_changed_at : now
   });
 
   return getEntryById(id);
@@ -193,4 +200,22 @@ export function deleteEntry(id: string) {
   return {
     success: true
   };
+}
+
+export function restoreEntriesIntoEmptyVault(entries: PasswordEntry[]) {
+  return database.transaction(() => {
+    requireUnlockedVault();
+    if (listEntriesStatement.get()) throw new HttpError(409, "復元できるのは空の保管庫のみです");
+    for (const entry of entries) {
+      insertEntryStatement.run({
+        id: entry.id, service_name: entry.serviceName, login_id: entry.loginId,
+        encrypted_password: encryptSecret(entry.password),
+        encrypted_notes: encryptSecret(entry.notes), url: entry.url,
+        tags: JSON.stringify(entry.tags), group_name: entry.group,
+        created_at: entry.createdAt, updated_at: entry.updatedAt,
+        password_changed_at: entry.passwordChangedAt
+      });
+    }
+    return { restoredCount: entries.length };
+  })();
 }

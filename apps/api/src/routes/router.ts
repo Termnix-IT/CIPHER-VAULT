@@ -7,6 +7,8 @@ import type {
   VaultUnlockPayload
 } from "@password-manager/shared/types";
 import { HttpError } from "../lib/errors.js";
+import { exportBackup, restoreBackup } from "../services/backup-service.js";
+import { auditVault } from "../services/audit-service.js";
 import { readJsonBody } from "../lib/json.js";
 import { serveAppShell, tryServeStaticAsset } from "../lib/static.js";
 import { generatePassword } from "../services/password-service.js";
@@ -14,7 +16,7 @@ import { createEntry, deleteEntry, getEntryById, listEntries, updateEntry } from
 import { getVaultStatus, lockVault, resetVault, setupVault, unlockVault } from "../services/vault-service.js";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown) {
-  response.writeHead(statusCode, { "Content-Type": "application/json; charset=utf-8" });
+  response.writeHead(statusCode, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
   response.end(JSON.stringify(payload));
 }
 
@@ -29,6 +31,18 @@ export async function router(request: IncomingMessage, response: ServerResponse)
     }
     const entryMatch = url.match(/^\/entries\/([^/]+)$/);
     const pathname = url;
+    if (method === "POST" && url === "/vault/backup/export") {
+      sendJson(response, 200, await exportBackup(await readJsonBody(request)));
+      return;
+    }
+    if (method === "POST" && url === "/vault/backup/restore") {
+      sendJson(response, 200, await restoreBackup(await readJsonBody(request, 18 * 1024 * 1024)));
+      return;
+    }
+    if (method === "POST" && url === "/vault/audit") {
+      sendJson(response, 200, await auditVault());
+      return;
+    }
     if (method === "GET" && url === "/health") {
       sendJson(response, 200, { ok: true });
       return;

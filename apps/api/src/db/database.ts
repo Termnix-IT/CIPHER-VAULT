@@ -50,6 +50,7 @@ export function initializeDatabase() {
       url TEXT,
       tags TEXT NOT NULL,
       group_name TEXT,
+      password_changed_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -62,6 +63,9 @@ initializeDatabase();
 const columns = database.pragma("table_info(password_entries)") as { name: string }[];
 if (!columns.some((column) => column.name === "group_name")) {
   database.exec("ALTER TABLE password_entries ADD COLUMN group_name TEXT");
+}
+if (!columns.some((column) => column.name === "password_changed_at")) {
+  database.exec("ALTER TABLE password_entries ADD COLUMN password_changed_at TEXT");
 }
 
 export function getDatabasePath() {

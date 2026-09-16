@@ -4,6 +4,9 @@ const KEY_LENGTH = 32;
 const IV_LENGTH = 12;
 
 let activeVaultKey: Buffer | null = null;
+let vaultSession = 0;
+
+export function getVaultSession() { return vaultSession; }
 
 export function createPasswordSalt() {
   return randomBytes(16).toString("base64");
@@ -44,6 +47,7 @@ export function setActiveVaultKey(key: Buffer) {
 }
 
 export function clearActiveVaultKey() {
+  vaultSession += 1;
   activeVaultKey?.fill(0);
   activeVaultKey = null;
 }

@@ -1,4 +1,8 @@
 import type {
+  BackupExportPayload,
+  BackupRestorePayload,
+  BackupFile,
+  SecurityAudit,
   PasswordGenerationOptions,
   PasswordGenerationResult,
   PasswordManagerDesktopApi,
@@ -14,6 +18,18 @@ import type {
 type ApiErrorPayload = {
   error?: string;
 };
+
+export function exportBackup(payload: BackupExportPayload) {
+  return getDesktopApi()?.exportBackup(payload) ?? request<BackupFile>("/vault/backup/export", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function restoreBackup(payload: BackupRestorePayload) {
+  return getDesktopApi()?.restoreBackup(payload) ?? request<{ restoredCount: number }>("/vault/backup/restore", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function auditVault() {
+  return getDesktopApi()?.auditVault() ?? request<SecurityAudit>("/vault/audit", { method: "POST" });
+}
 
 function getDesktopApi(): PasswordManagerDesktopApi | null {
   if (typeof window === "undefined") {

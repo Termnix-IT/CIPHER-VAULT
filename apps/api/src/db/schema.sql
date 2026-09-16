@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS password_entries (
   url TEXT,
   tags TEXT NOT NULL,
   group_name TEXT,
+  password_changed_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

@@ -8,6 +8,7 @@ export type PasswordEntrySummary = {
 };
 
 export type PasswordEntry = PasswordEntrySummary & {
+  passwordChangedAt: string | null;
   password: string;
   notes: string;
   url: string;
@@ -63,6 +64,9 @@ export type VaultMetadataRecord = {
 };
 
 export type PasswordManagerDesktopApi = {
+  exportBackup: (payload: BackupExportPayload) => Promise<BackupFile>;
+  restoreBackup: (payload: BackupRestorePayload) => Promise<{ restoredCount: number }>;
+  auditVault: () => Promise<SecurityAudit>;
   getUpdateState: () => Promise<AppUpdateState>;
   checkForUpdates: () => Promise<void>;
   downloadUpdate: () => Promise<void>;
@@ -81,6 +85,19 @@ export type PasswordManagerDesktopApi = {
   deleteEntry: (id: string) => Promise<{ success: boolean }>;
   generatePassword: (options?: PasswordGenerationOptions) => Promise<PasswordGenerationResult>;
   copyText: (value: string) => Promise<void>;
+};
+
+export type BackupExportPayload = { passphrase: string };
+export type BackupFile = { fileName: string; content: string };
+export type BackupRestorePayload = BackupExportPayload & { content: string };
+export type AuditIssue = "weak" | "duplicate" | "oldPassword" | "missingUrl" | "staleEntry";
+export type SecurityAudit = {
+  score: number | null;
+  total: number;
+  checkedAt: string;
+  unknownPasswordAgeCount: number;
+  counts: Record<AuditIssue, number>;
+  items: { id: string; serviceName: string; loginId: string; issues: AuditIssue[] }[];
 };
 
 export type AppUpdateState = {

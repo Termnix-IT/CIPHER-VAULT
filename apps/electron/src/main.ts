@@ -45,6 +45,8 @@ type PasswordServiceModule = {
 };
 
 type AppServices = {
+  backup: Pick<import("@password-manager/shared/types").PasswordManagerDesktopApi, "exportBackup" | "restoreBackup">;
+  audit: Pick<import("@password-manager/shared/types").PasswordManagerDesktopApi, "auditVault">;
   vault: VaultServiceModule;
   entries: EntryServiceModule;
   password: PasswordServiceModule;
@@ -144,13 +146,17 @@ async function importModule<T>(filePath: string) {
 async function loadAppServices(appRoot: string): Promise<AppServices> {
   process.env.PASSWORD_MANAGER_DATA_DIR = path.join(app.getPath("userData"), "data");
 
-  const [vault, entries, password] = await Promise.all([
+  const [vault, entries, password, backup, audit] = await Promise.all([
     importModule<VaultServiceModule>(getApiBuildPath(appRoot, "services/vault-service.js")),
     importModule<EntryServiceModule>(getApiBuildPath(appRoot, "services/entry-service.js")),
-    importModule<PasswordServiceModule>(getApiBuildPath(appRoot, "services/password-service.js"))
+    importModule<PasswordServiceModule>(getApiBuildPath(appRoot, "services/password-service.js")),
+    importModule<AppServices["backup"]>(getApiBuildPath(appRoot, "services/backup-service.js")),
+    importModule<AppServices["audit"]>(getApiBuildPath(appRoot, "services/audit-service.js"))
   ]);
 
   return {
+    backup,
+    audit,
     vault,
     entries,
     password
@@ -166,6 +172,9 @@ async function invokeSafely<T>(action: () => Promise<T> | T) {
 }
 
 function registerIpcHandlers(services: AppServices) {
+  ipcMain.handle("backup:export", (_event, payload) => invokeSafely(() => services.backup.exportBackup(payload)));
+  ipcMain.handle("backup:restore", (_event, payload) => invokeSafely(() => services.backup.restoreBackup(payload)));
+  ipcMain.handle("vault:audit", () => invokeSafely(() => services.audit.auditVault()));
   ipcMain.handle("vault:getStatus", () => invokeSafely(() => services.vault.getVaultStatus()));
   ipcMain.handle("vault:setup", (_event, payload: VaultSetupPayload) => invokeSafely(() => services.vault.setupVault(payload)));
   ipcMain.handle("vault:unlock", (_event, payload: VaultUnlockPayload) =>

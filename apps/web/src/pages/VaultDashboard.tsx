@@ -1,5 +1,6 @@
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { VaultTools } from "../components/VaultTools";
 import type {
   PasswordEntry,
   PasswordEntrySummary,
@@ -7,6 +8,7 @@ import type {
 } from "@password-manager/shared/types";
 
 type VaultDashboardProps = {
+  hasUnsavedChanges: boolean;
   onDirtyChange: (dirty: boolean) => void;
   entries: PasswordEntrySummary[];
   isLoading: boolean;
@@ -47,6 +49,7 @@ function useUptime(): string {
 }
 
 export function VaultDashboard({
+  hasUnsavedChanges,
   onDirtyChange,
   entries,
   isLoading,
@@ -278,7 +281,9 @@ export function VaultDashboard({
           ) : null}
         </div>
 
-        <div style={{ display: "flex", gap: "8px", flexShrink: 0 }}>
+        <div className="vault-header-actions">
+          <VaultTools entryCount={entries.length} disabled={hasUnsavedChanges || isCreating || isUpdating || isDeleting}
+            onRefresh={onRefresh} onSelect={onSelectEntry} onLock={onLock} />
           <button
             className="cipher-btn"
             type="button"

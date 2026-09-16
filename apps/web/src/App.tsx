@@ -313,6 +313,7 @@ export function App() {
       <AppTitleBar hasUnsavedChanges={hasUnsavedChanges} isSaving={isSubmitting || isCreatingEntry || isUpdatingEntry || isDeletingEntry} />
       {vaultStatus.isUnlocked ? (
         <VaultDashboard
+          hasUnsavedChanges={hasUnsavedChanges}
           onDirtyChange={setHasUnsavedChanges}
           entries={entries}
           isLoading={isLoadingEntries}

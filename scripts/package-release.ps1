@@ -39,6 +39,9 @@ $releasePackageJson = @'
     "start": "node dist/apps/api/src/server.js"
   },
   "dependencies": {
+    "@zxcvbn-ts/core": "^4.2.0",
+    "@zxcvbn-ts/language-common": "^4.1.3",
+    "@zxcvbn-ts/language-en": "^4.1.1",
     "better-sqlite3": "^12.9.0"
   }
 }
