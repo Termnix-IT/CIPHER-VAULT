@@ -40,11 +40,19 @@ function getDesktopApi(): PasswordManagerDesktopApi | null {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  headers.set("Content-Type", "application/json");
+  if (!["GET", "HEAD", "OPTIONS"].includes((init?.method ?? "GET").toUpperCase())) {
+    // Fetch afresh so an API restart never leaves a stale token in the open UI.
+    const { token } = await request<{ token: string }>("/vault/csrf");
+    headers.set("X-Cipher-Vault-CSRF", token);
+  }
   const response = await fetch(path, {
-    headers: {
-      "Content-Type": "application/json"
-    },
-    ...init
+    ...init,
+    headers,
+    credentials: "same-origin",
+    cache: "no-store",
+    redirect: "error"
   });
 
   if (!response.ok) {

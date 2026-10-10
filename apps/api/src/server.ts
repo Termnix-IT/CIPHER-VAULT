@@ -4,6 +4,9 @@ import { router } from "./routes/router.js";
 
 const host = process.env.PASSWORD_MANAGER_API_HOST ?? "127.0.0.1";
 const port = Number(process.env.PASSWORD_MANAGER_API_PORT ?? "3001");
+if (process.argv.includes("--dev")) {
+  process.env.PASSWORD_MANAGER_WEB_ORIGIN ??= "http://localhost:5173,http://127.0.0.1:5173";
+}
 
 const server = createServer((request, response) => {
   void router(request, response);

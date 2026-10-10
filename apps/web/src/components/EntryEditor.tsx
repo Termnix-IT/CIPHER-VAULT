@@ -23,11 +23,13 @@ export function EntryEditor({ entry, busy, isSaving, isGenerating, onDirtyChange
   const [extraOpen, setExtraOpen] = useState(false);
   const [saved, setSaved] = useState(false);
   const [localError, setLocalError] = useState("");
+  const [passwordVisibility, setPasswordVisibility] = useState<"hidden" | "armed" | "visible">("hidden");
   const alive = useRef(true);
   const extraRef = useRef<HTMLDivElement>(null);
   const panelId = useId();
   const toggleId = useId();
   const passwordId = useId();
+  const passwordHintId = useId();
   const notesId = useId();
   const dirty = (Object.keys(initial) as (keyof Draft)[]).some((key) => draft[key] !== initial[key]);
   const extraCount = [draft.group, draft.tags, draft.notes].filter((value) => value.trim()).length;
@@ -35,22 +37,30 @@ export function EntryEditor({ entry, busy, isSaving, isGenerating, onDirtyChange
   useEffect(() => {
     const next = { serviceName: entry?.serviceName ?? "", loginId: entry?.loginId ?? "", password: entry?.password ?? "",
       url: entry?.url ?? "", group: entry?.group ?? "", tags: entry?.tags.join(", ") ?? "", notes: entry?.notes ?? "" };
-    setInitial(next); setDraft(next);
+    setInitial(next); setDraft(next); setPasswordVisibility("hidden");
   }, [entry]);
   useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => { alive.current = true; return () => { alive.current = false; onDirtyChange(false); }; }, [onDirtyChange]);
   useEffect(() => { extraRef.current?.toggleAttribute("inert", !extraOpen); }, [extraOpen]);
   useEffect(() => { if (!saved) return; const timer = window.setTimeout(() => setSaved(false), 1600); return () => window.clearTimeout(timer); }, [saved]);
+  useEffect(() => { if (busy || isGenerating) setPasswordVisibility("hidden"); }, [busy, isGenerating]);
+  useEffect(() => {
+    if (passwordVisibility !== "armed") return;
+    const timer = window.setTimeout(() => setPasswordVisibility("hidden"), 3000);
+    return () => window.clearTimeout(timer);
+  }, [passwordVisibility]);
 
   function change(key: keyof Draft, value: string) {
     setDraft((current) => ({ ...current, [key]: value })); setSaved(false);
   }
   async function generate() {
+    setPasswordVisibility("hidden");
     try { const value = await onGenerate(); if (alive.current) change("password", value); }
     catch { /* The app displays the operation error. */ }
   }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (busy || isGenerating) return;
+    setPasswordVisibility("hidden");
     setSaved(false);
     setLocalError("");
     try {
@@ -92,8 +102,31 @@ export function EntryEditor({ entry, busy, isSaving, isGenerating, onDirtyChange
           {field("serviceName", "サービス", true)}
           {field("loginId", "ログインID", true)}
           <div className="form-field"><label className="form-label" htmlFor={passwordId}>パスワード</label><div className="form-inline">
-            <input id={passwordId} className="form-input" type="password" autoComplete="new-password" required disabled={busy || isGenerating}
-              value={draft.password} onChange={(event) => change("password", event.target.value)} />
+            <div className="password-input-wrap" onKeyDown={(event) => {
+              if (event.key === "Escape" && passwordVisibility !== "hidden") {
+                event.stopPropagation(); setPasswordVisibility("hidden");
+              }
+            }}>
+              <input id={passwordId} className="form-input" type={passwordVisibility === "visible" ? "text" : "password"}
+                autoComplete="new-password" required disabled={busy || isGenerating}
+                value={draft.password} onChange={(event) => change("password", event.target.value)} />
+              <button className="password-visibility-btn" type="button" disabled={busy || isGenerating}
+                aria-label={passwordVisibility === "visible" ? "パスワードを隠す" : "パスワードを表示（2回クリック）"}
+                aria-pressed={passwordVisibility === "visible"} aria-describedby={passwordHintId}
+                title={passwordVisibility === "visible" ? "クリックで隠す" : "2回クリックで表示"}
+                onKeyDown={(event) => {
+                  // Holding a key must never count as the two deliberate activations needed to reveal.
+                  if (event.repeat && (event.key === "Enter" || event.key === " ")) event.preventDefault();
+                }}
+                onBlur={() => setPasswordVisibility((current) => current === "armed" ? "hidden" : current)}
+                onClick={() => setPasswordVisibility((current) => current === "hidden" ? "armed" : current === "armed" ? "visible" : "hidden")}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+                  <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" />
+                  {passwordVisibility === "visible" && <path d="m3 3 18 18" />}
+                </svg>
+              </button>
+              <span id={passwordHintId} className="password-visibility-hint" role="status">{passwordVisibility === "armed" ? "もう一度クリックで表示" : ""}</span>
+            </div>
             <button className="cipher-btn" type="button" disabled={busy || isGenerating} onClick={() => void generate()}>{isGenerating ? "生成中…" : "生成"}</button>
           </div></div>
           {field("url", "URL")}

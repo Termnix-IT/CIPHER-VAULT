@@ -4,7 +4,8 @@ import { ManualUpdater } from "./manual-updater.js";
 
 const RELEASE_PAGE = "https://github.com/Termnix-IT/CIPHER-VAULT/releases/latest";
 
-export function registerUpdateHandlers(getWindow: () => BrowserWindow | null, lockVault: () => void, version: string) {
+export function registerUpdateHandlers(getWindow: () => BrowserWindow | null, lockVault: () => void, version: string,
+  assertSender: (event: Electron.IpcMainInvokeEvent) => void) {
   const { autoUpdater } = electronUpdater;
   const controller = new ManualUpdater(autoUpdater, version,
     app.isPackaged && process.platform === "win32" && !process.env.PORTABLE_EXECUTABLE_FILE,
@@ -12,12 +13,6 @@ export function registerUpdateHandlers(getWindow: () => BrowserWindow | null, lo
       const window = getWindow();
       if (window && !window.isDestroyed()) window.webContents.send("updates:state", state);
     });
-  const assertSender = (event: Electron.IpcMainInvokeEvent) => {
-    const window = getWindow();
-    if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) {
-      throw new Error("Invalid update request");
-    }
-  };
   ipcMain.handle("updates:state", (event) => { assertSender(event); return controller.getState(); });
   ipcMain.handle("updates:check", (event) => { assertSender(event); return controller.check(); });
   ipcMain.handle("updates:download", (event) => { assertSender(event); return controller.download(); });

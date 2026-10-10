@@ -2,6 +2,23 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { ManualUpdater } from "../apps/electron/dist/apps/electron/src/manual-updater.js";
+import { parseUpdateInfo } from "electron-updater/out/providers/Provider.js";
+
+test("updater parses channel YAML with the patched parser and rejects malformed metadata", () => {
+  const metadata = parseUpdateInfo(`version: 0.2.4
+files:
+  - url: fixture-setup.exe
+    sha512: fixture-checksum
+    size: 123
+releaseNotes: |
+  <h2>Changes</h2>
+  <ul><li>Security fix</li></ul>
+`, "latest.yml", "https://example.test/latest.yml");
+  assert.equal(metadata.version, "0.2.4");
+  assert.deepEqual(metadata.files, [{ url: "fixture-setup.exe", sha512: "fixture-checksum", size: 123 }]);
+  assert.match(metadata.releaseNotes, /<li>Security fix<\/li>/);
+  assert.throws(() => parseUpdateInfo("files: [", "latest.yml", "https://example.test/latest.yml"), { code: "ERR_UPDATER_INVALID_UPDATE_INFO" });
+});
 
 class FakeUpdater extends EventEmitter {
   checks = 0;
