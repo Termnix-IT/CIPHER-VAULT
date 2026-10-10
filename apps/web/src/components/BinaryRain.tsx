@@ -26,6 +26,7 @@ export function BinaryRain() {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
     let drops: Drop[] = [];
     let animId: number;
@@ -35,12 +36,18 @@ export function BinaryRain() {
       cancelAnimationFrame(animId);
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
-      const columns = Math.floor(canvas.width / COL_W);
+      const columns = Math.ceil(canvas.width / COL_W);
       drops = Array.from({ length: columns }, () => ({
-        y: Math.random() * -(canvas!.height / FONT_SIZE),
+        y: Math.random() * (canvas!.height / FONT_SIZE),
         speed: 0.35 + Math.random() * 0.9,
       }));
       ctx.font = `${FONT_SIZE}px "JetBrains Mono", monospace`;
+      // Seed every column, including the partial column at the right edge.
+      ctx.fillStyle = "rgba(0, 220, 230, 0.12)";
+      for (let i = 0; i < columns; i++) {
+        for (let y = FONT_SIZE; y < canvas.height; y += FONT_SIZE) ctx.fillText(randomGlyph(), i * COL_W, y);
+      }
+      if (reducedMotion.matches) return;
       draw();
     }
 
@@ -89,10 +96,12 @@ export function BinaryRain() {
 
     resize();
     window.addEventListener("resize", resize);
+    reducedMotion.addEventListener("change", resize);
 
     return () => {
       cancelAnimationFrame(animId);
       window.removeEventListener("resize", resize);
+      reducedMotion.removeEventListener("change", resize);
     };
   }, []);
 

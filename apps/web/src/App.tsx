@@ -21,26 +21,9 @@ import {
 } from "./lib/api";
 import { LockScreen } from "./pages/LockScreen";
 import { VaultDashboard } from "./pages/VaultDashboard";
-import { AppInfo } from "./components/AppInfo";
+import { AppMenu } from "./components/AppMenu";
 
 const AUTO_LOCK_TIMEOUT_MS = 5 * 60 * 1000;
-
-function AppTitleBar({ hasUnsavedChanges = false, isSaving = false }: { hasUnsavedChanges?: boolean; isSaving?: boolean }) {
-  return (
-    <div className="app-titlebar" role="banner">
-      <div className="app-titlebar-brand">
-        <img className="app-titlebar-icon" src="./icon.png" alt="" />
-        <span className="app-titlebar-name">CIPHER VAULT</span>
-      </div>
-      <div className="app-titlebar-status" aria-hidden="true">
-        <span>LOCAL-FIRST</span>
-        <span className="app-titlebar-sep">/</span>
-        <span>AES-256-GCM</span>
-      </div>
-      <AppInfo hasUnsavedChanges={hasUnsavedChanges} isSaving={isSaving} />
-    </div>
-  );
-}
 
 export function App() {
   const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null);
@@ -56,6 +39,8 @@ export function App() {
   const [errorMessage, setErrorMessage] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isGroupedView, setIsGroupedView] = useState(false);
   const autoLockTimerRef = useRef<number | null>(null);
 
   useEffect(() => window.passwordManager?.onUpdateState((state) => {
@@ -65,6 +50,8 @@ export function App() {
       setEntries([]);
       setSelectedEntry(null);
       setCopyMessage("");
+      setIsFormOpen(false);
+      setHasUnsavedChanges(false);
     }
   }), []);
 
@@ -87,14 +74,14 @@ export function App() {
     window.addEventListener("pointerdown", handleActivity);
     window.addEventListener("keydown", handleActivity);
     window.addEventListener("mousemove", handleActivity);
-    window.addEventListener("scroll", handleActivity);
+    window.addEventListener("scroll", handleActivity, true);
 
     return () => {
       clearAutoLockTimer();
       window.removeEventListener("pointerdown", handleActivity);
       window.removeEventListener("keydown", handleActivity);
       window.removeEventListener("mousemove", handleActivity);
-      window.removeEventListener("scroll", handleActivity);
+      window.removeEventListener("scroll", handleActivity, true);
     };
   }, [vaultStatus?.isUnlocked]);
 
@@ -109,6 +96,8 @@ export function App() {
       } else {
         setEntries([]);
         setSelectedEntry(null);
+        setIsFormOpen(false);
+        setHasUnsavedChanges(false);
       }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "保管庫の状態を読み込めませんでした");
@@ -154,6 +143,8 @@ export function App() {
   }
 
   async function handleLockVault() {
+    if (isSubmitting || isCreatingEntry || isUpdatingEntry || isDeletingEntry || isLoadingEntryDetail || isLoadingEntries || isGeneratingPassword) return;
+    if (hasUnsavedChanges && !window.confirm("保存していない内容を破棄して保管庫をロックしますか？")) return;
     try {
       clearAutoLockTimer();
       setErrorMessage("");
@@ -184,6 +175,7 @@ export function App() {
       setErrorMessage("");
       const created = await createEntry(payload);
       setSelectedEntry(created);
+      setHasUnsavedChanges(false);
       await refreshEntries();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "エントリを作成できませんでした");
@@ -199,6 +191,8 @@ export function App() {
       setErrorMessage("");
       const entry = await fetchEntry(id);
       setSelectedEntry(entry);
+      setIsFormOpen(false);
+      setHasUnsavedChanges(false);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "エントリ詳細を読み込めませんでした");
     } finally {
@@ -212,6 +206,7 @@ export function App() {
       setErrorMessage("");
       const updated = await updateEntry(id, payload);
       setSelectedEntry(updated);
+      setHasUnsavedChanges(false);
       await refreshEntries();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "エントリを更新できませんでした");
@@ -227,6 +222,7 @@ export function App() {
       setErrorMessage("");
       await deleteEntry(id);
       setSelectedEntry(null);
+      setHasUnsavedChanges(false);
       await refreshEntries();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "エントリを削除できませんでした");
@@ -296,10 +292,34 @@ export function App() {
     }
   }
 
+  function handleOpenCreateForm() {
+    if (isFormOpen || isCreatingEntry || isUpdatingEntry || isDeletingEntry || isLoadingEntryDetail) return;
+    if (hasUnsavedChanges && !window.confirm("保存していない内容を破棄して新規エントリを開きますか？")) return;
+    setHasUnsavedChanges(false);
+    setIsFormOpen(true);
+  }
+
+  const menu = <AppMenu
+    isUnlocked={vaultStatus?.isUnlocked ?? false}
+    isBusy={isSubmitting || isCreatingEntry || isUpdatingEntry || isDeletingEntry}
+    isLoading={isLoadingEntries || isLoadingEntryDetail || isGeneratingPassword}
+    hasUnsavedChanges={hasUnsavedChanges}
+    entryCount={entries.length}
+    selectedEntry={selectedEntry}
+    isFormOpen={isFormOpen}
+    isGroupedView={isGroupedView}
+    onRefresh={refreshEntries}
+    onLock={handleLockVault}
+    onNewEntry={handleOpenCreateForm}
+    onGroupedViewChange={setIsGroupedView}
+    onSelectEntry={handleSelectEntry}
+    onCopy={handleCopyToClipboard}
+  />;
+
   if (vaultStatus === null) {
     return (
       <main className="app-shell">
-        <AppTitleBar />
+        {menu}
         <div className="cipher-auth-shell">
           <p className="loading-text">&gt; 保管庫を読み込み中...</p>
           {errorMessage ? <p className="form-error">{errorMessage}</p> : null}
@@ -310,10 +330,14 @@ export function App() {
 
   return (
     <main className="app-shell">
-      <AppTitleBar hasUnsavedChanges={hasUnsavedChanges} isSaving={isSubmitting || isCreatingEntry || isUpdatingEntry || isDeletingEntry} />
+      {menu}
       {vaultStatus.isUnlocked ? (
         <VaultDashboard
           hasUnsavedChanges={hasUnsavedChanges}
+          isFormOpen={isFormOpen}
+          onFormOpenChange={setIsFormOpen}
+          isGroupedView={isGroupedView}
+          onGroupedViewChange={setIsGroupedView}
           onDirtyChange={setHasUnsavedChanges}
           entries={entries}
           isLoading={isLoadingEntries}

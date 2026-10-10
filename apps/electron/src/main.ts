@@ -228,10 +228,10 @@ async function createMainWindow(appRoot: string) {
   const iconPath = getWindowIconPath(appRoot);
 
   mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 960,
-    minWidth: 1100,
-    minHeight: 720,
+    width: 1200,
+    height: 780,
+    minWidth: 1000,
+    minHeight: 680,
     autoHideMenuBar: true,
     backgroundColor: "#08111d",
     icon: existsSync(iconPath) ? iconPath : undefined,
