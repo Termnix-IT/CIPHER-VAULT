@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AppUpdateState } from "@password-manager/shared/types";
+import { releaseNotesToText } from "../lib/release-notes";
 
 export function AppInfo({ hasUnsavedChanges, isSaving, renderTrigger, onClose }: {
   hasUnsavedChanges: boolean;
@@ -11,6 +12,7 @@ export function AppInfo({ hasUnsavedChanges, isSaving, renderTrigger, onClose }:
   const api = window.passwordManager;
   const [state, setState] = useState<AppUpdateState | null>(null);
   const [error, setError] = useState("");
+  const releaseNotes = useMemo(() => releaseNotesToText(state?.releaseNotes ?? ""), [state?.releaseNotes]);
   useEffect(() => {
     if (!api) return;
     let active = true;
@@ -43,7 +45,7 @@ export function AppInfo({ hasUnsavedChanges, isSaving, renderTrigger, onClose }:
         {status === "checking" && <p>最新版を確認しています…</p>}
         {status === "current" && <p>お使いのバージョンは最新です。</p>}
         {state?.latestVersion && <p>更新バージョン：{state.latestVersion}</p>}
-        {state?.releaseNotes && <details><summary>変更内容</summary><pre>{state.releaseNotes}</pre></details>}
+        {releaseNotes && <details><summary>変更内容</summary><pre>{releaseNotes}</pre></details>}
         {status === "downloading" && <div><progress aria-label="ダウンロード進捗" max="100" value={state?.progress ?? 0} /><p>ダウンロード中… {Math.floor(state?.progress ?? 0)}%</p></div>}
         {status === "downloaded" && <p>更新の準備ができました。「あとで」を選ぶと、通常終了時にも適用されません。</p>}
         {status === "installing" && <p>保管庫をロックしました。インストーラーを起動しています…</p>}

@@ -1109,6 +1109,14 @@ body::after {
 .entry-editor .form-input { min-width: 0; padding: 10px 4px; font-size: 13px; }
 .entry-editor .form-inline { min-width: 0; }
 .entry-editor .form-inline .cipher-btn { height: 38px; }
+.password-input-wrap { flex: 1; min-width: 0; position: relative; }
+.entry-editor .password-input-wrap .form-input { width: 100%; padding-right: 38px; }
+.password-visibility-btn { position: absolute; top: 0; right: 0; bottom: 1px; width: 34px; display: flex; align-items: center; justify-content: center;
+  border: 0; background: transparent; color: var(--text-dim); cursor: pointer; transition: color 160ms ease, background 160ms ease; }
+.password-visibility-btn:hover:not(:disabled), .password-visibility-btn[aria-pressed="true"] { color: var(--accent-cyan); background: rgba(0,255,255,.06); }
+.password-visibility-btn:focus-visible { outline: 1px solid var(--accent-cyan); outline-offset: -2px; }
+.password-visibility-btn:disabled { opacity: .4; cursor: default; }
+.password-visibility-hint { position: absolute; top: calc(100% + 4px); right: 0; color: var(--accent-cyan); font: 10px var(--font-body); pointer-events: none; }
 .entry-editor .form-field:focus-within .form-label { color: var(--accent-cyan); }
 .entry-editor .form-label { transition: color 160ms ease; font-size: 11px; }
 .entry-editor .form-input:focus, .entry-editor .form-textarea:focus { background: rgba(0,255,255,.025); box-shadow: 0 4px 12px -9px var(--accent-cyan); }
@@ -1136,7 +1144,7 @@ body::after {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 28px 0;
+  padding: 28px;
   position: relative;
 }
 
@@ -1150,8 +1158,8 @@ body::after {
   display: inline-block;
 }
 
-.inspector-empty h3 {
-  font-family: var(--font-mono);
+.inspector-empty h2 {
+  font-family: var(--font-body);
   font-size: 1rem;
   color: var(--text-dim);
   letter-spacing: 0.04em;
@@ -1213,6 +1221,7 @@ body::after {
   .dashboard-body { grid-template-columns: 250px minmax(0,1fr); }
   .editor-scroll { padding: 16px 22px 10px; }
   .inspector-header { padding: 14px 22px; }
+  .inspector-empty { padding-inline: 22px; }
   .editor-actions { padding: 8px 22px 16px; }
   .inspector-form-grid, .editor-extra-fields { column-gap: 22px; }
   .entry-summary { gap: 12px; }
@@ -1238,7 +1247,7 @@ body::after {
   .dashboard-body { grid-template-columns: 210px minmax(0,1fr); }
   .entry-summary { grid-template-columns: 1fr; }
   .inspector-form-grid, .editor-extra-fields { grid-template-columns: 1fr; }
-  .editor-scroll, .inspector-header, .editor-actions { padding-inline: 16px; }
+  .editor-scroll, .inspector-header, .editor-actions, .inspector-empty { padding-inline: 16px; }
   .entry-metadata { flex-wrap: wrap; gap: 4px 12px; }
   .corner-marker { display: none; }
 }

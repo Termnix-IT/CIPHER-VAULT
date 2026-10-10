@@ -51,7 +51,7 @@ Windows用の実行ファイルは [GitHub Releases](https://github.com/Termnix-
 
 ### 3. 詳細を確認・編集する
 
-左の一覧からエントリを選ぶと、右側に詳細と編集フォームが表示されます。ログインID・パスワード・URLは各コピーボタンでクリップボードへコピーできます。パスワードは画面上では伏せ字で表示します。
+左の一覧からエントリを選ぶと、右側に詳細と編集フォームが表示されます。ログインID・パスワード・URLは各コピーボタンでクリップボードへコピーできます。パスワードは通常伏せ字で表示します。入力欄の目のアイコンを3秒以内に2回クリックすると表示され、表示中は1回クリックで隠せます。キーボードでもアイコンを選択してEnterまたはSpaceを2回押すと表示できます。保存・生成・エントリ切り替え・ロック時には伏せ字へ戻ります。
 
 編集フォームの値を変更して「変更を保存」を押すと更新されます。「追加情報」は入力済みの項目数を表示し、開くとグループ・タグ・メモを編集できます。「生成」は入力欄のパスワードを置き換えるため、保存前に内容を確認してください。「削除」は確認後に対象エントリを削除します。保存・削除ボタンは右下に固定され、長いメモはメモ欄の中でスクロールします。
 
@@ -105,7 +105,7 @@ Windowsのsetup版では「ヘルプ」→「アプリ情報 / 更新」から�
 
 ## 開発する場合
 
-Node.js 20以上とnpmを使用します。Windows用配布物の生成にはWindowsとPowerShellが必要です。Web/API版の開発はWindows・macOS・Linuxを対象としています。
+開発にはNode.js 22.12.0以上とnpmを使用します。Windows用配布物の生成にはWindowsとPowerShellが必要です。Web/API版の開発はWindows・macOS・Linuxを対象としています。
 
 リポジトリルートで実行します。
 
@@ -121,6 +121,7 @@ npm run dev:desktop
 | `npm run build` / `npm run start` | Web/APIをビルドし、`http://localhost:3001` で起動 |
 | `npm run build:desktop` / `npm run start:desktop` | デスクトップ版をビルド・起動 |
 | `npm run test:api` | 一時DBでサービス・HTTP・Web配布の回帰確認 |
+| `npm run test:security` | Electronの画面URL・IPC送信元の境界を確認 |
 | `npm run test:updates` | 手動更新の制御確認 |
 | `npm run package:desktop` | `dist-desktop/` にWindows用setup・portableを生成（公開しない） |
 | `npm run package` | Node.jsで動かすWeb/API配布フォルダ `release/` を生成 |

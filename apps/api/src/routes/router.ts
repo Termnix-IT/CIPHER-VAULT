@@ -7,6 +7,7 @@ import type {
   VaultUnlockPayload
 } from "@password-manager/shared/types";
 import { HttpError } from "../lib/errors.js";
+import { assertTrustedRequest, getCsrfToken } from "../lib/request-security.js";
 import { exportBackup, restoreBackup } from "../services/backup-service.js";
 import { auditVault } from "../services/audit-service.js";
 import { readJsonBody } from "../lib/json.js";
@@ -16,13 +17,14 @@ import { createEntry, deleteEntry, getEntryById, listEntries, updateEntry } from
 import { getVaultStatus, lockVault, resetVault, setupVault, unlockVault } from "../services/vault-service.js";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown) {
-  response.writeHead(statusCode, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+  response.writeHead(statusCode, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Cross-Origin-Resource-Policy": "same-origin" });
   response.end(JSON.stringify(payload));
 }
 
 export async function router(request: IncomingMessage, response: ServerResponse) {
   const method = request.method ?? "GET";
   try {
+    assertTrustedRequest(request);
     let url: string;
     try {
       url = new URL(request.url ?? "/", "http://localhost").pathname;
@@ -31,6 +33,10 @@ export async function router(request: IncomingMessage, response: ServerResponse)
     }
     const entryMatch = url.match(/^\/entries\/([^/]+)$/);
     const pathname = url;
+    if (method === "GET" && url === "/vault/csrf") {
+      sendJson(response, 200, { token: getCsrfToken() });
+      return;
+    }
     if (method === "POST" && url === "/vault/backup/export") {
       sendJson(response, 200, await exportBackup(await readJsonBody(request)));
       return;

@@ -3,7 +3,7 @@ import { after, test } from "node:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import { spawnSync } from "node:child_process";
 import { createCipheriv, scryptSync } from "node:crypto";
 import Database from "better-sqlite3";
@@ -41,6 +41,26 @@ const server = createServer((request, response) => void router(request, response
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const origin = `http://127.0.0.1:${server.address().port}`;
 
+async function apiRequest(pathname, init = {}) {
+  const { token } = await (await fetch(`${origin}/vault/csrf`)).json();
+  return fetch(`${origin}${pathname}`, {
+    ...init,
+    headers: { "Content-Type": "application/json", "X-Cipher-Vault-CSRF": token, Origin: origin, ...init.headers }
+  });
+}
+
+// Use node:http for attack fixtures: Fetch can normalize or discard Host/metadata headers.
+function rawRequest(pathname, method, headers, body) {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(`${origin}${pathname}`, { method, headers }, (response) => {
+      response.resume();
+      response.on("end", () => resolve(response.statusCode));
+    });
+    request.on("error", reject);
+    request.end(body);
+  });
+}
+
 after(async () => {
   server.closeAllConnections();
   await new Promise((resolve) => server.close(resolve));
@@ -61,6 +81,44 @@ function freshVault() {
   vault.resetVault({ confirmation: "RESET_ALL_DATA" });
   vault.setupVault({ masterPassword: "temporary-test-password" });
 }
+
+test("HTTP rejects foreign origins, DNS rebinding hosts and unverified mutations without resetting a locked vault", async () => {
+  freshVault();
+  const created = entries.createEntry({ serviceName: "CSRF fixture", loginId: "fixture", password: "dummy secret" });
+  vault.lockVault();
+  const csrfResponse = await fetch(`${origin}/vault/csrf`);
+  assert.equal(csrfResponse.headers.get("cache-control"), "no-store");
+  const { token } = await csrfResponse.json();
+  assert.match(token, /^[a-f0-9]{64}$/);
+  const body = JSON.stringify({ confirmation: "RESET_ALL_DATA" });
+  for (const headers of [
+    { "Content-Type": "text/plain", Origin: "http://evil.example" },
+    { "Content-Type": "application/json", Origin: "http://evil.example", "X-Cipher-Vault-CSRF": token },
+    { "Content-Type": "application/json", Origin: "null", "X-Cipher-Vault-CSRF": token },
+    { "Content-Type": "application/json", Origin: "http://localhost:5200", "X-Cipher-Vault-CSRF": token },
+    { "Content-Type": "application/json", Origin: origin, "Sec-Fetch-Site": "cross-site", "X-Cipher-Vault-CSRF": token },
+    { "Content-Type": "application/json", Origin: origin },
+    { "Content-Type": "application/json", Origin: origin, "X-Cipher-Vault-CSRF": "0".repeat(64) },
+    { "Content-Type": "application/json", Origin: origin, "X-Cipher-Vault-CSRF": "é".repeat(64) },
+    { "Content-Type": "text/plain", Origin: origin, "X-Cipher-Vault-CSRF": token },
+    { "Content-Type": "application/json", Host: `evil.example:${server.address().port}`, "X-Cipher-Vault-CSRF": token }
+  ]) {
+    const status = await rawRequest("/vault/reset", "POST", headers, body);
+    assert.ok([403, 415].includes(status), `unexpected status ${status}`);
+    assert.deepEqual(vault.getVaultStatus(), { isConfigured: true, isUnlocked: false });
+  }
+  for (const pathname of ["/vault/csrf", "/entries", `/entries/${created.id}`]) {
+    assert.equal(await rawRequest(pathname, "GET", { Origin: "http://evil.example" }), 403);
+    assert.equal(await rawRequest(pathname, "GET", { "Sec-Fetch-Site": "cross-site" }), 403);
+    assert.equal(await rawRequest(pathname, "GET", { Host: `evil.example:${server.address().port}` }), 403);
+  }
+  assert.equal((await apiRequest("/vault/unlock", { method: "POST", body: JSON.stringify({ masterPassword: "temporary-test-password" }) })).status, 200);
+  assert.equal((await fetch(`${origin}/entries/${created.id}`)).status, 200);
+  assert.equal((await apiRequest(`/entries/${created.id}`, { method: "DELETE" })).status, 200);
+  assert.equal((await apiRequest("/vault/lock", { method: "POST" })).status, 200);
+  assert.equal((await apiRequest("/vault/reset", { method: "POST", body })).status, 200);
+  assert.equal(vault.getVaultStatus().isConfigured, false);
+});
 
 test("encrypted backup restores all fields under a different vault key and rejects nonempty vaults", async () => {
   freshVault();
@@ -176,18 +234,18 @@ test("audit reports local issues without secrets and tracks password changes sep
 
 test("HTTP backup and audit use shared validation and enforce body size limits", async () => {
   freshVault();
-  const exported = await fetch(`${origin}/vault/backup/export`, { method: "POST", body: JSON.stringify({ passphrase: backupPassphrase }) });
+  const exported = await apiRequest("/vault/backup/export", { method: "POST", body: JSON.stringify({ passphrase: backupPassphrase }) });
   assert.equal(exported.status, 200);
   const file = await exported.json();
-  const restored = await fetch(`${origin}/vault/backup/restore`, { method: "POST", body: JSON.stringify({ content: file.content, passphrase: backupPassphrase }) });
+  const restored = await apiRequest("/vault/backup/restore", { method: "POST", body: JSON.stringify({ content: file.content, passphrase: backupPassphrase }) });
   assert.equal(restored.status, 200);
   assert.deepEqual(await restored.json(), { restoredCount: 0 });
-  const audit = await fetch(`${origin}/vault/audit`, { method: "POST" });
+  const audit = await apiRequest("/vault/audit", { method: "POST" });
   assert.equal(audit.status, 200);
   assert.equal((await audit.json()).score, null);
-  const invalid = await fetch(`${origin}/vault/backup/export`, { method: "POST", body: "null" });
+  const invalid = await apiRequest("/vault/backup/export", { method: "POST", body: "null" });
   assert.equal(invalid.status, 400);
-  const large = await fetch(`${origin}/vault/backup/export`, { method: "POST", body: "x".repeat(1024 * 1024 + 1) });
+  const large = await apiRequest("/vault/backup/export", { method: "POST", body: "x".repeat(1024 * 1024 + 1) });
   assert.equal(large.status, 413);
 });
 
@@ -200,10 +258,10 @@ test("invalid generation options return 400", () => {
 
 test("HTTP rejects malformed JSON and handles query strings", async () => {
   vault.resetVault({ confirmation: "RESET_ALL_DATA" });
-  const malformed = await fetch(`${origin}/password/generate`, { method: "POST", body: "{" });
+  const malformed = await apiRequest("/password/generate", { method: "POST", body: "{" });
   assert.equal(malformed.status, 400);
   assert.equal((await fetch(`${origin}/health?check=1`)).status, 200);
-  assert.equal((await fetch(`${origin}/vault/setup`, { method: "POST", body: "null" })).status, 400);
+  assert.equal((await apiRequest("/vault/setup", { method: "POST", body: "null" })).status, 400);
 });
 
 test("static serving rejects sibling paths and directories and supplies PNG MIME", async () => {

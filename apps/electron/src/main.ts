@@ -4,6 +4,7 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { registerUpdateHandlers } from "./update-service.js";
+import { createSenderGuard, isTrustedRendererUrl } from "./renderer-security.js";
 import type {
   PasswordGenerationOptions,
   PasswordEntryUpsertPayload,
@@ -18,6 +19,8 @@ const __dirname = path.dirname(__filename);
 const rendererDevUrl = process.env.PASSWORD_MANAGER_RENDERER_URL ?? "http://localhost:5173";
 
 let mainWindow: BrowserWindow | null = null;
+let trustedRendererUrl: string | null = null;
+const assertTrustedSender = createSenderGuard(() => mainWindow, () => trustedRendererUrl);
 
 type VaultServiceModule = {
   getVaultStatus: () => { isConfigured: boolean; isUnlocked: boolean };
@@ -172,39 +175,32 @@ async function invokeSafely<T>(action: () => Promise<T> | T) {
 }
 
 function registerIpcHandlers(services: AppServices) {
-  ipcMain.handle("backup:export", (_event, payload) => invokeSafely(() => services.backup.exportBackup(payload)));
-  ipcMain.handle("backup:restore", (_event, payload) => invokeSafely(() => services.backup.restoreBackup(payload)));
-  ipcMain.handle("vault:audit", () => invokeSafely(() => services.audit.auditVault()));
-  ipcMain.handle("vault:getStatus", () => invokeSafely(() => services.vault.getVaultStatus()));
-  ipcMain.handle("vault:setup", (_event, payload: VaultSetupPayload) => invokeSafely(() => services.vault.setupVault(payload)));
-  ipcMain.handle("vault:unlock", (_event, payload: VaultUnlockPayload) =>
-    invokeSafely(() => services.vault.unlockVault(payload))
-  );
-  ipcMain.handle("vault:lock", () => invokeSafely(() => services.vault.lockVault()));
-  ipcMain.handle("vault:reset", (_event, payload: VaultResetPayload) =>
-    invokeSafely(() => services.vault.resetVault(payload))
-  );
-  ipcMain.handle("entries:list", () => invokeSafely(() => services.entries.listEntries()));
-  ipcMain.handle("entries:getById", (_event, id: string) => invokeSafely(() => services.entries.getEntryById(id)));
-  ipcMain.handle("entries:create", (_event, payload: PasswordEntryUpsertPayload) =>
-    invokeSafely(() => services.entries.createEntry(payload))
-  );
-  ipcMain.handle("entries:update", (_event, id: string, payload: PasswordEntryUpsertPayload) =>
-    invokeSafely(() => services.entries.updateEntry(id, payload))
-  );
-  ipcMain.handle("entries:delete", (_event, id: string) => invokeSafely(() => services.entries.deleteEntry(id)));
-  ipcMain.handle("password:generate", (_event, options: PasswordGenerationOptions = {}) =>
-    invokeSafely(() => services.password.generatePassword(options))
-  );
-  ipcMain.handle("clipboard:writeText", (_event, value: string) =>
-    invokeSafely(() => {
-      clipboard.writeText(value);
-    })
-  );
+  function handle<T extends unknown[]>(channel: string, action: (...args: T) => unknown) {
+    ipcMain.handle(channel, (event, ...args: T) => {
+      assertTrustedSender(event);
+      return invokeSafely(() => action(...args));
+    });
+  }
+  handle("backup:export", services.backup.exportBackup);
+  handle("backup:restore", services.backup.restoreBackup);
+  handle("vault:audit", services.audit.auditVault);
+  handle("vault:getStatus", services.vault.getVaultStatus);
+  handle("vault:setup", services.vault.setupVault);
+  handle("vault:unlock", services.vault.unlockVault);
+  handle("vault:lock", services.vault.lockVault);
+  handle("vault:reset", services.vault.resetVault);
+  handle("entries:list", services.entries.listEntries);
+  handle("entries:getById", services.entries.getEntryById);
+  handle("entries:create", services.entries.createEntry);
+  handle("entries:update", services.entries.updateEntry);
+  handle("entries:delete", services.entries.deleteEntry);
+  handle("password:generate", services.password.generatePassword);
+  handle("clipboard:writeText", (value: string) => { clipboard.writeText(value); });
 }
 
 async function loadRenderer(window: BrowserWindow, appRoot: string) {
   if (!app.isPackaged && await waitForUrl(rendererDevUrl, 15000)) {
+    trustedRendererUrl = new URL(rendererDevUrl).href;
     await window.loadURL(rendererDevUrl);
     return;
   }
@@ -216,6 +212,7 @@ async function loadRenderer(window: BrowserWindow, appRoot: string) {
     throw new Error(`Web build output was not found: ${indexPath}`);
   }
 
+  trustedRendererUrl = pathToFileURL(indexPath).href;
   await window.loadFile(indexPath);
 }
 
@@ -251,7 +248,17 @@ async function createMainWindow(appRoot: string) {
 
   mainWindow.on("closed", () => {
     mainWindow = null;
+    trustedRendererUrl = null;
   });
+
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  mainWindow.webContents.on("will-frame-navigate", (event) => {
+    if (!event.isMainFrame || !isTrustedRendererUrl(event.url, trustedRendererUrl)) event.preventDefault();
+  });
+  mainWindow.webContents.on("will-redirect", (event) => {
+    if (!event.isMainFrame || !isTrustedRendererUrl(event.url, trustedRendererUrl)) event.preventDefault();
+  });
+  mainWindow.webContents.on("will-attach-webview", (event) => event.preventDefault());
 
   await loadRenderer(mainWindow, appRoot);
 }
@@ -266,7 +273,7 @@ async function bootstrap() {
   const services = await loadAppServices(appRoot);
   registerIpcHandlers(services);
   const version = app.isPackaged ? app.getVersion() : JSON.parse(readFileSync(path.join(appRoot, "package.json"), "utf8")).version as string;
-  registerUpdateHandlers(() => mainWindow, () => { services.vault.lockVault(); }, version);
+  registerUpdateHandlers(() => mainWindow, () => { services.vault.lockVault(); }, version, assertTrustedSender);
   const { database } = await importModule<{ database: { open: boolean; close: () => void } }>(getApiBuildPath(appRoot, "db/database.js"));
   app.on("will-quit", () => {
     services.vault.lockVault();
