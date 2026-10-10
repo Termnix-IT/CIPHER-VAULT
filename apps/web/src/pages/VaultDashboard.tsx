@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PasswordEntry, PasswordEntrySummary, PasswordEntryUpsertPayload } from "@password-manager/shared/types";
 import { EntryEditor } from "../components/EntryEditor";
 
@@ -33,6 +33,10 @@ export function VaultDashboard(props: VaultDashboardProps) {
   const { entries, selectedEntry, isFormOpen, isGroupedView } = props;
   const [searchTerm, setSearchTerm] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const listRef = useRef<HTMLDivElement>(null);
+  const markerRef = useRef<HTMLDivElement>(null);
+  const detailRef = useRef<HTMLElement>(null);
+  const previousSelection = useRef<string | null>(null);
   const search = searchTerm.trim().toLocaleLowerCase("ja-JP");
   const filtered = useMemo(() => entries.filter((entry) => !search ||
     [entry.serviceName, entry.loginId, entry.group ?? "", ...entry.tags]
@@ -47,6 +51,52 @@ export function VaultDashboard(props: VaultDashboardProps) {
   }, [filtered]);
   const busy = props.isCreating || props.isUpdating || props.isDeleting || props.isLoadingDetail || props.isGeneratingPassword;
 
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    const marker = markerRef.current;
+    if (!list || !marker) return;
+    const active = list.querySelector<HTMLElement>(".entry-row--active");
+    if (!active) {
+      marker.hidden = true;
+      return;
+    }
+    const position = () => {
+      const top = active.getBoundingClientRect().top - list.getBoundingClientRect().top;
+      marker.style.transform = `translateY(${top}px)`;
+      marker.style.height = `${active.offsetHeight}px`;
+      marker.hidden = false;
+    };
+    position();
+    const observer = new ResizeObserver(position);
+    observer.observe(list);
+    observer.observe(active);
+    return () => observer.disconnect();
+  }, [filtered, selectedEntry?.id, isFormOpen, isGroupedView, collapsedGroups, props.isLoading]);
+
+  useLayoutEffect(() => {
+    if (props.isLoadingDetail) return;
+    const selection = isFormOpen ? "new" : selectedEntry?.id ?? null;
+    const previous = previousSelection.current;
+    previousSelection.current = selection;
+    if (!selection || selection === previous) return;
+    const form = detailRef.current?.querySelector(".entry-editor");
+    const heading = detailRef.current?.querySelector(".inspector-title");
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    if (!form || reducedMotion.matches) return;
+    const rows = [...(listRef.current?.querySelectorAll<HTMLElement>(".entry-row") ?? [])];
+    const nextIndex = rows.findIndex((row) => row.dataset.entryId === selection);
+    const oldIndex = rows.findIndex((row) => row.dataset.entryId === previous);
+    const offset = oldIndex >= 0 && nextIndex >= 0 && nextIndex < oldIndex ? -12 : 12;
+    // Animate only the current DOM. Never retain an outgoing editor or a snapshot of its secrets.
+    const frames = [{ opacity: 0, transform: `translateY(${offset}px)` }, { opacity: 1, transform: "translateY(0)" }];
+    const timing = { duration: 240, easing: "cubic-bezier(.2,.75,.25,1)" };
+    const animations = [form.animate(frames, timing), heading?.animate(frames, timing)];
+    const cancel = () => animations.forEach((animation) => animation?.cancel());
+    const preferenceChanged = () => { if (reducedMotion.matches) cancel(); };
+    reducedMotion.addEventListener("change", preferenceChanged);
+    return () => { cancel(); reducedMotion.removeEventListener("change", preferenceChanged); };
+  }, [selectedEntry?.id, isFormOpen, props.isLoadingDetail]);
+
   function canDiscard() {
     return !props.hasUnsavedChanges || window.confirm("未保存の変更を破棄しますか？");
   }
@@ -55,7 +105,7 @@ export function VaultDashboard(props: VaultDashboardProps) {
     props.onFormOpenChange(!isFormOpen);
   }
   function renderEntry(entry: PasswordEntrySummary) {
-    return <button key={entry.id} type="button"
+    return <button key={entry.id} type="button" data-entry-id={entry.id}
       className={`entry-row ${!isFormOpen && selectedEntry?.id === entry.id ? "entry-row--active" : ""}`}
       disabled={busy} aria-current={!isFormOpen && selectedEntry?.id === entry.id ? "true" : undefined}
       onClick={() => {
@@ -90,23 +140,26 @@ export function VaultDashboard(props: VaultDashboardProps) {
             onClick={() => props.onGroupedViewChange(!isGroupedView)}>{isGroupedView ? "全件表示" : "グループ"}</button>
         </div>
         <div className="entry-list">
-          {props.isLoading && <p className="empty-state-text" role="status">読み込み中…</p>}
-          {!props.isLoading && filtered.length === 0 && <p className="empty-state-text">{search ? "一致するエントリがありません。" : "新規追加からエントリを登録してください。"}</p>}
-          {!props.isLoading && (isGroupedView && !search ? groups.map(([name, items]) => <div key={name}>
-            <button className="group-header" type="button" aria-expanded={!collapsedGroups.has(name)} onClick={() => setCollapsedGroups((current) => {
-              const next = new Set(current); if (next.has(name)) next.delete(name); else next.add(name); return next;
-            })}>
-              <span className="group-header-arrow" aria-hidden="true">{collapsedGroups.has(name) ? "▸" : "▾"}</span>
-              <span className="group-header-name">{name}</span><span className="group-header-count">{items.length}件</span>
-            </button>
-            {!collapsedGroups.has(name) && items.map(renderEntry)}
-          </div>) : filtered.map(renderEntry))}
+          <div className="entry-list-content" ref={listRef}>
+            <div className="entry-selection-marker" ref={markerRef} aria-hidden="true" hidden />
+            {props.isLoading && <p className="empty-state-text" role="status">読み込み中…</p>}
+            {!props.isLoading && filtered.length === 0 && <p className="empty-state-text">{search ? "一致するエントリがありません。" : "新規追加からエントリを登録してください。"}</p>}
+            {!props.isLoading && (isGroupedView && !search ? groups.map(([name, items]) => <div key={name}>
+              <button className="group-header" type="button" aria-expanded={!collapsedGroups.has(name)} onClick={() => setCollapsedGroups((current) => {
+                const next = new Set(current); if (next.has(name)) next.delete(name); else next.add(name); return next;
+              })}>
+                <span className="group-header-arrow" aria-hidden="true">{collapsedGroups.has(name) ? "▸" : "▾"}</span>
+                <span className="group-header-name">{name}</span><span className="group-header-count">{items.length}件</span>
+              </button>
+              {!collapsedGroups.has(name) && items.map(renderEntry)}
+            </div>) : filtered.map(renderEntry))}
+          </div>
         </div>
       </aside>
-      <section className="vault-detail" aria-label={isFormOpen ? "新規エントリ" : "エントリの詳細と編集"}>
+      <section className="vault-detail" ref={detailRef} aria-label={isFormOpen ? "新規エントリ" : "エントリの詳細と編集"}>
         <div className="inspector-header">
           <h1 className="inspector-title">{isFormOpen ? "新規エントリ" : selectedEntry?.serviceName ?? "エントリを選択"}</h1>
-          {(props.errorMessage || props.copyMessage) && <p className={`status-msg ${props.errorMessage ? "status-msg--error" : "status-msg--copy"}`} role={props.errorMessage ? "alert" : "status"}>
+          {(props.errorMessage || props.copyMessage) && <p key={props.errorMessage || props.copyMessage} className={`status-msg ${props.errorMessage ? "status-msg--error" : "status-msg--copy"}`} role={props.errorMessage ? "alert" : "status"}>
             {props.errorMessage || props.copyMessage}
           </p>}
         </div>

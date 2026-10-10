@@ -22,6 +22,8 @@ export function EntryEditor({ entry, busy, isSaving, isGenerating, onDirtyChange
   const [draft, setDraft] = useState(initial);
   const [extraOpen, setExtraOpen] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [copiedLabel, setCopiedLabel] = useState<string | null>(null);
+  const copyRequest = useRef(0);
   const [localError, setLocalError] = useState("");
   const [passwordVisibility, setPasswordVisibility] = useState<"hidden" | "armed" | "visible">("hidden");
   const alive = useRef(true);
@@ -43,6 +45,11 @@ export function EntryEditor({ entry, busy, isSaving, isGenerating, onDirtyChange
   useEffect(() => { alive.current = true; return () => { alive.current = false; onDirtyChange(false); }; }, [onDirtyChange]);
   useEffect(() => { extraRef.current?.toggleAttribute("inert", !extraOpen); }, [extraOpen]);
   useEffect(() => { if (!saved) return; const timer = window.setTimeout(() => setSaved(false), 1600); return () => window.clearTimeout(timer); }, [saved]);
+  useEffect(() => {
+    if (!copiedLabel) return;
+    const timer = window.setTimeout(() => setCopiedLabel(null), 1600);
+    return () => window.clearTimeout(timer);
+  }, [copiedLabel]);
   useEffect(() => { if (busy || isGenerating) setPasswordVisibility("hidden"); }, [busy, isGenerating]);
   useEffect(() => {
     if (passwordVisibility !== "armed") return;
@@ -57,6 +64,14 @@ export function EntryEditor({ entry, busy, isSaving, isGenerating, onDirtyChange
     setPasswordVisibility("hidden");
     try { const value = await onGenerate(); if (alive.current) change("password", value); }
     catch { /* The app displays the operation error. */ }
+  }
+  async function copy(value: string, label: string) {
+    const request = ++copyRequest.current;
+    setCopiedLabel(null);
+    try {
+      await onCopy(value, label);
+      if (alive.current && request === copyRequest.current) setCopiedLabel(label);
+    } catch { /* The app displays the operation error; do not show success feedback. */ }
   }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (busy || isGenerating) return;
@@ -88,9 +103,11 @@ export function EntryEditor({ entry, busy, isSaving, isGenerating, onDirtyChange
             <span className="summary-label">{item.label}</span>
             <div className="summary-value-row"><span className={`summary-value ${item.password ? "summary-value--password" : ""}`}>
               {item.password ? "•".repeat(Math.min(item.value.length, 16)) : item.value || "未登録"}
-            </span><button className="copy-btn" type="button" disabled={!item.value || busy} aria-label={`${item.label}をコピー`} title={`${item.label}をコピー`}
-              onClick={() => { void onCopy(item.value, item.label).catch(() => {}); }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="1" /><path d="M16 8V4H4v12h4" /></svg>
+            </span><button className={`copy-btn ${copiedLabel === item.label ? "copy-btn--copied" : ""}`} type="button" disabled={!item.value || busy} aria-label={`${item.label}をコピー`} title={copiedLabel === item.label ? "コピーしました" : `${item.label}をコピー`}
+              onClick={() => { void copy(item.value, item.label); }}>
+              <svg key={copiedLabel === item.label ? "copied" : "copy"} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+                {copiedLabel === item.label ? <path d="m5 12 4 4L19 6" /> : <><rect x="8" y="8" width="12" height="12" rx="1" /><path d="M16 8V4H4v12h4" /></>}
+              </svg>
             </button></div>
           </div>)}
         </div>
@@ -151,7 +168,10 @@ export function EntryEditor({ entry, busy, isSaving, isGenerating, onDirtyChange
     <div className="editor-actions">
       <span className="editor-save-status" role="status">{isSaving ? "保存中…" : saved ? "保存しました" : dirty ? "未保存の変更あり" : ""}</span>
       <div className="action-row">
-        <button className="cipher-btn cipher-btn--primary" type="submit" disabled={busy || isGenerating}>{isSaving ? "保存中…" : entry ? "変更を保存" : "保存"}</button>
+        <button className="cipher-btn cipher-btn--primary editor-save-btn" type="submit" disabled={busy || isGenerating}>
+          {saved && <svg className="completion-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m5 12 4 4L19 6" /></svg>}
+          {isSaving ? "保存中…" : saved ? "保存しました" : entry ? "変更を保存" : "保存"}
+        </button>
         {entry ? <button className="cipher-btn cipher-btn--danger" type="button" disabled={busy || isGenerating} onClick={() => { void onDelete().catch(() => {}); }}>削除</button> :
           <button className="cipher-btn" type="button" disabled={busy || isGenerating} onClick={onCancel}>キャンセル</button>}
       </div>
