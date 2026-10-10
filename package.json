@@ -4,7 +4,7 @@
   "description": "Local-first desktop password manager built with Electron, React, and SQLite.",
   "author": "lugep",
   "private": true,
-  "version": "0.2.2",
+  "version": "0.2.3",
   "main": "apps/electron/dist/apps/electron/src/main.js",
   "workspaces": [
     "apps/*",

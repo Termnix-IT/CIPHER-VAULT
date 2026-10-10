@@ -1,7 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { AppUpdateState } from "@password-manager/shared/types";
 
-export function AppInfo({ hasUnsavedChanges, isSaving }: { hasUnsavedChanges: boolean; isSaving: boolean }) {
+export function AppInfo({ hasUnsavedChanges, isSaving, renderTrigger, onClose }: {
+  hasUnsavedChanges: boolean;
+  isSaving: boolean;
+  renderTrigger?: (open: () => void) => ReactNode;
+  onClose?: () => void;
+}) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const api = window.passwordManager;
   const [state, setState] = useState<AppUpdateState | null>(null);
@@ -23,9 +28,10 @@ export function AppInfo({ hasUnsavedChanges, isSaving }: { hasUnsavedChanges: bo
   }
   const status = state?.status;
   const close = () => dialogRef.current?.close();
+  const open = () => { if (!dialogRef.current?.open) dialogRef.current?.showModal(); };
   return <>
-    <button className="app-info-trigger" onClick={() => dialogRef.current?.showModal()}>アプリ情報</button>
-    <dialog className="app-info-dialog" ref={dialogRef} aria-labelledby="app-info-title">
+    {renderTrigger ? renderTrigger(open) : <button className="app-info-trigger" onClick={open}>アプリ情報</button>}
+    <dialog className="app-info-dialog" ref={dialogRef} aria-labelledby="app-info-title" onClose={onClose}>
       <div className="app-info-heading">
         <img src="./icon.png" alt="" width="88" height="88" />
         <div><h2 id="app-info-title">CIPHER VAULT</h2><p>{state ? `バージョン ${state.currentVersion}` : "ローカルのパスワード保管庫"}</p></div>

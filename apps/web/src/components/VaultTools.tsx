@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { AuditIssue, SecurityAudit } from "@password-manager/shared/types";
 import { auditVault, exportBackup, restoreBackup } from "../lib/api";
 
@@ -7,9 +7,11 @@ const labels: Record<AuditIssue, string> = {
   missingUrl: "URLなし", staleEntry: "長期間更新なし"
 };
 
-export function VaultTools({ entryCount, disabled, onRefresh, onSelect, onLock }: {
+export function VaultTools({ entryCount, disabled, onRefresh, onSelect, onLock, renderTrigger, onClose }: {
   entryCount: number; disabled: boolean; onRefresh: () => Promise<void>; onSelect: (id: string) => Promise<void>;
   onLock: () => Promise<void>;
+  renderTrigger?: (open: (panel: "audit" | "backup") => void) => ReactNode;
+  onClose?: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const alive = useRef(false);
@@ -47,6 +49,7 @@ export function VaultTools({ entryCount, disabled, onRefresh, onSelect, onLock }
   }
 
   function open(next: "audit" | "backup") {
+    if (disabled || busy) return;
     setPanel(next); setError(""); setMessage(""); setFilter(null); setAudit(null); clearSecrets();
     dialog.current?.showModal();
     if (next === "audit") void scan();
@@ -81,16 +84,18 @@ export function VaultTools({ entryCount, disabled, onRefresh, onSelect, onLock }
   }
 
   return <>
-    <button className="cipher-btn" disabled={disabled} title={disabled ? "編集中の内容を保存してください" : undefined} onClick={() => open("audit")}>セキュリティ監査</button>
-    <button className="cipher-btn" disabled={disabled} title={disabled ? "編集中の内容を保存してください" : undefined} onClick={() => open("backup")}>バックアップ</button>
+    {renderTrigger ? renderTrigger(open) : <>
+      <button className="cipher-btn" disabled={disabled} title={disabled ? "編集中の内容を保存してください" : undefined} onClick={() => open("audit")}>セキュリティ監査</button>
+      <button className="cipher-btn" disabled={disabled} title={disabled ? "編集中の内容を保存してください" : undefined} onClick={() => open("backup")}>バックアップ</button>
+    </>}
     <dialog ref={dialog} className="vault-tool-dialog" aria-labelledby="vault-tool-title"
       onCancel={(event) => { if (busy) event.preventDefault(); }}
-      onClose={() => { clearSecrets(); setAudit(null); }}>
+      onClose={() => { clearSecrets(); setAudit(null); onClose?.(); }}>
       <header className="vault-tool-heading">
         <div><p className="vault-tool-eyebrow">LOCAL VAULT / {panel === "audit" ? "SECURITY" : "BACKUP"}</p>
           <h2 id="vault-tool-title">{panel === "audit" ? "セキュリティ監査" : "暗号化バックアップ / 復元"}</h2></div>
         <div className="vault-header-actions">
-          <button className="cipher-btn" onClick={() => void onLock()}>ロック</button>
+          <button className="cipher-btn" disabled={busy} onClick={() => void onLock()}>ロック</button>
           <button className="cipher-btn" disabled={busy} onClick={() => dialog.current?.close()}>閉じる</button>
         </div>
       </header>
