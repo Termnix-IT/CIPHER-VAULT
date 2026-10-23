@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 
-// Packaging builds better-sqlite3 for Electron's ABI. Use the same runtime.
+// Exercise the same Node.js runtime bundled with the desktop application.
 const require = createRequire(import.meta.url);
 const result = spawnSync(require("electron"), ["--test", "tests/api-regression.test.mjs"], {
   stdio: "inherit",

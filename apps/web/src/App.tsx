@@ -40,6 +40,7 @@ export function App() {
   const [copyMessage, setCopyMessage] = useState("");
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isEditingEntry, setIsEditingEntry] = useState(false);
   const [isGroupedView, setIsGroupedView] = useState(false);
   const autoLockTimerRef = useRef<number | null>(null);
 
@@ -51,6 +52,7 @@ export function App() {
       setSelectedEntry(null);
       setCopyMessage("");
       setIsFormOpen(false);
+      setIsEditingEntry(false);
       setHasUnsavedChanges(false);
     }
   }), []);
@@ -97,6 +99,7 @@ export function App() {
         setEntries([]);
         setSelectedEntry(null);
         setIsFormOpen(false);
+        setIsEditingEntry(false);
         setHasUnsavedChanges(false);
       }
     } catch (error) {
@@ -175,6 +178,7 @@ export function App() {
       setErrorMessage("");
       const created = await createEntry(payload);
       setSelectedEntry(created);
+      setIsEditingEntry(false);
       setHasUnsavedChanges(false);
       await refreshEntries();
     } catch (error) {
@@ -192,6 +196,7 @@ export function App() {
       const entry = await fetchEntry(id);
       setSelectedEntry(entry);
       setIsFormOpen(false);
+      setIsEditingEntry(false);
       setHasUnsavedChanges(false);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "エントリ詳細を読み込めませんでした");
@@ -206,6 +211,7 @@ export function App() {
       setErrorMessage("");
       const updated = await updateEntry(id, payload);
       setSelectedEntry(updated);
+      setIsEditingEntry(false);
       setHasUnsavedChanges(false);
       await refreshEntries();
     } catch (error) {
@@ -222,6 +228,7 @@ export function App() {
       setErrorMessage("");
       await deleteEntry(id);
       setSelectedEntry(null);
+      setIsEditingEntry(false);
       setHasUnsavedChanges(false);
       await refreshEntries();
     } catch (error) {
@@ -296,7 +303,13 @@ export function App() {
     if (isFormOpen || isCreatingEntry || isUpdatingEntry || isDeletingEntry || isLoadingEntryDetail) return;
     if (hasUnsavedChanges && !window.confirm("保存していない内容を破棄して新規エントリを開きますか？")) return;
     setHasUnsavedChanges(false);
+    setIsEditingEntry(false);
     setIsFormOpen(true);
+  }
+
+  function handleEditEntry() {
+    if (!selectedEntry || isFormOpen || isCreatingEntry || isUpdatingEntry || isDeletingEntry || isLoadingEntryDetail || isGeneratingPassword) return;
+    setIsEditingEntry(true);
   }
 
   const menu = <AppMenu
@@ -307,10 +320,12 @@ export function App() {
     entryCount={entries.length}
     selectedEntry={selectedEntry}
     isFormOpen={isFormOpen}
+    isEditingEntry={isEditingEntry}
     isGroupedView={isGroupedView}
     onRefresh={refreshEntries}
     onLock={handleLockVault}
     onNewEntry={handleOpenCreateForm}
+    onEditEntry={handleEditEntry}
     onGroupedViewChange={setIsGroupedView}
     onSelectEntry={handleSelectEntry}
     onCopy={handleCopyToClipboard}
@@ -336,6 +351,9 @@ export function App() {
           hasUnsavedChanges={hasUnsavedChanges}
           isFormOpen={isFormOpen}
           onFormOpenChange={setIsFormOpen}
+          isEditingEntry={isEditingEntry}
+          onEditingChange={setIsEditingEntry}
+          onEditEntry={handleEditEntry}
           isGroupedView={isGroupedView}
           onGroupedViewChange={setIsGroupedView}
           onDirtyChange={setHasUnsavedChanges}

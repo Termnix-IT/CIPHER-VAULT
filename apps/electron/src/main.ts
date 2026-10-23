@@ -195,7 +195,7 @@ function registerIpcHandlers(services: AppServices) {
   handle("entries:update", services.entries.updateEntry);
   handle("entries:delete", services.entries.deleteEntry);
   handle("password:generate", services.password.generatePassword);
-  handle("clipboard:writeText", (value: string) => { clipboard.writeText(value); });
+  handle("clipboard:writeText", (value: string) => clipboard.writeText(value));
 }
 
 async function loadRenderer(window: BrowserWindow, appRoot: string) {
