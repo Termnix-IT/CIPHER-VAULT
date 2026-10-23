@@ -12,10 +12,12 @@ type AppMenuProps = {
   entryCount: number;
   selectedEntry: PasswordEntry | null;
   isFormOpen: boolean;
+  isEditingEntry: boolean;
   isGroupedView: boolean;
   onRefresh: () => Promise<void>;
   onLock: () => Promise<void>;
   onNewEntry: () => void;
+  onEditEntry: () => void;
   onGroupedViewChange: (grouped: boolean) => void;
   onSelectEntry: (id: string) => Promise<void>;
   onCopy: (value: string, label: string) => Promise<void>;
@@ -84,6 +86,7 @@ export function AppMenu(props: AppMenuProps) {
             ])}
             {group("edit", "編集", [
               { label: "新規エントリ", disabled: disabled || props.isFormOpen || props.isLoading, action: props.onNewEntry },
+              { label: "選択中のエントリを編集", disabled: disabled || props.isLoading || props.isFormOpen || props.isEditingEntry || !props.selectedEntry, action: props.onEditEntry },
               { label: "ログインIDをコピー", disabled: disabled || props.isLoading || props.isFormOpen || !props.selectedEntry, action: () => props.selectedEntry ? props.onCopy(props.selectedEntry.loginId, "ログインID") : undefined },
               { label: "パスワードをコピー", disabled: disabled || props.isLoading || props.isFormOpen || !props.selectedEntry, action: () => props.selectedEntry ? props.onCopy(props.selectedEntry.password, "パスワード") : undefined }
             ])}

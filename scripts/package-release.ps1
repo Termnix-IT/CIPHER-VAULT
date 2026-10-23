@@ -42,7 +42,7 @@ $releasePackageJson = @'
     "@zxcvbn-ts/core": "^4.2.0",
     "@zxcvbn-ts/language-common": "^4.1.3",
     "@zxcvbn-ts/language-en": "^4.1.1",
-    "better-sqlite3": "^12.9.0"
+    "better-sqlite3": "^13.0.3"
   }
 }
 '@
@@ -77,7 +77,7 @@ Set-Content -LiteralPath (Join-Path $releaseDir "start.ps1") -Value $startPs1 -E
 $readme = @'
 Password Manager Release
 
-1. Node.js 20 以上をインストールしてください。
+1. Node.js 22 以上をインストールしてください。
 2. このフォルダで start.bat を実行してください。
 3. 初回起動時は better-sqlite3 を自動インストールします。
 4. ブラウザで http://localhost:3001 を開いてください。
