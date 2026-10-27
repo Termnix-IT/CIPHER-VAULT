@@ -120,7 +120,7 @@ npm run dev:desktop
 | `npm run dev:desktop` | ViteとElectronで開発起動 |
 | `npm run build` / `npm run start` | Web/APIをビルドし、`http://localhost:3001` で起動 |
 | `npm run build:desktop` / `npm run start:desktop` | デスクトップ版をビルド・起動 |
-| `npm run test:api` | 一時DBでサービス・HTTP・Web配布の回帰確認 |
+| `npm run test:api` | 一時DBでサービス・HTTP・Web配布の生成・固定導入を確認 |
 | `npm run test:security` | Electronの画面URL・IPC送信元の境界を確認 |
 | `npm run test:updates` | 手動更新の制御確認 |
 | `npm run package:desktop` | `dist-desktop/` にWindows用setup・portableを生成（公開しない） |

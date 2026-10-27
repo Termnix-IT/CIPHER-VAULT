@@ -1,90 +1,102 @@
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
-$releaseDir = Join-Path $root "release"
+$releaseDir = [IO.Path]::GetFullPath((Join-Path $root "release"))
 
-foreach ($source in @("apps/api/dist", "apps/web/dist")) {
+foreach ($source in @("apps/api/dist", "apps/web/dist", "packages/shared/dist")) {
   if (-not (Test-Path -LiteralPath (Join-Path $root $source) -PathType Container)) {
     throw "Build output missing: $source. Run npm run build first."
   }
 }
-if (Test-Path $releaseDir) {
-  $resolvedRelease = (Resolve-Path -LiteralPath $releaseDir).Path
-  if ($resolvedRelease -ne [IO.Path]::GetFullPath((Join-Path $root "release")) -or
-      ((Get-Item -LiteralPath $releaseDir).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-    throw "Unsafe release output path: $releaseDir"
-  }
-  $existingData = Join-Path $releaseDir "data"
-  if (Test-Path -LiteralPath $existingData) {
-    if (((Get-Item -LiteralPath $existingData).Attributes -band [IO.FileAttributes]::ReparsePoint) -or
-        @(Get-ChildItem -LiteralPath $existingData -Force).Count -gt 0) {
-      throw "Release data exists. Move the existing release folder to a safe location before packaging."
+
+function Assert-ReleaseDataIsEmpty {
+  if (Test-Path -LiteralPath $releaseDir) {
+    $resolvedRelease = (Resolve-Path -LiteralPath $releaseDir).Path
+    if ($resolvedRelease -ne [IO.Path]::GetFullPath((Join-Path $root "release")) -or
+        ((Get-Item -LiteralPath $releaseDir).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+      throw "Unsafe release output path: $releaseDir"
+    }
+    $existingData = Join-Path $releaseDir "data"
+    if (Test-Path -LiteralPath $existingData) {
+      if (((Get-Item -LiteralPath $existingData).Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+          @(Get-ChildItem -LiteralPath $existingData -Force).Count -gt 0) {
+        throw "Release data exists. Move the existing release folder to a safe location before packaging."
+      }
     }
   }
-  Remove-Item -LiteralPath $releaseDir -Recurse -Force
 }
 
-New-Item -ItemType Directory -Path $releaseDir | Out-Null
-New-Item -ItemType Directory -Path (Join-Path $releaseDir "data") | Out-Null
+Assert-ReleaseDataIsEmpty
+$stagingParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)
+$stagingName = "cipher-vault-web-release-" + [Guid]::NewGuid().ToString("N")
+$staging = Join-Path $stagingParent $stagingName
+New-Item -ItemType Directory -Path $staging | Out-Null
+try {
+  $manifestScript = Join-Path $PSScriptRoot "web-release-manifest.mjs"
+  node $manifestScript prepare $root $staging
+  if ($LASTEXITCODE -ne 0) { throw "Failed to prepare release manifests." }
+  Push-Location -LiteralPath $staging
+  try {
+    # Reuse audited resolutions without downloading metadata or executing install scripts.
+    npm install --package-lock-only --ignore-scripts --offline --no-audit --no-fund
+    if ($LASTEXITCODE -ne 0) { throw "Failed to generate the locked runtime package." }
+  } finally { Pop-Location }
+  node $manifestScript verify $root $staging
+  if ($LASTEXITCODE -ne 0) { throw "Release dependencies differ from the source lockfile." }
 
-Copy-Item -LiteralPath (Join-Path $root "apps/api/dist") -Destination (Join-Path $releaseDir "dist") -Recurse
-Copy-Item -LiteralPath (Join-Path $root "apps/web/dist") -Destination (Join-Path $releaseDir "web") -Recurse
+  New-Item -ItemType Directory -Path (Join-Path $staging "data") | Out-Null
+  Copy-Item -LiteralPath (Join-Path $root "apps/api/dist") -Destination (Join-Path $staging "dist") -Recurse
+  Copy-Item -LiteralPath (Join-Path $root "apps/web/dist") -Destination (Join-Path $staging "web") -Recurse
+  Copy-Item -LiteralPath (Join-Path $root "packages/shared/dist") -Destination (Join-Path $staging "packages/shared/dist") -Recurse
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot "start-web-release.mjs") -Destination (Join-Path $staging "start.mjs")
 
-$releasePackageJson = @'
-{
-  "name": "password-manager-release",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "start": "node dist/apps/api/src/server.js"
-  },
-  "dependencies": {
-    "@zxcvbn-ts/core": "^4.2.0",
-    "@zxcvbn-ts/language-common": "^4.1.3",
-    "@zxcvbn-ts/language-en": "^4.1.1",
-    "better-sqlite3": "^13.0.3"
-  }
-}
-'@
-
-Set-Content -LiteralPath (Join-Path $releaseDir "package.json") -Value $releasePackageJson -Encoding UTF8
-
-$startBat = @'
+  $startBat = @'
 @echo off
-cd /d %~dp0
-if not exist node_modules (
-  echo Installing runtime dependencies...
-  call npm install --omit=dev
-  if errorlevel 1 exit /b 1
-)
-node dist/apps/api/src/server.js
+cd /d "%~dp0"
+node start.mjs
 '@
+  Set-Content -LiteralPath (Join-Path $staging "start.bat") -Value $startBat -Encoding ASCII
 
-Set-Content -LiteralPath (Join-Path $releaseDir "start.bat") -Value $startBat -Encoding ASCII
-
-$startPs1 = @'
-Set-Location $PSScriptRoot
-if (-not (Test-Path node_modules)) {
-  Write-Host "Installing runtime dependencies..."
-  npm install --omit=dev
-  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-}
-node dist/apps/api/src/server.js
+  $startPs1 = @'
+Set-Location -LiteralPath $PSScriptRoot
+node (Join-Path $PSScriptRoot "start.mjs")
+exit $LASTEXITCODE
 '@
+  Set-Content -LiteralPath (Join-Path $staging "start.ps1") -Value $startPs1 -Encoding UTF8
 
-Set-Content -LiteralPath (Join-Path $releaseDir "start.ps1") -Value $startPs1 -Encoding UTF8
-
-$readme = @'
+  $readme = @'
 Password Manager Release
 
-1. Node.js 22 以上をインストールしてください。
-2. このフォルダで start.bat を実行してください。
-3. 初回起動時は better-sqlite3 を自動インストールします。
+1. Node.js 22 以上とnpmをインストールしてください。
+2. このフォルダ全体を展開し、start.bat または start.ps1 を実行してください。
+3. 初回起動時は同梱lockfileからランタイム依存を導入します。通信が必要です。
 4. ブラウザで http://localhost:3001 を開いてください。
 
 data/password-manager.db に保管庫データが保存されます。
+導入失敗時は起動せず、次の実行で導入を再試行します。
+package.json・package-lock.json・packages/shared は一緒に保持してください。
 '@
+  Set-Content -LiteralPath (Join-Path $staging "README.txt") -Value $readme -Encoding UTF8
 
-Set-Content -LiteralPath (Join-Path $releaseDir "README.txt") -Value $readme -Encoding UTF8
-
-Write-Host "Release package created at $releaseDir"
+  $resolvedStaging = (Resolve-Path -LiteralPath $staging).Path
+  if ([IO.Path]::GetDirectoryName($resolvedStaging) -ne $stagingParent -or
+      [IO.Path]::GetFileName($resolvedStaging) -ne $stagingName -or
+      ((Get-Item -LiteralPath $staging).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    throw "Unsafe staging output path."
+  }
+  # Check again immediately before replacement, in case data appeared during preparation.
+  Assert-ReleaseDataIsEmpty
+  if (Test-Path -LiteralPath $releaseDir) { Remove-Item -LiteralPath $releaseDir -Recurse -Force }
+  Move-Item -LiteralPath $resolvedStaging -Destination $releaseDir
+  Write-Host "Release package created at $releaseDir"
+} finally {
+  if (Test-Path -LiteralPath $staging) {
+    $resolvedStaging = (Resolve-Path -LiteralPath $staging).Path
+    if ([IO.Path]::GetDirectoryName($resolvedStaging) -ne $stagingParent -or
+        [IO.Path]::GetFileName($resolvedStaging) -ne $stagingName -or
+        ((Get-Item -LiteralPath $staging).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+      throw "Unsafe staging cleanup path."
+    }
+    Remove-Item -LiteralPath $resolvedStaging -Recurse -Force
+  }
+}
