@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  regression:
+    name: Windows regression
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Renderer boundaries and desktop build
+        run: npm run test:security
+      - name: API, storage and Web packaging
+        run: npm run test:api
+      - name: Session, KDF, input and clipboard contracts
+        run: npm run test:sessions
+      - name: Manual updater
+        run: npm run test:updates
+      - name: Built desktop integration
+        run: npm run test:desktop-session
+      - name: Vite desktop integration and HMR
+        run: npm run test:desktop-dev
+      - name: Production HTTP policy integration
+        run: npm run test:web-policy
+
+  dependencies:
+    name: Dependency audit
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      # Audit the lockfile without running dependency install scripts.
+      - name: Reject high or critical production findings
+        run: npm audit --package-lock-only --omit=dev --audit-level=high
+      - name: Reject all dependency findings
+        run: npm audit --package-lock-only --audit-level=low

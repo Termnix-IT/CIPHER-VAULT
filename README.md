@@ -126,6 +126,9 @@ npm run dev:desktop
 | `npm run test:api` | 一時DBでサービス・HTTP・Web配布の生成・固定導入を確認 |
 | `npm run test:security` | Electronの画面URL・IPC送信元・sandbox preload・CSP・権限の境界を確認 |
 | `npm run test:sessions` | 共通入力検証・KDF互換性・試行制御・OS連動・コピー期限を確認 |
+| `npm run test:desktop-session` | 専用の一時保管庫でElectronの画面・IPC・失効を自動確認 |
+| `npm run test:desktop-dev` | 一時ViteサーバーでElectron開発画面とHMR接続も確認 |
+| `npm run test:web-policy` | 一時HTTPサーバーでWeb版のCSP・画面・API通信を確認 |
 | `npm run test:updates` | 手動更新の制御確認 |
 | `npm run package:desktop` | `dist-desktop/` にWindows用setup・portableを生成（公開しない） |
 | `npm run package` | Node.jsで動かすWeb/API配布フォルダ `release/` を生成 |
@@ -135,6 +138,8 @@ ElectronはpreloadとIPCを経由して共通サービスを呼び出し、保�
 Electronの画面はsandboxとcontextIsolationを有効にし、ブラウザの権限要求を拒否します。CSPと読み込み先の制限は、[設計](docs/設計.md#画面のsandboxとcsp)を参照してください。
 
 個別起動、ネイティブ依存、保存先、配布手順は[開発・配布手順](docs/開発・配布手順.md)を参照してください。
+
+CIはWindows・Node.js 24で上記の回帰・画面テストを実行します。本番依存のhigh以上と、全依存のlow以上の指摘を失敗条件にします。[CIと依存監査](docs/開発・配布手順.md#ciと依存監査)を参照してください。
 
 ## 関連ドキュメント
 
