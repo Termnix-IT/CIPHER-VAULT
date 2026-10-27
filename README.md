@@ -123,7 +123,7 @@ npm run dev:desktop
 | `npm run dev:desktop` | ViteとElectronで開発起動 |
 | `npm run build` / `npm run start` | Web/APIをビルドし、`http://localhost:3001` で起動 |
 | `npm run build:desktop` / `npm run start:desktop` | デスクトップ版をビルド・起動 |
-| `npm run test:api` | 一時DBでサービス・HTTP・Web配布の生成・固定導入を確認 |
+| `npm run test:api` | 一時DBでサービス・HTTP・暗号互換・Web配布の生成・固定導入を確認 |
 | `npm run test:security` | Electronの画面URL・IPC送信元・sandbox preload・CSP・権限の境界を確認 |
 | `npm run test:sessions` | 共通入力検証・KDF互換性・試行制御・OS連動・コピー期限を確認 |
 | `npm run test:desktop-session` | 専用の一時保管庫でElectronの画面・IPC・失効を自動確認 |

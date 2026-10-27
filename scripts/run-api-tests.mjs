@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 
 // Exercise the same Node.js runtime bundled with the desktop application.
 const require = createRequire(import.meta.url);
-const result = spawnSync(require("electron"), ["--test", "tests/api-regression.test.mjs"], {
+const result = spawnSync(require("electron"), ["--test", "tests/api-regression.test.mjs", "tests/crypto-compatibility.test.mjs"], {
   stdio: "inherit",
   env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }
 });
