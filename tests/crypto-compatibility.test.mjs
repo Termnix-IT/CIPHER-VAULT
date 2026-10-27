@@ -7,7 +7,7 @@ import { createCipheriv, hkdfSync, scrypt, webcrypto } from "node:crypto";
 import { promisify } from "node:util";
 
 // Fixed, synthetic outputs produced with Python hashlib/hmac and cryptography.
-// Python is not required to run these tests. Draft v2 is a byte contract, not a writer.
+// Python is not required. Draft-v2 reference checks stay independent of the codec.
 const fixture = JSON.parse(readFileSync(new URL("./fixtures/crypto-compatibility.json", import.meta.url), "utf8"));
 assert.equal(fixture.testOnly, true);
 const { legacy, backupV1, draftV2 } = fixture;

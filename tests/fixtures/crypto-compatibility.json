@@ -99,7 +99,7 @@
     }
   },
   "draftV2": {
-    "status": "codec-contract-1-not-implemented",
+    "status": "codec-contract-1-storage-not-integrated",
     "masterPassword": "fixture-v2-互換🔐é-master",
     "vaultId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     "keyId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
