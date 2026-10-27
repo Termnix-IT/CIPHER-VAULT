@@ -1,10 +1,17 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, powerMonitor, session } from "electron";
 import { existsSync, readFileSync } from "node:fs";
 import http from "node:http";
+import https from "node:https";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { registerUpdateHandlers } from "./update-service.js";
 import { createSenderGuard, isTrustedRendererUrl } from "./renderer-security.js";
+import { attachVaultWindowLifecycle } from "./vault-lifecycle.js";
+import { VaultPowerGuard } from "./vault-power-guard.js";
+import { ExpiringClipboard } from "./expiring-clipboard.js";
+import { createClipboardPort } from "./clipboard-port.js";
+import { installRendererSessionSecurity } from "./renderer-session.js";
+import { localDevelopmentUrl } from "@password-manager/shared";
 import type {
   PasswordGenerationOptions,
   PasswordEntryUpsertPayload,
@@ -20,14 +27,22 @@ const rendererDevUrl = process.env.PASSWORD_MANAGER_RENDERER_URL ?? "http://loca
 
 let mainWindow: BrowserWindow | null = null;
 let trustedRendererUrl: string | null = null;
+let appServices: AppServices | null = null;
+let powerGuard: VaultPowerGuard | null = null;
+let quitting = false;
+let quitReady = false;
+const protectedClipboard = new ExpiringClipboard(createClipboardPort(clipboard, (values) => new ClipboardItem(values)));
 const assertTrustedSender = createSenderGuard(() => mainWindow, () => trustedRendererUrl);
 
 type VaultServiceModule = {
-  getVaultStatus: () => { isConfigured: boolean; isUnlocked: boolean };
-  setupVault: (payload: VaultSetupPayload) => { isConfigured: boolean; isUnlocked: boolean };
-  unlockVault: (payload: VaultUnlockPayload) => { isUnlocked: boolean };
-  lockVault: () => { isUnlocked: boolean };
-  resetVault: (payload: VaultResetPayload) => { isConfigured: boolean; isUnlocked: boolean };
+  getVaultStatus: () => import("@password-manager/shared/types").VaultStatus;
+  setupVault: (payload: VaultSetupPayload) => Promise<import("@password-manager/shared/types").VaultStatus>;
+  unlockVault: (payload: VaultUnlockPayload) => Promise<import("@password-manager/shared/types").VaultStatus>;
+  lockVault: (reason?: import("@password-manager/shared/types").VaultLockReason) => import("@password-manager/shared/types").VaultStatus;
+  lockVaultForSession: (sessionId: unknown) => import("@password-manager/shared/types").VaultStatus;
+  resetVault: (payload: VaultResetPayload) => import("@password-manager/shared/types").VaultStatus;
+  recordVaultActivity: (sessionId: unknown) => import("@password-manager/shared/types").VaultStatus;
+  onVaultState: (listener: (state: import("@password-manager/shared/types").VaultStatus) => void) => () => void;
 };
 
 type EntryServiceModule = {
@@ -48,8 +63,19 @@ type PasswordServiceModule = {
 };
 
 type AppServices = {
-  backup: Pick<import("@password-manager/shared/types").PasswordManagerDesktopApi, "exportBackup" | "restoreBackup">;
-  audit: Pick<import("@password-manager/shared/types").PasswordManagerDesktopApi, "auditVault">;
+  input: {
+    requireArgumentCount: (args: unknown[], count: number) => void;
+    parseClipboardText: (value: unknown) => string;
+  };
+  session: {
+    withVaultSession: <T>(sessionId: unknown, action: (sessionId: string) => T | Promise<T>) => Promise<T>;
+    vaultSession: { requireGeneration: (sessionId: unknown) => string; requireUnlocked: (sessionId?: string) => string };
+  };
+  backup: {
+    exportBackup: (payload: import("@password-manager/shared/types").BackupExportPayload) => Promise<import("@password-manager/shared/types").BackupFile>;
+    restoreBackup: (payload: import("@password-manager/shared/types").BackupRestorePayload) => Promise<{ restoredCount: number }>;
+  };
+  audit: { auditVault: () => Promise<import("@password-manager/shared/types").SecurityAudit> };
   vault: VaultServiceModule;
   entries: EntryServiceModule;
   password: PasswordServiceModule;
@@ -107,7 +133,8 @@ function getWindowIconPath(appRoot: string) {
 
 function probeUrl(targetUrl: string) {
   return new Promise<boolean>((resolve) => {
-    const request = http.get(targetUrl, (response) => {
+    const transport = new URL(targetUrl).protocol === "https:" ? https : http;
+    const request = transport.get(targetUrl, (response) => {
       response.resume();
       resolve((response.statusCode ?? 500) < 500);
     });
@@ -135,7 +162,7 @@ async function waitForUrl(targetUrl: string, timeoutMs: number) {
 }
 
 function getPreloadPath() {
-  return path.join(__dirname, "preload.mjs");
+  return path.join(__dirname, "preload.cjs");
 }
 
 async function importModule<T>(filePath: string) {
@@ -149,15 +176,19 @@ async function importModule<T>(filePath: string) {
 async function loadAppServices(appRoot: string): Promise<AppServices> {
   process.env.PASSWORD_MANAGER_DATA_DIR = path.join(app.getPath("userData"), "data");
 
-  const [vault, entries, password, backup, audit] = await Promise.all([
+  const [vault, entries, password, backup, audit, session, input] = await Promise.all([
     importModule<VaultServiceModule>(getApiBuildPath(appRoot, "services/vault-service.js")),
     importModule<EntryServiceModule>(getApiBuildPath(appRoot, "services/entry-service.js")),
     importModule<PasswordServiceModule>(getApiBuildPath(appRoot, "services/password-service.js")),
     importModule<AppServices["backup"]>(getApiBuildPath(appRoot, "services/backup-service.js")),
-    importModule<AppServices["audit"]>(getApiBuildPath(appRoot, "services/audit-service.js"))
+    importModule<AppServices["audit"]>(getApiBuildPath(appRoot, "services/audit-service.js")),
+    importModule<AppServices["session"]>(getApiBuildPath(appRoot, "services/vault-session.js")),
+    importModule<AppServices["input"]>(getApiBuildPath(appRoot, "lib/input-validation.js"))
   ]);
 
   return {
+    input,
+    session,
     backup,
     audit,
     vault,
@@ -175,30 +206,62 @@ async function invokeSafely<T>(action: () => Promise<T> | T) {
 }
 
 function registerIpcHandlers(services: AppServices) {
-  function handle<T extends unknown[]>(channel: string, action: (...args: T) => unknown) {
+  const assertAvailable = () => {
+    if (quitting) throw new Error("アプリを終了しています");
+    powerGuard?.assertAvailable();
+  };
+  function handle<T extends unknown[]>(channel: string, count: number, action: (...args: T) => unknown) {
     ipcMain.handle(channel, (event, ...args: T) => {
       assertTrustedSender(event);
-      return invokeSafely(() => action(...args));
+      return invokeSafely(() => {
+        services.input.requireArgumentCount(args, count);
+        return action(...args);
+      });
     });
   }
-  handle("backup:export", services.backup.exportBackup);
-  handle("backup:restore", services.backup.restoreBackup);
-  handle("vault:audit", services.audit.auditVault);
-  handle("vault:getStatus", services.vault.getVaultStatus);
-  handle("vault:setup", services.vault.setupVault);
-  handle("vault:unlock", services.vault.unlockVault);
-  handle("vault:lock", services.vault.lockVault);
-  handle("vault:reset", services.vault.resetVault);
-  handle("entries:list", services.entries.listEntries);
-  handle("entries:getById", services.entries.getEntryById);
-  handle("entries:create", services.entries.createEntry);
-  handle("entries:update", services.entries.updateEntry);
-  handle("entries:delete", services.entries.deleteEntry);
-  handle("password:generate", services.password.generatePassword);
-  handle("clipboard:writeText", (value: string) => clipboard.writeText(value));
+  function handleSession<T extends unknown[]>(channel: string, count: number, action: (...args: T) => unknown) {
+    handle(channel, count + 1, (sessionId: unknown, ...args: T) => services.session.withVaultSession(sessionId, async () => {
+      assertAvailable();
+      const result = await action(...args);
+      assertAvailable();
+      return result;
+    }));
+  }
+  function handleControl<T extends unknown[]>(channel: string, action: (...args: T) => unknown) {
+    handle(channel, 2, (sessionId: unknown, ...args: T) => {
+      assertAvailable();
+      services.session.vaultSession.requireGeneration(sessionId);
+      return action(...args);
+    });
+  }
+  handleSession("backup:export", 1, services.backup.exportBackup);
+  handleSession("backup:restore", 1, services.backup.restoreBackup);
+  handleSession("vault:audit", 0, services.audit.auditVault);
+  handle("vault:getStatus", 0, services.vault.getVaultStatus);
+  handleControl("vault:setup", services.vault.setupVault);
+  handleControl("vault:unlock", services.vault.unlockVault);
+  // Lock intentionally ends the session; it must not use the post-return guard.
+  handle("vault:lock", 1, services.vault.lockVaultForSession);
+  handle("vault:activity", 1, (id: unknown) => { assertAvailable(); return services.vault.recordVaultActivity(id); });
+  handleControl("vault:reset", services.vault.resetVault);
+  handleSession("entries:list", 0, services.entries.listEntries);
+  handleSession("entries:getById", 1, services.entries.getEntryById);
+  handleSession("entries:create", 1, services.entries.createEntry);
+  handleSession("entries:update", 2, services.entries.updateEntry);
+  handleSession("entries:delete", 1, services.entries.deleteEntry);
+  handleSession("password:generate", 1, services.password.generatePassword);
+  handle("clipboard:writeText", 2, (id: unknown, value: unknown) => services.session.withVaultSession(id, (session) => {
+    assertAvailable();
+    const text = services.input.parseClipboardText(value);
+    return protectedClipboard.copy(text, () => {
+      assertAvailable();
+      services.session.vaultSession.requireUnlocked(session);
+    });
+  }));
 }
 
 async function loadRenderer(window: BrowserWindow, appRoot: string) {
+  if (!app.isPackaged) localDevelopmentUrl(rendererDevUrl);
   if (!app.isPackaged && await waitForUrl(rendererDevUrl, 15000)) {
     trustedRendererUrl = new URL(rendererDevUrl).href;
     await window.loadURL(rendererDevUrl);
@@ -216,7 +279,7 @@ async function loadRenderer(window: BrowserWindow, appRoot: string) {
   await window.loadFile(indexPath);
 }
 
-async function createMainWindow(appRoot: string) {
+async function createMainWindow(appRoot: string, services: AppServices) {
   if (mainWindow) {
     mainWindow.focus();
     return;
@@ -240,12 +303,13 @@ async function createMainWindow(appRoot: string) {
     },
     webPreferences: {
       preload: getPreloadPath(),
-      sandbox: false,
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false
     }
   });
 
+  attachVaultWindowLifecycle(mainWindow, (reason) => { services.vault.lockVault(reason); });
   mainWindow.on("closed", () => {
     mainWindow = null;
     trustedRendererUrl = null;
@@ -271,15 +335,41 @@ async function bootstrap() {
   }
 
   const services = await loadAppServices(appRoot);
+  appServices = services;
+  installRendererSessionSecurity(session.defaultSession, () => mainWindow?.webContents.id ?? null,
+    () => trustedRendererUrl, getWebDistPath(appRoot));
   registerIpcHandlers(services);
+  services.vault.onVaultState((state) => {
+    if (!state.isUnlocked) void protectedClipboard.clearOwned().then((cleared) => {
+      if (!cleared) console.warn("クリップボードの消去を完了できませんでした");
+    });
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed() && !mainWindow.webContents.isCrashed()) {
+      mainWindow.webContents.send("vault:state", state);
+    }
+  });
+  powerGuard = new VaultPowerGuard(powerMonitor, (reason) => { services.vault.lockVault(reason); });
   const version = app.isPackaged ? app.getVersion() : JSON.parse(readFileSync(path.join(appRoot, "package.json"), "utf8")).version as string;
-  registerUpdateHandlers(() => mainWindow, () => { services.vault.lockVault(); }, version, assertTrustedSender);
+  registerUpdateHandlers(() => mainWindow, () => { services.vault.lockVault("update"); }, version, assertTrustedSender);
   const { database } = await importModule<{ database: { open: boolean; close: () => void } }>(getApiBuildPath(appRoot, "db/database.js"));
+  app.on("before-quit", (event) => {
+    if (quitReady) return;
+    event.preventDefault();
+    if (quitting) return;
+    quitting = true;
+    services.vault.lockVault();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Clipboard APIs can be unavailable; never hold application exit indefinitely.
+    void Promise.race([
+      protectedClipboard.clearOwned(),
+      new Promise((resolve) => { timer = setTimeout(resolve, 1500); })
+    ]).finally(() => { clearTimeout(timer); quitReady = true; app.quit(); });
+  });
   app.on("will-quit", () => {
+    powerGuard?.dispose();
     services.vault.lockVault();
     if (database.open) database.close();
   });
-  await createMainWindow(appRoot);
+  await createMainWindow(appRoot, services);
 }
 
 app.on("window-all-closed", () => {
@@ -297,7 +387,7 @@ app.on("activate", () => {
       return;
     }
 
-    void createMainWindow(appRoot);
+    if (appServices) void createMainWindow(appRoot, appServices);
   }
 });
 

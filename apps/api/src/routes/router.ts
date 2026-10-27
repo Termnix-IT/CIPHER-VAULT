@@ -1,20 +1,15 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type {
-  PasswordGenerationOptions,
-  PasswordEntryUpsertPayload,
-  VaultResetPayload,
-  VaultSetupPayload,
-  VaultUnlockPayload
-} from "@password-manager/shared/types";
 import { HttpError } from "../lib/errors.js";
 import { assertTrustedRequest, getCsrfToken } from "../lib/request-security.js";
 import { exportBackup, restoreBackup } from "../services/backup-service.js";
 import { auditVault } from "../services/audit-service.js";
 import { readJsonBody } from "../lib/json.js";
+import { INPUT_LIMITS, parseEmptyPayload } from "../lib/input-validation.js";
 import { serveAppShell, tryServeStaticAsset } from "../lib/static.js";
 import { generatePassword } from "../services/password-service.js";
 import { createEntry, deleteEntry, getEntryById, listEntries, updateEntry } from "../services/entry-service.js";
-import { getVaultStatus, lockVault, resetVault, setupVault, unlockVault } from "../services/vault-service.js";
+import { getVaultStatus, lockVaultForSession, recordVaultActivity, resetVault, setupVault, unlockVault } from "../services/vault-service.js";
+import { requireSessionId, vaultSession, withVaultSession } from "../services/vault-session.js";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown) {
   response.writeHead(statusCode, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Cross-Origin-Resource-Policy": "same-origin" });
@@ -33,20 +28,33 @@ export async function router(request: IncomingMessage, response: ServerResponse)
     }
     const entryMatch = url.match(/^\/entries\/([^/]+)$/);
     const pathname = url;
+    const sessionId = request.headers["x-cipher-vault-session"];
     if (method === "GET" && url === "/vault/csrf") {
       sendJson(response, 200, { token: getCsrfToken() });
       return;
     }
     if (method === "POST" && url === "/vault/backup/export") {
-      sendJson(response, 200, await exportBackup(await readJsonBody(request)));
+      sendJson(response, 200, await withVaultSession(sessionId, async (session) => {
+        const payload = await readJsonBody(request);
+        vaultSession.requireUnlocked(session);
+        return exportBackup(payload);
+      }));
       return;
     }
     if (method === "POST" && url === "/vault/backup/restore") {
-      sendJson(response, 200, await restoreBackup(await readJsonBody(request, 18 * 1024 * 1024)));
+      sendJson(response, 200, await withVaultSession(sessionId, async (session) => {
+        const payload = await readJsonBody(request, INPUT_LIMITS.restoreRequestBytes);
+        vaultSession.requireUnlocked(session);
+        return restoreBackup(payload);
+      }));
       return;
     }
     if (method === "POST" && url === "/vault/audit") {
-      sendJson(response, 200, await auditVault());
+      sendJson(response, 200, await withVaultSession(sessionId, async (session) => {
+        parseEmptyPayload(await readJsonBody(request));
+        vaultSession.requireUnlocked(session);
+        return auditVault();
+      }));
       return;
     }
     if (method === "GET" && url === "/health") {
@@ -60,58 +68,87 @@ export async function router(request: IncomingMessage, response: ServerResponse)
     }
 
     if (method === "POST" && url === "/vault/setup") {
-      const payload = await readJsonBody<VaultSetupPayload>(request);
-      sendJson(response, 201, setupVault(payload));
+      const intent = vaultSession.requireGeneration(sessionId);
+      const payload = await readJsonBody(request);
+      vaultSession.requireGeneration(intent);
+      sendJson(response, 201, await setupVault(payload));
       return;
     }
 
     if (method === "POST" && url === "/vault/unlock") {
-      const payload = await readJsonBody<VaultUnlockPayload>(request);
-      sendJson(response, 200, unlockVault(payload));
+      const intent = vaultSession.requireGeneration(sessionId);
+      const payload = await readJsonBody(request);
+      vaultSession.requireGeneration(intent);
+      sendJson(response, 200, await unlockVault(payload));
       return;
     }
 
     if (method === "POST" && url === "/vault/lock") {
-      sendJson(response, 200, lockVault());
+      // A delayed lock from an old view must not lock a newly unlocked generation.
+      const intent = vaultSession.requireGeneration(sessionId);
+      parseEmptyPayload(await readJsonBody(request));
+      sendJson(response, 200, lockVaultForSession(intent));
+      return;
+    }
+
+    if (method === "POST" && url === "/vault/activity") {
+      const session = vaultSession.requireUnlocked(requireSessionId(sessionId));
+      parseEmptyPayload(await readJsonBody(request));
+      sendJson(response, 200, recordVaultActivity(session));
       return;
     }
 
     if (method === "POST" && url === "/vault/reset") {
-      const payload = await readJsonBody<VaultResetPayload>(request);
+      const intent = vaultSession.requireGeneration(sessionId);
+      const payload = await readJsonBody(request);
+      vaultSession.requireGeneration(intent);
       sendJson(response, 200, resetVault(payload));
       return;
     }
 
     if (method === "GET" && url === "/entries") {
-      sendJson(response, 200, listEntries());
+      sendJson(response, 200, await withVaultSession(sessionId, () => listEntries()));
       return;
     }
 
     if (method === "POST" && url === "/entries") {
-      const payload = await readJsonBody<PasswordEntryUpsertPayload>(request);
-      sendJson(response, 201, createEntry(payload));
+      sendJson(response, 201, await withVaultSession(sessionId, async (session) => {
+        const payload = await readJsonBody(request);
+        vaultSession.requireUnlocked(session);
+        return createEntry(payload);
+      }));
       return;
     }
 
     if (method === "POST" && url === "/password/generate") {
-      const payload = await readJsonBody<PasswordGenerationOptions>(request);
-      sendJson(response, 200, generatePassword(payload));
+      sendJson(response, 200, await withVaultSession(sessionId, async (session) => {
+        const payload = await readJsonBody(request);
+        vaultSession.requireUnlocked(session);
+        return generatePassword(payload);
+      }));
       return;
     }
 
     if (entryMatch && method === "GET") {
-      sendJson(response, 200, getEntryById(entryMatch[1]));
+      sendJson(response, 200, await withVaultSession(sessionId, () => getEntryById(entryMatch[1])));
       return;
     }
 
     if (entryMatch && method === "PUT") {
-      const payload = await readJsonBody<PasswordEntryUpsertPayload>(request);
-      sendJson(response, 200, updateEntry(entryMatch[1], payload));
+      sendJson(response, 200, await withVaultSession(sessionId, async (session) => {
+        const payload = await readJsonBody(request);
+        vaultSession.requireUnlocked(session);
+        return updateEntry(entryMatch[1], payload);
+      }));
       return;
     }
 
     if (entryMatch && method === "DELETE") {
-      sendJson(response, 200, deleteEntry(entryMatch[1]));
+      sendJson(response, 200, await withVaultSession(sessionId, async (session) => {
+        parseEmptyPayload(await readJsonBody(request));
+        vaultSession.requireUnlocked(session);
+        return deleteEntry(entryMatch[1]);
+      }));
       return;
     }
 
@@ -133,6 +170,7 @@ export async function router(request: IncomingMessage, response: ServerResponse)
     sendJson(response, 404, { error: "見つかりませんでした" });
   } catch (error) {
     if (error instanceof HttpError) {
+      if (error.retryAfterSeconds !== undefined) response.setHeader("Retry-After", String(error.retryAfterSeconds));
       sendJson(response, error.statusCode, { error: error.message });
       return;
     }

@@ -1,63 +1,58 @@
-import type { VaultResetPayload, VaultSetupPayload, VaultUnlockPayload } from "@password-manager/shared/types";
+import type { VaultLockReason, VaultStatus } from "@password-manager/shared/types";
 import { HttpError } from "../lib/errors.js";
 import {
-  clearActiveVaultKey,
   createPasswordSalt,
   deriveVerifier,
   deriveVaultKey,
   setActiveVaultKey,
-  verifyMasterPassword
+  verifyVaultKey
 } from "./crypto-service.js";
 import { getVaultMetadata, resetVaultData, saveVaultMetadata } from "./vault-store.js";
-
-let isUnlocked = false;
+import { requireSessionId, vaultSession } from "./vault-session.js";
+import { vaultUnlockGuard } from "./vault-unlock-guard.js";
+import { parseMasterPassword, parseResetPayload } from "../lib/input-validation.js";
 
 export function getVaultStatus() {
   return {
     isConfigured: getVaultMetadata() !== null,
-    isUnlocked
+    ...vaultSession.getState()
   };
 }
 
-export function setupVault(payload: VaultSetupPayload) {
+export async function setupVault(payload: unknown) {
   if (getVaultMetadata() !== null) {
     throw new HttpError(409, "保管庫はすでに設定済みです");
   }
 
-  if (typeof payload?.masterPassword !== "string" || payload.masterPassword.length < 12) {
-    throw new HttpError(400, "マスターパスワードは12文字以上で入力してください");
-  }
+  const masterPassword = parseMasterPassword(payload, true);
 
-  const salt = createPasswordSalt();
-  const now = new Date().toISOString();
-  const vaultKey = deriveVaultKey(payload.masterPassword, salt);
+  const intent = vaultSession.getState().sessionId;
+  return vaultUnlockGuard.run(async () => {
+    const salt = createPasswordSalt();
+    const vaultKey = await deriveVaultKey(masterPassword, salt);
 
-  try {
-    saveVaultMetadata({
-      id: 1,
-      passwordSalt: salt,
-      passwordVerifier: deriveVerifier(payload.masterPassword, salt),
-      kdfParams: JSON.stringify({ algorithm: "scrypt", keyLength: 32, verifierAlgorithm: "hmac-sha256-v1" }),
-      createdAt: now,
-      updatedAt: now
-    });
+    try {
+      vaultSession.requireGeneration(intent);
+      const now = new Date().toISOString();
+      saveVaultMetadata({
+        id: 1,
+        passwordSalt: salt,
+        passwordVerifier: deriveVerifier(vaultKey),
+        kdfParams: JSON.stringify({ algorithm: "scrypt", keyLength: 32, verifierAlgorithm: "hmac-sha256-v1" }),
+        createdAt: now,
+        updatedAt: now
+      });
 
-    setActiveVaultKey(vaultKey);
-  } finally {
-    vaultKey.fill(0);
-  }
-  isUnlocked = true;
-
-  return {
-    isConfigured: true,
-    isUnlocked
-  };
+      setActiveVaultKey(vaultKey);
+    } finally {
+      vaultKey.fill(0);
+    }
+    return getVaultStatus();
+  });
 }
 
-export function unlockVault(payload: VaultUnlockPayload) {
-  if (typeof payload?.masterPassword !== "string") {
-    throw new HttpError(400, "マスターパスワードを文字列で入力してください");
-  }
+export async function unlockVault(payload: unknown) {
+  const masterPassword = parseMasterPassword(payload, false);
   const metadata = getVaultMetadata();
 
   if (metadata === null) {
@@ -75,51 +70,55 @@ export function unlockVault(payload: VaultUnlockPayload) {
     throw new HttpError(400, "未対応の保管庫形式です");
   }
   const legacy = params.verifierAlgorithm === undefined;
-  if (!verifyMasterPassword(payload.masterPassword, metadata.passwordSalt, metadata.passwordVerifier, legacy)) {
-    throw new HttpError(401, "マスターパスワードが正しくありません");
-  }
+  const intent = vaultSession.getState().sessionId;
 
-  const vaultKey = deriveVaultKey(payload.masterPassword, metadata.passwordSalt);
-  try {
-    if (legacy) {
-      saveVaultMetadata({
-        ...metadata,
-        passwordVerifier: deriveVerifier(payload.masterPassword, metadata.passwordSalt),
-        kdfParams: JSON.stringify({ ...params, verifierAlgorithm: "hmac-sha256-v1" }),
-        updatedAt: new Date().toISOString()
-      });
+  return vaultUnlockGuard.run(async () => {
+    const vaultKey = await deriveVaultKey(masterPassword, metadata.passwordSalt);
+    try {
+      vaultSession.requireGeneration(intent);
+      if (!verifyVaultKey(vaultKey, metadata.passwordVerifier, legacy)) {
+        throw new HttpError(401, "マスターパスワードが正しくありません");
+      }
+      if (legacy) {
+        saveVaultMetadata({
+          ...metadata,
+          passwordVerifier: deriveVerifier(vaultKey),
+          kdfParams: JSON.stringify({ ...params, verifierAlgorithm: "hmac-sha256-v1" }),
+          updatedAt: new Date().toISOString()
+        });
+      }
+      setActiveVaultKey(vaultKey);
+    } finally {
+      vaultKey.fill(0);
     }
-    setActiveVaultKey(vaultKey);
-  } finally {
-    vaultKey.fill(0);
-  }
-  isUnlocked = true;
-
-  return {
-    isUnlocked
-  };
+    return getVaultStatus();
+  });
 }
 
-export function lockVault() {
-  clearActiveVaultKey();
-  isUnlocked = false;
-
-  return {
-    isUnlocked
-  };
+export function lockVault(reason: VaultLockReason = "manual") {
+  vaultSession.lock(reason);
+  return getVaultStatus();
 }
 
-export function resetVault(payload: VaultResetPayload) {
-  if (payload?.confirmation !== "RESET_ALL_DATA") {
-    throw new HttpError(400, "保管庫のリセット確認が必要です");
-  }
+export function lockVaultForSession(sessionId: unknown) {
+  vaultSession.requireGeneration(sessionId);
+  return lockVault();
+}
 
-  clearActiveVaultKey();
-  isUnlocked = false;
+export function recordVaultActivity(sessionId: unknown) {
+  vaultSession.recordActivity(requireSessionId(sessionId));
+  return getVaultStatus();
+}
+
+export function onVaultState(listener: (state: VaultStatus) => void) {
+  return vaultSession.subscribe((state) => listener({ isConfigured: getVaultMetadata() !== null, ...state }));
+}
+
+export function resetVault(payload: unknown) {
+  parseResetPayload(payload);
+
+  vaultSession.lock("reset");
   resetVaultData();
 
-  return {
-    isConfigured: false,
-    isUnlocked: false
-  };
+  return getVaultStatus();
 }

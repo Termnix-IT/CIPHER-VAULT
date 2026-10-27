@@ -9,9 +9,9 @@ import type {
 } from "@password-manager/shared/types";
 
 const passwordManagerApi: PasswordManagerDesktopApi = {
-  exportBackup: (payload) => ipcRenderer.invoke("backup:export", payload),
-  restoreBackup: (payload) => ipcRenderer.invoke("backup:restore", payload),
-  auditVault: () => ipcRenderer.invoke("vault:audit"),
+  exportBackup: (payload, sessionId) => ipcRenderer.invoke("backup:export", sessionId, payload),
+  restoreBackup: (payload, sessionId) => ipcRenderer.invoke("backup:restore", sessionId, payload),
+  auditVault: (sessionId) => ipcRenderer.invoke("vault:audit", sessionId),
   getUpdateState: () => ipcRenderer.invoke("updates:state"),
   checkForUpdates: () => ipcRenderer.invoke("updates:check"),
   downloadUpdate: () => ipcRenderer.invoke("updates:download"),
@@ -23,17 +23,23 @@ const passwordManagerApi: PasswordManagerDesktopApi = {
     return () => ipcRenderer.removeListener("updates:state", handler);
   },
   fetchVaultStatus: () => ipcRenderer.invoke("vault:getStatus"),
-  setupVault: (payload: VaultSetupPayload) => ipcRenderer.invoke("vault:setup", payload),
-  unlockVault: (payload: VaultUnlockPayload) => ipcRenderer.invoke("vault:unlock", payload),
-  lockVault: () => ipcRenderer.invoke("vault:lock"),
-  resetVault: (payload: VaultResetPayload) => ipcRenderer.invoke("vault:reset", payload),
-  fetchEntries: () => ipcRenderer.invoke("entries:list"),
-  fetchEntry: (id: string) => ipcRenderer.invoke("entries:getById", id),
-  createEntry: (payload: PasswordEntryUpsertPayload) => ipcRenderer.invoke("entries:create", payload),
-  updateEntry: (id: string, payload: PasswordEntryUpsertPayload) => ipcRenderer.invoke("entries:update", id, payload),
-  deleteEntry: (id: string) => ipcRenderer.invoke("entries:delete", id),
-  generatePassword: (options: PasswordGenerationOptions = {}) => ipcRenderer.invoke("password:generate", options),
-  copyText: (value: string) => ipcRenderer.invoke("clipboard:writeText", value)
+  onVaultState: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: import("@password-manager/shared/types").VaultStatus) => listener(state);
+    ipcRenderer.on("vault:state", handler);
+    return () => { ipcRenderer.removeListener("vault:state", handler); };
+  },
+  recordVaultActivity: (sessionId) => ipcRenderer.invoke("vault:activity", sessionId),
+  setupVault: (payload: VaultSetupPayload, sessionId) => ipcRenderer.invoke("vault:setup", sessionId, payload),
+  unlockVault: (payload: VaultUnlockPayload, sessionId) => ipcRenderer.invoke("vault:unlock", sessionId, payload),
+  lockVault: (sessionId) => ipcRenderer.invoke("vault:lock", sessionId),
+  resetVault: (payload: VaultResetPayload, sessionId) => ipcRenderer.invoke("vault:reset", sessionId, payload),
+  fetchEntries: (sessionId) => ipcRenderer.invoke("entries:list", sessionId),
+  fetchEntry: (id: string, sessionId) => ipcRenderer.invoke("entries:getById", sessionId, id),
+  createEntry: (payload: PasswordEntryUpsertPayload, sessionId) => ipcRenderer.invoke("entries:create", sessionId, payload),
+  updateEntry: (id: string, payload: PasswordEntryUpsertPayload, sessionId) => ipcRenderer.invoke("entries:update", sessionId, id, payload),
+  deleteEntry: (id: string, sessionId) => ipcRenderer.invoke("entries:delete", sessionId, id),
+  generatePassword: (options: PasswordGenerationOptions, sessionId) => ipcRenderer.invoke("password:generate", sessionId, options),
+  copyText: (value: string, sessionId) => ipcRenderer.invoke("clipboard:writeText", sessionId, value)
 };
 
 contextBridge.exposeInMainWorld("passwordManager", passwordManagerApi);

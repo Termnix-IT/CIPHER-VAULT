@@ -65,6 +65,8 @@ flowchart LR
 ## 境界と責務
 
 - `apps/web/src/lib/api.ts` が実行環境を判定し、HTTPとIPCを切り替えます。
+- Electronはsandbox対応の `preload.cjs` から限定APIを公開します。画面のCSP・権限拒否・読み込み先の制限は[設計](../設計.md#画面のsandboxとcsp)を参照してください。
 - HTTP RouterとElectron IPC handlerは、入力を共通サービス層へ受け渡します。
+- サービス層は `apps/api/src/lib/input-validation.ts` で型・許可項目・容量・件数を共通検証します。HTTPは本文の受信量、IPCは保管庫操作の引数個数も確認します。[上限と旧データの扱い](../設計.md#入力の検証と上限)を参照してください。
 - 暗号化・ロック判定・DB操作はUIや通信層ではなくサービス層が担当します。
 - 共通のリクエスト・レスポンス型は `packages/shared/src/types.ts` にあります。

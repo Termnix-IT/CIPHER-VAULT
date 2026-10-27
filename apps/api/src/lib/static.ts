@@ -1,6 +1,7 @@
 import { createReadStream, existsSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import type { ServerResponse } from "node:http";
+import { rendererContentSecurityPolicy } from "@password-manager/shared";
 
 function resolveWebDistPath() {
   const overridePath = process.env.PASSWORD_MANAGER_WEB_DIST;
@@ -19,6 +20,7 @@ function resolveWebDistPath() {
 }
 
 function getContentType(filePath: string) {
+  if (filePath.endsWith(".ttf")) return "font/ttf";
   if (filePath.endsWith(".png")) return "image/png";
   if (filePath.endsWith(".ico")) return "image/x-icon";
   if (filePath.endsWith(".js")) {
@@ -61,7 +63,9 @@ export function tryServeStaticAsset(urlPath: string, response: ServerResponse) {
   }
 
   response.writeHead(200, {
-    "Content-Type": getContentType(realTarget)
+    "Content-Type": getContentType(realTarget),
+    "X-Content-Type-Options": "nosniff",
+    ...(realTarget.endsWith(".html") ? { "Content-Security-Policy": rendererContentSecurityPolicy("web") + "; frame-ancestors 'none'", "X-Frame-Options": "DENY" } : {})
   });
   const stream = createReadStream(realTarget);
   stream.on("error", () => response.destroy());

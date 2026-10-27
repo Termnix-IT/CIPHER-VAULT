@@ -129,6 +129,7 @@ test("an isolated Web release installs locked dependencies and runs the real API
       }
     }
     const html = await fetch(origin);
+    assert.match(html.headers.get("content-security-policy"), /default-src 'none'/);
     assert.match(await html.text(), /Isolated release fixture/);
     assert.equal((await request("/vault/setup", "POST", { masterPassword: "release-fixture-master-password" })).status, 201);
     const payload = { serviceName: "Release fixture", loginId: "synthetic-user", password: "synthetic-entry-password", notes: "synthetic note" };

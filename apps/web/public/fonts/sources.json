@@ -1,0 +1,26 @@
+{
+  "revision": "e7db6ca603fd4862010383ff17ffd6cc4ffac1c0",
+  "repository": "https://github.com/google/fonts",
+  "files": [
+    {
+      "sha256": "9ceab1f87414829af259c0f537573ae03ef7dd3147c0b27a36a1a0beb6732677",
+      "file": "ShareTechMono-Regular.ttf",
+      "source": "https://raw.githubusercontent.com/google/fonts/e7db6ca603fd4862010383ff17ffd6cc4ffac1c0/ofl/sharetechmono/ShareTechMono-Regular.ttf"
+    },
+    {
+      "sha256": "9d96f445b6e9c701428811d0177f894874f8d6f07ecc30d568c506542368f3ff",
+      "file": "ShareTechMono-OFL.txt",
+      "source": "https://raw.githubusercontent.com/google/fonts/e7db6ca603fd4862010383ff17ffd6cc4ffac1c0/ofl/sharetechmono/OFL.txt"
+    },
+    {
+      "sha256": "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda",
+      "file": "JetBrainsMono-Variable.ttf",
+      "source": "https://raw.githubusercontent.com/google/fonts/e7db6ca603fd4862010383ff17ffd6cc4ffac1c0/ofl/jetbrainsmono/JetBrainsMono%5Bwght%5D.ttf"
+    },
+    {
+      "sha256": "b2fe5e8987594e9ffd1d2ca52a2f5d73eb8335243893c5d6254b5ad69269591d",
+      "file": "JetBrainsMono-OFL.txt",
+      "source": "https://raw.githubusercontent.com/google/fonts/e7db6ca603fd4862010383ff17ffd6cc4ffac1c0/ofl/jetbrainsmono/OFL.txt"
+    }
+  ]
+}

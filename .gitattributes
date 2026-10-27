@@ -1,0 +1,4 @@
+# Preserve the upstream font and license bytes used by the recorded checksums.
+apps/web/public/fonts/*.ttf -text
+# Upstream license whitespace is part of the pinned original.
+apps/web/public/fonts/*-OFL.txt -text whitespace=-blank-at-eol

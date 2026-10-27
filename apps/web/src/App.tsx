@@ -1,29 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import type {
-  PasswordEntry,
-  PasswordEntrySummary,
-  PasswordEntryUpsertPayload,
-  VaultStatus
-} from "@password-manager/shared/types";
+import { CLIPBOARD_CLEAR_AFTER_MS } from "@password-manager/shared";
+import type { PasswordEntry, PasswordEntrySummary, PasswordEntryUpsertPayload, VaultStatus } from "@password-manager/shared/types";
 import {
-  copyText,
-  createEntry,
-  deleteEntry,
-  fetchEntries,
-  fetchEntry,
-  fetchVaultStatus,
-  generatePassword,
-  lockVault,
-  resetVault,
-  setupVault,
-  unlockVault,
-  updateEntry
+  copyText, createEntry, deleteEntry, fetchEntries, fetchEntry, generatePassword,
+  lockVault, observeVaultStatus, recordVaultActivity, resetVault, setupVault, unlockVault, updateEntry
 } from "./lib/api";
 import { LockScreen } from "./pages/LockScreen";
 import { VaultDashboard } from "./pages/VaultDashboard";
 import { AppMenu } from "./components/AppMenu";
-
-const AUTO_LOCK_TIMEOUT_MS = 5 * 60 * 1000;
+import { VaultSessionChangedError } from "./lib/vault-client-session";
 
 export function App() {
   const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null);
@@ -42,260 +27,189 @@ export function App() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isEditingEntry, setIsEditingEntry] = useState(false);
   const [isGroupedView, setIsGroupedView] = useState(false);
-  const autoLockTimerRef = useRef<number | null>(null);
+  const statusRef = useRef<VaultStatus | null>(null);
+  const viewEpoch = useRef(0);
+  const submission = useRef(0);
 
-  useEffect(() => window.passwordManager?.onUpdateState((state) => {
-    if (state.status === "installing") {
-      // The main process has locked the vault, even if starting the installer fails.
-      setVaultStatus((current) => current ? { ...current, isUnlocked: false } : current);
-      setEntries([]);
-      setSelectedEntry(null);
-      setCopyMessage("");
-      setIsFormOpen(false);
-      setIsEditingEntry(false);
-      setHasUnsavedChanges(false);
+  useEffect(() => observeVaultStatus((state) => {
+    const previous = statusRef.current;
+    statusRef.current = state;
+    if (previous?.sessionId !== state.sessionId || previous.isUnlocked !== state.isUnlocked) {
+      viewEpoch.current++;
+      setEntries([]); setSelectedEntry(null); setCopyMessage("");
+      setIsFormOpen(false); setIsEditingEntry(false); setHasUnsavedChanges(false);
+      setIsLoadingEntries(false); setIsLoadingEntryDetail(false);
+      setIsCreatingEntry(false); setIsUpdatingEntry(false); setIsDeletingEntry(false); setIsGeneratingPassword(false);
+      setErrorMessage(state.lockReason === "idle" ? "5分間操作がなかったため保管庫をロックしました"
+        : state.lockReason === "clock-change" ? "システム時刻の変更を検出したため保管庫をロックしました"
+        : state.lockReason === "screen-lock" || state.lockReason === "screen-unlock" ? "OSの画面ロックに伴い保管庫をロックしました"
+        : state.lockReason === "suspend" || state.lockReason === "resume" ? "スリープ・復帰に伴い保管庫をロックしました" : "");
     }
+    setVaultStatus(state);
   }), []);
 
   useEffect(() => {
-    void refreshVaultStatus();
-  }, []);
+    if (vaultStatus?.isUnlocked) void refreshEntries();
+  }, [vaultStatus?.sessionId, vaultStatus?.isUnlocked]);
 
   useEffect(() => {
-    if (!vaultStatus?.isUnlocked) {
-      clearAutoLockTimer();
-      return;
-    }
-
-    const handleActivity = () => {
-      scheduleAutoLock();
+    if (!vaultStatus?.isUnlocked) return;
+    let timer: number | undefined;
+    let lastSent = -Infinity;
+    let pending = false;
+    const sendActivity = () => {
+      timer = undefined;
+      if (!pending) return;
+      pending = false;
+      lastSent = performance.now();
+      // Only a trusted input event schedules this call; polling never renews a session.
+      void recordVaultActivity().catch(() => undefined);
     };
-
-    scheduleAutoLock();
-
-    window.addEventListener("pointerdown", handleActivity);
-    window.addEventListener("keydown", handleActivity);
-    window.addEventListener("mousemove", handleActivity);
-    window.addEventListener("scroll", handleActivity, true);
-
+    const activity = (event: Event) => {
+      if (!event.isTrusted) return;
+      pending = true;
+      if (timer === undefined) timer = window.setTimeout(sendActivity, Math.max(0, 1000 - (performance.now() - lastSent)));
+    };
+    for (const event of ["pointerdown", "keydown", "mousemove", "scroll"]) window.addEventListener(event, activity, true);
     return () => {
-      clearAutoLockTimer();
-      window.removeEventListener("pointerdown", handleActivity);
-      window.removeEventListener("keydown", handleActivity);
-      window.removeEventListener("mousemove", handleActivity);
-      window.removeEventListener("scroll", handleActivity, true);
+      if (timer !== undefined) window.clearTimeout(timer);
+      for (const event of ["pointerdown", "keydown", "mousemove", "scroll"]) window.removeEventListener(event, activity, true);
     };
-  }, [vaultStatus?.isUnlocked]);
+  }, [vaultStatus?.sessionId, vaultStatus?.isUnlocked]);
 
-  async function refreshVaultStatus() {
-    try {
-      setErrorMessage("");
-      const status = await fetchVaultStatus();
-      setVaultStatus(status);
-
-      if (status.isUnlocked) {
-        await refreshEntries();
-      } else {
-        setEntries([]);
-        setSelectedEntry(null);
-        setIsFormOpen(false);
-        setIsEditingEntry(false);
-        setHasUnsavedChanges(false);
-      }
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "保管庫の状態を読み込めませんでした");
-    }
+  function isCurrent(epoch: number) {
+    return epoch === viewEpoch.current && statusRef.current?.isUnlocked === true;
   }
 
   async function refreshEntries() {
+    const epoch = viewEpoch.current;
+    if (!isCurrent(epoch)) return;
+    setIsLoadingEntries(true);
     try {
-      setIsLoadingEntries(true);
       const response = await fetchEntries();
+      if (!isCurrent(epoch)) return;
       setEntries(response.items);
-      setSelectedEntry((current) => {
-        if (!current) {
-          return null;
-        }
-
-        return response.items.some((entry) => entry.id === current.id) ? current : null;
-      });
+      setSelectedEntry((current) => current && response.items.some((entry) => entry.id === current.id) ? current : null);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "エントリ一覧を読み込めませんでした");
+      if (isCurrent(epoch)) setErrorMessage(error instanceof Error ? error.message : "エントリ一覧を読み込めませんでした");
     } finally {
-      setIsLoadingEntries(false);
+      if (isCurrent(epoch)) setIsLoadingEntries(false);
     }
   }
 
   async function handleVaultSubmit(masterPassword: string) {
+    const request = ++submission.current;
+    setIsSubmitting(true); setErrorMessage("");
     try {
-      setIsSubmitting(true);
-      setErrorMessage("");
-
-      if (vaultStatus?.isConfigured) {
-        await unlockVault({ masterPassword });
-      } else {
-        await setupVault({ masterPassword });
-      }
-
-      await refreshVaultStatus();
+      if (statusRef.current?.isConfigured) await unlockVault({ masterPassword });
+      else await setupVault({ masterPassword });
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "保管庫の操作に失敗しました");
+      if (request === submission.current) setErrorMessage(error instanceof Error ? error.message : "保管庫の操作に失敗しました");
     } finally {
-      setIsSubmitting(false);
+      if (request === submission.current) setIsSubmitting(false);
     }
   }
 
   async function handleLockVault() {
-    if (isSubmitting || isCreatingEntry || isUpdatingEntry || isDeletingEntry || isLoadingEntryDetail || isLoadingEntries || isGeneratingPassword) return;
     if (hasUnsavedChanges && !window.confirm("保存していない内容を破棄して保管庫をロックしますか？")) return;
-    try {
-      clearAutoLockTimer();
-      setErrorMessage("");
-      await lockVault();
-      await refreshVaultStatus();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "保管庫をロックできませんでした");
+    try { await lockVault(); }
+    catch (error) {
+      if (statusRef.current?.isUnlocked) setErrorMessage(error instanceof Error ? error.message : "保管庫をロックできませんでした");
     }
   }
 
   async function handleResetVault() {
-    try {
-      setIsSubmitting(true);
-      setErrorMessage("");
-      await resetVault({ confirmation: "RESET_ALL_DATA" });
-      await refreshVaultStatus();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "保管庫をリセットできませんでした");
+    const request = ++submission.current;
+    setIsSubmitting(true); setErrorMessage("");
+    try { await resetVault({ confirmation: "RESET_ALL_DATA" }); }
+    catch (error) {
+      if (request === submission.current) setErrorMessage(error instanceof Error ? error.message : "保管庫をリセットできませんでした");
       throw error;
     } finally {
-      setIsSubmitting(false);
+      if (request === submission.current) setIsSubmitting(false);
     }
   }
 
   async function handleCreateEntry(payload: PasswordEntryUpsertPayload) {
+    const epoch = viewEpoch.current;
+    setIsCreatingEntry(true); setErrorMessage("");
     try {
-      setIsCreatingEntry(true);
-      setErrorMessage("");
       const created = await createEntry(payload);
-      setSelectedEntry(created);
-      setIsEditingEntry(false);
-      setHasUnsavedChanges(false);
+      if (!isCurrent(epoch)) throw new VaultSessionChangedError();
+      setSelectedEntry(created); setIsEditingEntry(false); setHasUnsavedChanges(false);
       await refreshEntries();
+      if (!isCurrent(epoch)) throw new VaultSessionChangedError();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "エントリを作成できませんでした");
+      if (isCurrent(epoch)) setErrorMessage(error instanceof Error ? error.message : "エントリを作成できませんでした");
       throw error;
-    } finally {
-      setIsCreatingEntry(false);
-    }
+    } finally { if (isCurrent(epoch)) setIsCreatingEntry(false); }
   }
 
   async function handleSelectEntry(id: string) {
+    const epoch = viewEpoch.current;
+    setIsLoadingEntryDetail(true); setErrorMessage("");
     try {
-      setIsLoadingEntryDetail(true);
-      setErrorMessage("");
       const entry = await fetchEntry(id);
-      setSelectedEntry(entry);
-      setIsFormOpen(false);
-      setIsEditingEntry(false);
-      setHasUnsavedChanges(false);
+      if (!isCurrent(epoch)) return;
+      setSelectedEntry(entry); setIsFormOpen(false); setIsEditingEntry(false); setHasUnsavedChanges(false);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "エントリ詳細を読み込めませんでした");
-    } finally {
-      setIsLoadingEntryDetail(false);
-    }
+      if (isCurrent(epoch)) setErrorMessage(error instanceof Error ? error.message : "エントリ詳細を読み込めませんでした");
+    } finally { if (isCurrent(epoch)) setIsLoadingEntryDetail(false); }
   }
 
   async function handleUpdateEntry(id: string, payload: PasswordEntryUpsertPayload) {
+    const epoch = viewEpoch.current;
+    setIsUpdatingEntry(true); setErrorMessage("");
     try {
-      setIsUpdatingEntry(true);
-      setErrorMessage("");
       const updated = await updateEntry(id, payload);
-      setSelectedEntry(updated);
-      setIsEditingEntry(false);
-      setHasUnsavedChanges(false);
+      if (!isCurrent(epoch)) throw new VaultSessionChangedError();
+      setSelectedEntry(updated); setIsEditingEntry(false); setHasUnsavedChanges(false);
       await refreshEntries();
+      if (!isCurrent(epoch)) throw new VaultSessionChangedError();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "エントリを更新できませんでした");
+      if (isCurrent(epoch)) setErrorMessage(error instanceof Error ? error.message : "エントリを更新できませんでした");
       throw error;
-    } finally {
-      setIsUpdatingEntry(false);
-    }
+    } finally { if (isCurrent(epoch)) setIsUpdatingEntry(false); }
   }
 
   async function handleDeleteEntry(id: string) {
+    const epoch = viewEpoch.current;
+    setIsDeletingEntry(true); setErrorMessage("");
     try {
-      setIsDeletingEntry(true);
-      setErrorMessage("");
       await deleteEntry(id);
-      setSelectedEntry(null);
-      setIsEditingEntry(false);
-      setHasUnsavedChanges(false);
+      if (!isCurrent(epoch)) throw new VaultSessionChangedError();
+      setSelectedEntry(null); setIsEditingEntry(false); setHasUnsavedChanges(false);
       await refreshEntries();
+      if (!isCurrent(epoch)) throw new VaultSessionChangedError();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "エントリを削除できませんでした");
+      if (isCurrent(epoch)) setErrorMessage(error instanceof Error ? error.message : "エントリを削除できませんでした");
       throw error;
-    } finally {
-      setIsDeletingEntry(false);
-    }
+    } finally { if (isCurrent(epoch)) setIsDeletingEntry(false); }
   }
 
   async function handleGeneratePassword() {
+    const epoch = viewEpoch.current;
+    setIsGeneratingPassword(true); setErrorMessage("");
     try {
-      setIsGeneratingPassword(true);
-      setErrorMessage("");
-      const result = await generatePassword({
-        length: 20,
-        includeUppercase: true,
-        includeLowercase: true,
-        includeNumbers: true,
-        includeSymbols: true
-      });
-
+      const result = await generatePassword({ length: 20, includeUppercase: true, includeLowercase: true, includeNumbers: true, includeSymbols: true });
+      if (!isCurrent(epoch)) throw new Error("保管庫の状態が変わりました");
       return result.password;
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "パスワードを生成できませんでした");
+      if (isCurrent(epoch)) setErrorMessage(error instanceof Error ? error.message : "パスワードを生成できませんでした");
       throw error;
-    } finally {
-      setIsGeneratingPassword(false);
-    }
+    } finally { if (isCurrent(epoch)) setIsGeneratingPassword(false); }
   }
 
   async function handleCopyToClipboard(value: string, label: string) {
+    const epoch = viewEpoch.current;
     try {
       await copyText(value);
-      setCopyMessage(`${label}をコピーしました`);
-      window.setTimeout(() => {
-        setCopyMessage("");
-      }, 2000);
+      if (!isCurrent(epoch)) return;
+      setCopyMessage(`${label}をコピーしました${window.passwordManager ? `（${CLIPBOARD_CLEAR_AFTER_MS / 1000}秒後またはロック時に消去）` : ""}`);
+      window.setTimeout(() => { if (isCurrent(epoch)) setCopyMessage(""); }, 2000);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "クリップボードへコピーできませんでした");
+      if (isCurrent(epoch)) setErrorMessage(error instanceof Error ? error.message : "クリップボードへコピーできませんでした");
       throw error;
-    }
-  }
-
-  async function autoLockVault() {
-    try {
-      clearAutoLockTimer();
-      await lockVault();
-      setCopyMessage("");
-      await refreshVaultStatus();
-      setErrorMessage("5分間操作がなかったため保管庫をロックしました");
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "自動ロックに失敗しました");
-    }
-  }
-
-  function scheduleAutoLock() {
-    clearAutoLockTimer();
-    autoLockTimerRef.current = window.setTimeout(() => {
-      void autoLockVault();
-    }, AUTO_LOCK_TIMEOUT_MS);
-  }
-
-  function clearAutoLockTimer() {
-    if (autoLockTimerRef.current !== null) {
-      window.clearTimeout(autoLockTimerRef.current);
-      autoLockTimerRef.current = null;
     }
   }
 
@@ -312,7 +226,7 @@ export function App() {
     setIsEditingEntry(true);
   }
 
-  const menu = <AppMenu
+  const menu = <AppMenu key={`menu-${vaultStatus?.sessionId ?? "initial"}`}
     isUnlocked={vaultStatus?.isUnlocked ?? false}
     isBusy={isSubmitting || isCreatingEntry || isUpdatingEntry || isDeletingEntry}
     isLoading={isLoadingEntries || isLoadingEntryDetail || isGeneratingPassword}
@@ -347,7 +261,7 @@ export function App() {
     <main className="app-shell">
       {menu}
       {vaultStatus.isUnlocked ? (
-        <VaultDashboard
+        <VaultDashboard key={`vault-${vaultStatus.sessionId}`}
           hasUnsavedChanges={hasUnsavedChanges}
           isFormOpen={isFormOpen}
           onFormOpenChange={setIsFormOpen}

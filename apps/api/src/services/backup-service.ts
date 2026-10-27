@@ -1,22 +1,17 @@
 import { createCipheriv, createDecipheriv, randomBytes, scrypt } from "node:crypto";
-import type { BackupExportPayload, BackupRestorePayload, PasswordEntry } from "@password-manager/shared/types";
+import type { PasswordEntry } from "@password-manager/shared/types";
 import { HttpError } from "../lib/errors.js";
 import { getVaultSession } from "./crypto-service.js";
-import { getEntryById, listEntries, requireUnlockedVault, restoreEntriesIntoEmptyVault, validatePayload } from "./entry-service.js";
+import { getEntryById, listEntries, requireUnlockedVault, restoreEntriesIntoEmptyVault } from "./entry-service.js";
+import { INPUT_LIMITS, parseBackupPayload, parseEntryPayload, parseRecord } from "../lib/input-validation.js";
 
 const FORMAT = "CIPHER-VAULT";
-const MAX_FILE_BYTES = 16 * 1024 * 1024;
-const MAX_PLAINTEXT_BYTES = 11 * 1024 * 1024;
-const MAX_ENTRIES = 10000;
+const MAX_FILE_BYTES = INPUT_LIMITS.backupFileBytes;
+const MAX_PLAINTEXT_BYTES = INPUT_LIMITS.backupPlaintextBytes;
+const MAX_ENTRIES = INPUT_LIMITS.entries;
 const KDF = "scrypt-N131072-r8-p1";
 const AAD = Buffer.from(`${FORMAT}:1:${KDF}:aes-256-gcm`);
 let busy = false;
-
-function validatePassphrase(payload: BackupExportPayload) {
-  if (typeof payload?.passphrase !== "string" || payload.passphrase.length < 12 || payload.passphrase.length > 1024) {
-    throw new HttpError(400, "バックアップ用パスフレーズは12〜1024文字で入力してください");
-  }
-}
 
 async function withBackupKey<T>(passphrase: string, salt: Buffer, action: (key: Buffer) => T): Promise<T> {
   requireUnlockedVault();
@@ -32,7 +27,9 @@ async function withBackupKey<T>(passphrase: string, salt: Buffer, action: (key: 
     });
     requireUnlockedVault();
     if (getVaultSession() !== session) throw new HttpError(409, "保管庫の状態が変わりました。もう一度操作してください");
-    return action(key);
+    const result = action(key);
+    requireUnlockedVault(session);
+    return result;
   } finally {
     key?.fill(0);
     busy = false;
@@ -54,10 +51,13 @@ function validateEntries(value: unknown): PasswordEntry[] {
   if (!Array.isArray(value) || value.length > MAX_ENTRIES) throw new Error("invalid entries");
   const ids = new Set<string>();
   for (const entry of value) {
-    if (!entry || typeof entry !== "object" || typeof entry.id !== "string" ||
+    parseRecord(entry, ["id", "serviceName", "loginId", "password", "notes", "url", "tags", "group", "createdAt", "updatedAt", "passwordChangedAt"]);
+    if (typeof entry.id !== "string" ||
         !/^[0-9a-f-]{36}$/i.test(entry.id) || ids.has(entry.id)) throw new Error("invalid id");
     ids.add(entry.id);
-    validatePayload({ ...entry, group: entry.group ?? undefined });
+    // Historical values can exceed the new write limits. Keep v1 restore lossless.
+    parseEntryPayload({ serviceName: entry.serviceName, loginId: entry.loginId, password: entry.password,
+      notes: entry.notes, url: entry.url, group: entry.group, tags: entry.tags }, "backup");
     if (typeof entry.notes !== "string" || typeof entry.url !== "string" || !Array.isArray(entry.tags) ||
         !(entry.group === null || typeof entry.group === "string") ||
         !validDate(entry.createdAt) || !validDate(entry.updatedAt) ||
@@ -70,9 +70,9 @@ function validateEntries(value: unknown): PasswordEntry[] {
   return value as PasswordEntry[];
 }
 
-export async function exportBackup(payload: BackupExportPayload) {
+export async function exportBackup(input: unknown) {
   requireUnlockedVault();
-  validatePassphrase(payload);
+  const payload = parseBackupPayload(input, false);
   const salt = randomBytes(16);
   return withBackupKey(payload.passphrase, salt, (key) => {
     const summaries = listEntries().items;
@@ -95,16 +95,13 @@ export async function exportBackup(payload: BackupExportPayload) {
   });
 }
 
-export async function restoreBackup(payload: BackupRestorePayload) {
+export async function restoreBackup(input: unknown) {
   requireUnlockedVault();
-  validatePassphrase(payload);
+  const payload = parseBackupPayload(input, true);
   if (listEntries().items.length !== 0) throw new HttpError(409, "復元できるのは空の保管庫のみです");
-  if (typeof payload.content !== "string" || Buffer.byteLength(payload.content) > MAX_FILE_BYTES) {
-    throw new HttpError(400, "バックアップファイルは16 MiB以内で指定してください");
-  }
   let salt: Buffer, iv: Buffer, tag: Buffer, data: Buffer;
   try {
-    const envelope = JSON.parse(payload.content);
+    const envelope = parseRecord(JSON.parse(payload.content), ["format", "version", "kdf", "cipher", "salt", "iv", "tag", "data"]);
     if (envelope?.format !== FORMAT || envelope.version !== 1 || envelope.kdf !== KDF || envelope.cipher !== "aes-256-gcm") {
       throw new Error("unsupported format");
     }
@@ -124,7 +121,7 @@ export async function restoreBackup(payload: BackupRestorePayload) {
       decipher.setAuthTag(tag);
       partial = decipher.update(data);
       plaintext = Buffer.concat([partial, decipher.final()]);
-      const decoded = JSON.parse(plaintext.toString("utf8"));
+      const decoded = parseRecord(JSON.parse(plaintext.toString("utf8")), ["version", "entries"]);
       if (decoded?.version !== 1) throw new Error("unsupported payload");
       entries = validateEntries(decoded.entries);
     } catch {

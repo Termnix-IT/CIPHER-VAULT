@@ -37,9 +37,18 @@ export type PasswordGenerationResult = {
   password: string;
 };
 
-export type VaultStatus = {
-  isConfigured: boolean;
+export type VaultLockReason = "manual" | "idle" | "clock-change" | "reset" | "window-closed" | "renderer-gone" | "update"
+  | "screen-lock" | "screen-unlock" | "suspend" | "resume";
+
+export type VaultSessionState = {
+  sessionId: string;
   isUnlocked: boolean;
+  idleTimeoutMs: number;
+  lockReason?: VaultLockReason;
+};
+
+export type VaultStatus = VaultSessionState & {
+  isConfigured: boolean;
 };
 
 export type VaultSetupPayload = {
@@ -64,9 +73,9 @@ export type VaultMetadataRecord = {
 };
 
 export type PasswordManagerDesktopApi = {
-  exportBackup: (payload: BackupExportPayload) => Promise<BackupFile>;
-  restoreBackup: (payload: BackupRestorePayload) => Promise<{ restoredCount: number }>;
-  auditVault: () => Promise<SecurityAudit>;
+  exportBackup: (payload: BackupExportPayload, sessionId: string) => Promise<BackupFile>;
+  restoreBackup: (payload: BackupRestorePayload, sessionId: string) => Promise<{ restoredCount: number }>;
+  auditVault: (sessionId: string) => Promise<SecurityAudit>;
   getUpdateState: () => Promise<AppUpdateState>;
   checkForUpdates: () => Promise<void>;
   downloadUpdate: () => Promise<void>;
@@ -74,17 +83,19 @@ export type PasswordManagerDesktopApi = {
   openReleasePage: () => Promise<void>;
   onUpdateState: (listener: (state: AppUpdateState) => void) => () => void;
   fetchVaultStatus: () => Promise<VaultStatus>;
-  setupVault: (payload: VaultSetupPayload) => Promise<VaultStatus>;
-  unlockVault: (payload: VaultUnlockPayload) => Promise<{ isUnlocked: boolean }>;
-  lockVault: () => Promise<{ isUnlocked: boolean }>;
-  resetVault: (payload: VaultResetPayload) => Promise<VaultStatus>;
-  fetchEntries: () => Promise<{ items: PasswordEntrySummary[] }>;
-  fetchEntry: (id: string) => Promise<PasswordEntry>;
-  createEntry: (payload: PasswordEntryUpsertPayload) => Promise<PasswordEntry>;
-  updateEntry: (id: string, payload: PasswordEntryUpsertPayload) => Promise<PasswordEntry>;
-  deleteEntry: (id: string) => Promise<{ success: boolean }>;
-  generatePassword: (options?: PasswordGenerationOptions) => Promise<PasswordGenerationResult>;
-  copyText: (value: string) => Promise<void>;
+  onVaultState: (listener: (state: VaultStatus) => void) => () => void;
+  recordVaultActivity: (sessionId: string) => Promise<VaultStatus>;
+  setupVault: (payload: VaultSetupPayload, sessionId: string) => Promise<VaultStatus>;
+  unlockVault: (payload: VaultUnlockPayload, sessionId: string) => Promise<VaultStatus>;
+  lockVault: (sessionId: string) => Promise<VaultStatus>;
+  resetVault: (payload: VaultResetPayload, sessionId: string) => Promise<VaultStatus>;
+  fetchEntries: (sessionId: string) => Promise<{ items: PasswordEntrySummary[] }>;
+  fetchEntry: (id: string, sessionId: string) => Promise<PasswordEntry>;
+  createEntry: (payload: PasswordEntryUpsertPayload, sessionId: string) => Promise<PasswordEntry>;
+  updateEntry: (id: string, payload: PasswordEntryUpsertPayload, sessionId: string) => Promise<PasswordEntry>;
+  deleteEntry: (id: string, sessionId: string) => Promise<{ success: boolean }>;
+  generatePassword: (options: PasswordGenerationOptions, sessionId: string) => Promise<PasswordGenerationResult>;
+  copyText: (value: string, sessionId: string) => Promise<void>;
 };
 
 export type BackupExportPayload = { passphrase: string };

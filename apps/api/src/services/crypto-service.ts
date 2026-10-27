@@ -1,79 +1,76 @@
-import { createCipheriv, createDecipheriv, createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHmac, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
+import { vaultSession } from "./vault-session.js";
 
 const KEY_LENGTH = 32;
 const IV_LENGTH = 12;
+const VERIFIER_LABEL = "CIPHER VAULT password verifier v1";
+// Pin the original Node defaults. Salt remains the stored Base64 STRING, not decoded bytes.
+const LEGACY_SCRYPT_OPTIONS = { N: 16384, r: 8, p: 1, maxmem: 32 * 1024 * 1024 };
 
-let activeVaultKey: Buffer | null = null;
-let vaultSession = 0;
-
-export function getVaultSession() { return vaultSession; }
+export function getVaultSession() { return vaultSession.getState().sessionId; }
 
 export function createPasswordSalt() {
   return randomBytes(16).toString("base64");
 }
 
-export function deriveVaultKey(masterPassword: string, salt: string) {
-  return scryptSync(masterPassword, salt, KEY_LENGTH);
+export function deriveVaultKey(masterPassword: string, salt: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    scrypt(masterPassword, salt, KEY_LENGTH, LEGACY_SCRYPT_OPTIONS, (error, key) => {
+      if (error) reject(error); else resolve(key);
+    });
+  });
 }
 
-export function deriveVerifier(masterPassword: string, salt: string) {
-  const key = deriveVaultKey(masterPassword, salt);
-  try {
-    return createHmac("sha256", key).update("CIPHER VAULT password verifier v1").digest("base64");
-  } finally {
-    key.fill(0);
-  }
+export function deriveVerifier(vaultKey: Buffer) {
+  return createHmac("sha256", vaultKey).update(VERIFIER_LABEL).digest("base64");
 }
 
-export function verifyMasterPassword(
-  masterPassword: string,
-  salt: string,
+export function verifyVaultKey(
+  vaultKey: Buffer,
   expectedVerifier: string,
   legacy = false
 ) {
-  const actual = legacy ? deriveVaultKey(masterPassword, salt) : Buffer.from(deriveVerifier(masterPassword, salt), "base64");
+  const actual = legacy ? vaultKey : Buffer.from(deriveVerifier(vaultKey), "base64");
   const expected = Buffer.from(expectedVerifier, "base64");
   try {
     return actual.length === expected.length && timingSafeEqual(actual, expected);
   } finally {
-    actual.fill(0);
+    // The caller owns the derived key and wipes it after activation or rejection.
+    if (!legacy) actual.fill(0);
     expected.fill(0);
   }
 }
 
 export function setActiveVaultKey(key: Buffer) {
-  clearActiveVaultKey();
-  activeVaultKey = Buffer.from(key);
+  vaultSession.unlock(key);
 }
 
 export function clearActiveVaultKey() {
-  vaultSession += 1;
-  activeVaultKey?.fill(0);
-  activeVaultKey = null;
+  vaultSession.lock();
 }
 
 export function hasActiveVaultKey() {
-  return activeVaultKey !== null;
+  return vaultSession.getState().isUnlocked;
 }
 
 function requireActiveVaultKey() {
-  if (activeVaultKey === null) {
-    throw new Error("保管庫の鍵が利用できません");
-  }
-
-  return activeVaultKey;
+  return vaultSession.requireKey();
 }
 
 export function encryptSecret(plainText: string) {
+  const session = vaultSession.requireUnlocked();
   const iv = randomBytes(IV_LENGTH);
   const cipher = createCipheriv("aes-256-gcm", requireActiveVaultKey(), iv);
   const encrypted = Buffer.concat([cipher.update(plainText, "utf-8"), cipher.final()]);
   const authTag = cipher.getAuthTag();
 
-  return Buffer.concat([iv, authTag, encrypted]).toString("base64");
+  const payload = Buffer.concat([iv, authTag, encrypted]).toString("base64");
+  vaultSession.requireUnlocked(session);
+  return payload;
 }
 
 export function decryptSecret(payload: string) {
+  const session = vaultSession.requireUnlocked();
   const buffer = Buffer.from(payload, "base64");
   const iv = buffer.subarray(0, IV_LENGTH);
   const authTag = buffer.subarray(IV_LENGTH, IV_LENGTH + 16);
@@ -81,5 +78,7 @@ export function decryptSecret(payload: string) {
   const decipher = createDecipheriv("aes-256-gcm", requireActiveVaultKey(), iv);
   decipher.setAuthTag(authTag);
 
-  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf-8");
+  const plaintext = Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf-8");
+  vaultSession.requireUnlocked(session);
+  return plaintext;
 }

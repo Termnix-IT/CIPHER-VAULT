@@ -53,6 +53,7 @@ export async function auditVault(): Promise<SecurityAudit> {
       if (issues.length > 0) items.push({ id: row.id, serviceName: row.service_name, loginId: row.login_id, issues });
     }
     // Each entry contributes 60 points for strength and 40 for uniqueness.
+    requireUnlockedVault(session);
     return {
       score: rows.length === 0 ? null : Math.round(100 - (60 * counts.weak + 40 * counts.duplicate) / rows.length),
       total: rows.length, checkedAt: new Date(now).toISOString(), unknownPasswordAgeCount, counts, items
