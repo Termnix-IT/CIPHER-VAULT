@@ -3,7 +3,7 @@ import type {
   PasswordEntry,
   PasswordEntrySummary
 } from "@password-manager/shared/types";
-import { database } from "../db/database.js";
+import { getDatabase } from "../db/database.js";
 import { HttpError } from "../lib/errors.js";
 import { decryptSecret, encryptSecret } from "./crypto-service.js";
 import { vaultSession } from "./vault-session.js";
@@ -23,19 +23,19 @@ type PasswordEntryRow = {
   password_changed_at: string | null;
 };
 
-const listEntriesStatement = database.prepare(
+const listEntriesStatement = () => getDatabase().prepare(
   `SELECT id, service_name, login_id, encrypted_password, encrypted_notes, url, tags, group_name, created_at, updated_at, password_changed_at
    FROM password_entries
    ORDER BY updated_at DESC`
 );
 
-const getEntryStatement = database.prepare(
+const getEntryStatement = () => getDatabase().prepare(
   `SELECT id, service_name, login_id, encrypted_password, encrypted_notes, url, tags, group_name, created_at, updated_at, password_changed_at
    FROM password_entries
    WHERE id = ?`
 );
 
-const insertEntryStatement = database.prepare(
+const insertEntryStatement = () => getDatabase().prepare(
   `INSERT INTO password_entries (
     id, service_name, login_id, encrypted_password, encrypted_notes, url, tags, group_name, created_at, updated_at, password_changed_at
    ) VALUES (
@@ -43,7 +43,7 @@ const insertEntryStatement = database.prepare(
    )`
 );
 
-const updateEntryStatement = database.prepare(
+const updateEntryStatement = () => getDatabase().prepare(
   `UPDATE password_entries
    SET service_name = @service_name,
        login_id = @login_id,
@@ -57,8 +57,8 @@ const updateEntryStatement = database.prepare(
    WHERE id = @id`
 );
 
-const deleteEntryStatement = database.prepare("DELETE FROM password_entries WHERE id = ?");
-const countEntriesStatement = database.prepare("SELECT COUNT(*) AS count FROM password_entries");
+const deleteEntryStatement = () => getDatabase().prepare("DELETE FROM password_entries WHERE id = ?");
+const countEntriesStatement = () => getDatabase().prepare("SELECT COUNT(*) AS count FROM password_entries");
 
 export function requireUnlockedVault(expectedSessionId?: string) {
   return vaultSession.requireUnlocked(expectedSessionId);
@@ -97,7 +97,7 @@ function mapRowToEntry(row: PasswordEntryRow): PasswordEntry {
 
 export function listEntries() {
   const session = requireUnlockedVault();
-  const rows = listEntriesStatement.all() as PasswordEntryRow[];
+  const rows = listEntriesStatement().all() as PasswordEntryRow[];
   const items = rows.map(mapRowToSummary);
   requireUnlockedVault(session);
   return { items };
@@ -106,7 +106,7 @@ export function listEntries() {
 export function getEntryById(inputId: unknown) {
   const session = requireUnlockedVault();
   const id = parseEntryId(inputId);
-  const row = getEntryStatement.get(id) as PasswordEntryRow | undefined;
+  const row = getEntryStatement().get(id) as PasswordEntryRow | undefined;
 
   if (!row) {
     throw new HttpError(404, "エントリが見つかりません");
@@ -120,14 +120,14 @@ export function getEntryById(inputId: unknown) {
 export function createEntry(input: unknown) {
   requireUnlockedVault();
   const payload = parseEntryPayload(input);
-  if ((countEntriesStatement.get() as { count: number }).count >= INPUT_LIMITS.entries) {
+  if ((countEntriesStatement().get() as { count: number }).count >= INPUT_LIMITS.entries) {
     throw new HttpError(413, "保管庫への新規登録は10000件まで対応しています");
   }
 
   const now = new Date().toISOString();
   const id = randomUUID();
 
-  insertEntryStatement.run({
+  insertEntryStatement().run({
     id,
     service_name: payload.serviceName.trim(),
     login_id: payload.loginId.trim(),
@@ -149,14 +149,14 @@ export function updateEntry(inputId: unknown, input: unknown) {
   const id = parseEntryId(inputId);
   const payload = parseEntryPayload(input);
 
-  const existing = getEntryStatement.get(id) as PasswordEntryRow | undefined;
+  const existing = getEntryStatement().get(id) as PasswordEntryRow | undefined;
 
   if (!existing) {
     throw new HttpError(404, "エントリが見つかりません");
   }
 
   const now = new Date().toISOString();
-  updateEntryStatement.run({
+  updateEntryStatement().run({
     id,
     service_name: payload.serviceName.trim(),
     login_id: payload.loginId.trim(),
@@ -176,7 +176,7 @@ export function updateEntry(inputId: unknown, input: unknown) {
 export function deleteEntry(inputId: unknown) {
   requireUnlockedVault();
   const id = parseEntryId(inputId);
-  const result = deleteEntryStatement.run(id);
+  const result = deleteEntryStatement().run(id);
 
   if (result.changes === 0) {
     throw new HttpError(404, "エントリが見つかりません");
@@ -189,11 +189,12 @@ export function deleteEntry(inputId: unknown) {
 
 export function restoreEntriesIntoEmptyVault(entries: PasswordEntry[]) {
   const session = requireUnlockedVault();
-  return database.transaction(() => {
+  return getDatabase().transaction(() => {
     requireUnlockedVault(session);
-    if (listEntriesStatement.get()) throw new HttpError(409, "復元できるのは空の保管庫のみです");
+    if (listEntriesStatement().get()) throw new HttpError(409, "復元できるのは空の保管庫のみです");
+    const insert = insertEntryStatement();
     for (const entry of entries) {
-      insertEntryStatement.run({
+      insert.run({
         id: entry.id, service_name: entry.serviceName, login_id: entry.loginId,
         encrypted_password: encryptSecret(entry.password),
         encrypted_notes: encryptSecret(entry.notes), url: entry.url,

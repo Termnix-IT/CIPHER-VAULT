@@ -3,7 +3,7 @@ import { setImmediate } from "node:timers/promises";
 import * as common from "@zxcvbn-ts/language-common";
 import * as english from "@zxcvbn-ts/language-en";
 import type { AuditIssue, SecurityAudit } from "@password-manager/shared/types";
-import { database } from "../db/database.js";
+import { getDatabase } from "../db/database.js";
 import { decryptSecret, getVaultSession } from "./crypto-service.js";
 import { HttpError } from "../lib/errors.js";
 import { requireUnlockedVault } from "./entry-service.js";
@@ -22,7 +22,7 @@ export async function auditVault(): Promise<SecurityAudit> {
   if (busy) throw new HttpError(409, "監査の完了を待ってください");
   const session = getVaultSession();
   const now = Date.now();
-  const rows = database.prepare(`SELECT id, service_name, login_id, encrypted_password, url,
+  const rows = getDatabase().prepare(`SELECT id, service_name, login_id, encrypted_password, url,
     updated_at, password_changed_at FROM password_entries`).all() as {
       id: string; service_name: string; login_id: string; encrypted_password: string;
       url: string | null; updated_at: string; password_changed_at: string | null;

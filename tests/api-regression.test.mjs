@@ -32,7 +32,8 @@ mkdirSync(path.join(temporaryRoot, "web-private"));
 writeFileSync(path.join(temporaryRoot, "web-private", "secret.txt"), "must not be served");
 
 const base = "../apps/api/dist/apps/api/src/";
-const { database } = await import(`${base}db/database.js`);
+const { openDatabase, closeDatabase } = await import(`${base}db/database.js`);
+const database = openDatabase();
 const vault = await import(`${base}services/vault-service.js`);
 const entries = await import(`${base}services/entry-service.js`);
 const crypto = await import(`${base}services/crypto-service.js`);
@@ -71,7 +72,7 @@ after(async () => {
   server.closeAllConnections();
   await new Promise((resolve) => server.close(resolve));
   vault.lockVault();
-  database.close();
+  closeDatabase();
   const relative = path.relative(tmpdir(), temporaryRoot);
   assert.ok(relative.startsWith("cipher-vault-regression-") && !relative.includes(path.sep));
   rmSync(temporaryRoot, { recursive: true, force: true });

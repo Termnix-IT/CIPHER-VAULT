@@ -1,5 +1,5 @@
 import type { VaultMetadataRecord } from "@password-manager/shared/types";
-import { database } from "../db/database.js";
+import { getDatabase } from "../db/database.js";
 
 type VaultMetadataRow = {
   id: number;
@@ -10,13 +10,13 @@ type VaultMetadataRow = {
   updated_at: string;
 };
 
-const selectVaultMetadataStatement = database.prepare(
+const selectVaultMetadataStatement = () => getDatabase().prepare(
   `SELECT id, password_salt, password_verifier, kdf_params, created_at, updated_at
    FROM vault_metadata
    WHERE id = 1`
 );
 
-const upsertVaultMetadataStatement = database.prepare(
+const upsertVaultMetadataStatement = () => getDatabase().prepare(
   `INSERT INTO vault_metadata (id, password_salt, password_verifier, kdf_params, created_at, updated_at)
    VALUES (@id, @password_salt, @password_verifier, @kdf_params, @created_at, @updated_at)
    ON CONFLICT(id) DO UPDATE SET
@@ -25,14 +25,6 @@ const upsertVaultMetadataStatement = database.prepare(
      kdf_params = excluded.kdf_params,
      updated_at = excluded.updated_at`
 );
-
-const deleteAllEntriesStatement = database.prepare("DELETE FROM password_entries");
-const deleteVaultMetadataStatement = database.prepare("DELETE FROM vault_metadata");
-
-const resetVaultDataTransaction = database.transaction(() => {
-  deleteAllEntriesStatement.run();
-  deleteVaultMetadataStatement.run();
-});
 
 function mapRowToRecord(row: VaultMetadataRow): VaultMetadataRecord {
   return {
@@ -46,13 +38,13 @@ function mapRowToRecord(row: VaultMetadataRow): VaultMetadataRecord {
 }
 
 export function getVaultMetadata() {
-  const row = selectVaultMetadataStatement.get() as VaultMetadataRow | undefined;
+  const row = selectVaultMetadataStatement().get() as VaultMetadataRow | undefined;
 
   return row ? mapRowToRecord(row) : null;
 }
 
 export function saveVaultMetadata(record: VaultMetadataRecord) {
-  upsertVaultMetadataStatement.run({
+  upsertVaultMetadataStatement().run({
     id: record.id,
     password_salt: record.passwordSalt,
     password_verifier: record.passwordVerifier,
@@ -63,5 +55,9 @@ export function saveVaultMetadata(record: VaultMetadataRecord) {
 }
 
 export function resetVaultData() {
-  resetVaultDataTransaction();
+  const database = getDatabase();
+  database.transaction(() => {
+    database.prepare("DELETE FROM password_entries").run();
+    database.prepare("DELETE FROM vault_metadata").run();
+  })();
 }

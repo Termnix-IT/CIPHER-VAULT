@@ -174,8 +174,6 @@ async function importModule<T>(filePath: string) {
 }
 
 async function loadAppServices(appRoot: string): Promise<AppServices> {
-  process.env.PASSWORD_MANAGER_DATA_DIR = path.join(app.getPath("userData"), "data");
-
   const [vault, entries, password, backup, audit, session, input] = await Promise.all([
     importModule<VaultServiceModule>(getApiBuildPath(appRoot, "services/vault-service.js")),
     importModule<EntryServiceModule>(getApiBuildPath(appRoot, "services/entry-service.js")),
@@ -334,6 +332,16 @@ async function bootstrap() {
     throw new Error("Application root was not found");
   }
 
+  process.env.PASSWORD_MANAGER_DATA_DIR = path.join(app.getPath("userData"), "data");
+  const storage = await importModule<{ openDatabase: () => void; closeDatabase: () => void }>(getApiBuildPath(appRoot, "db/database.js"));
+  storage.openDatabase();
+  // Register cleanup before loading services or the renderer, including failed startup.
+  app.on("will-quit", () => {
+    try {
+      powerGuard?.dispose();
+      appServices?.vault.lockVault();
+    } finally { storage.closeDatabase(); }
+  });
   const services = await loadAppServices(appRoot);
   appServices = services;
   installRendererSessionSecurity(session.defaultSession, () => mainWindow?.webContents.id ?? null,
@@ -350,7 +358,6 @@ async function bootstrap() {
   powerGuard = new VaultPowerGuard(powerMonitor, (reason) => { services.vault.lockVault(reason); });
   const version = app.isPackaged ? app.getVersion() : JSON.parse(readFileSync(path.join(appRoot, "package.json"), "utf8")).version as string;
   registerUpdateHandlers(() => mainWindow, () => { services.vault.lockVault("update"); }, version, assertTrustedSender);
-  const { database } = await importModule<{ database: { open: boolean; close: () => void } }>(getApiBuildPath(appRoot, "db/database.js"));
   app.on("before-quit", (event) => {
     if (quitReady) return;
     event.preventDefault();
@@ -363,11 +370,6 @@ async function bootstrap() {
       protectedClipboard.clearOwned(),
       new Promise((resolve) => { timer = setTimeout(resolve, 1500); })
     ]).finally(() => { clearTimeout(timer); quitReady = true; app.quit(); });
-  });
-  app.on("will-quit", () => {
-    powerGuard?.dispose();
-    services.vault.lockVault();
-    if (database.open) database.close();
   });
   await createMainWindow(appRoot, services);
 }

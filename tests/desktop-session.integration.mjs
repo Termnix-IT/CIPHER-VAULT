@@ -137,7 +137,8 @@ try {
   assert.equal(path.resolve(app.getPath("userData")), path.resolve(profile));
   const services = await import("../apps/api/dist/apps/api/src/services/vault-service.js");
   const { vaultSession, VAULT_IDLE_TIMEOUT_MS } = await import("../apps/api/dist/apps/api/src/services/vault-session.js");
-  const { database, getDatabasePath } = await import("../apps/api/dist/apps/api/src/db/database.js");
+  const { getDatabase, getDatabasePath } = await import("../apps/api/dist/apps/api/src/db/database.js");
+  const database = getDatabase();
   assert.equal(path.resolve(getDatabasePath()), path.join(profile, "data", "password-manager.db"));
 
   // Exercise the real React handlers and the preload/IPC path with synthetic inputs.
@@ -367,7 +368,10 @@ try {
   const closingKey = vaultSession.requireKey();
   app.once("will-quit", () => {
     assert.equal(clipboardItems.length, 0);
+    assert.equal(database.open, false);
+    assert.throws(() => getDatabase(), error => error.code === "NOT_OPEN");
     console.log("PASS graceful exit awaits owned clipboard cleanup");
+    console.log("PASS graceful exit closes the explicit storage connection");
   });
   window.once("closed", () => {
     assert.equal(services.getVaultStatus().isUnlocked, false);

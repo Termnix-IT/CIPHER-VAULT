@@ -14,19 +14,20 @@ const { legacy, backupV1, draftV2 } = fixture;
 const temporaryRoot = mkdtempSync(path.join(tmpdir(), "cipher-vault-crypto-vectors-"));
 process.env.PASSWORD_MANAGER_DATA_DIR = temporaryRoot;
 const base = "../apps/api/dist/apps/api/src/";
+const { openDatabase, closeDatabase } = await import(`${base}db/database.js`);
+const database = openDatabase();
 const crypto = await import(`${base}services/crypto-service.js`);
 const vault = await import(`${base}services/vault-service.js`);
 const store = await import(`${base}services/vault-store.js`);
 const entries = await import(`${base}services/entry-service.js`);
 const backup = await import(`${base}services/backup-service.js`);
-const { database } = await import(`${base}db/database.js`);
 const derive = promisify(scrypt);
 const strongProfile = { N: 131072, r: 8, p: 1, maxmem: 256 * 1024 * 1024 };
 const bytes = (value) => Buffer.from(value, "base64");
 const storedRows = () => database.prepare("SELECT * FROM password_entries ORDER BY id").all();
 
 after(() => {
-  vault.lockVault(); database.close();
+  vault.lockVault(); closeDatabase();
   assert.equal(path.dirname(temporaryRoot), path.resolve(tmpdir()));
   assert.ok(path.basename(temporaryRoot).startsWith("cipher-vault-crypto-vectors-"));
   rmSync(temporaryRoot, { recursive: true, force: true });

@@ -20,11 +20,11 @@ app.on("window-all-closed", () => {});
 const watchdog = setTimeout(() => { console.error("FAIL web policy timed out"); app.exit(1); }, 60000);
 
 async function run() {
-  let server, window, database;
+  let server, window, storage;
   try {
     await app.whenReady();
-    const storage = await import("../apps/api/dist/apps/api/src/db/database.js");
-    database = storage.database;
+    storage = await import("../apps/api/dist/apps/api/src/db/database.js");
+    storage.openDatabase();
     assert.equal(path.resolve(storage.getDatabasePath()), path.join(profile, "data", "password-manager.db"));
     const { router } = await import("../apps/api/dist/apps/api/src/routes/router.js");
     server = createServer((request, response) => { void router(request, response); });
@@ -69,13 +69,13 @@ async function run() {
     console.log("PASS production HTTP CSP permits the real Web vault flow and local fonts, blocks inline scripts/external fetch and renders hostile entry text safely");
     clearTimeout(watchdog);
     server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); server = undefined;
-    database.close(); database = undefined;
+    storage.closeDatabase(); storage = undefined;
     window.destroy(); app.quit();
   } catch (error) {
     clearTimeout(watchdog);
     console.error("FAIL web policy integration", error);
     server?.closeAllConnections(); server?.close();
-    if (database?.open) database.close();
+    storage?.closeDatabase();
     app.exit(1);
   }
 }
