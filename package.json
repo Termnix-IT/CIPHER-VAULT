@@ -18,8 +18,8 @@
     "electron-updater": "^6.8.9"
   },
   "devDependencies": {
-    "concurrently": "^9.1.2",
-    "electron-builder": "^26.0.12"
+    "concurrently": "^9.2.5",
+    "electron-builder": "^26.18.1"
   },
   "scripts": {
     "dev": "npm run build:shared && concurrently -n api,web -c yellow,cyan \"npm run dev:api\" \"npm run dev:web\"",

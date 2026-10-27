@@ -6,6 +6,8 @@ const apiProxy = { target: "http://127.0.0.1:3001", changeOrigin: true };
 
 export default defineConfig({
   base: "./",
+  // Preserve Vite 5 output targets independently of the build-tool upgrade.
+  build: { target: ["chrome87", "edge88", "firefox78", "safari14"] },
   plugins: [react(), {
     name: "cipher-vault-csp",
     transformIndexHtml: {
