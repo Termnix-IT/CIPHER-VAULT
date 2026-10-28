@@ -15,6 +15,7 @@ let abort: AbortController | undefined;
 let failed = false;
 
 export function isV2Vault() { return current?.format === "v2"; }
+export function hasVaultStorage() { return current !== undefined || hasOpenDatabase(); }
 export function isVaultContextFailed() { return current !== undefined && failed; }
 export function assertVaultStorage() { current?.assertCurrent(); }
 export function getV2Vault(): V2Context | null {
@@ -29,7 +30,8 @@ export function failVaultContext(): never {
 }
 function assertLegacyNamespace(root: string) {
   if (present(safePath(root, ["vault-current.json"], false, true)) ||
-      present(safePath(root, ["vault-activation.json"], false, true))) throw new VaultStorageError("OPEN_FAILED");
+      present(safePath(root, ["vault-activation.json"], false, true)) ||
+      present(safePath(root, ["vault-transition.json"], false, true))) throw new VaultStorageError("OPEN_FAILED");
 }
 
 /** Startup owns one format; services never silently reopen or fall back to the legacy file. */
@@ -81,6 +83,7 @@ export function openVaultStorage(options: DatabaseOptions = {}) {
       if (current !== context) throw new HttpError(409, "保管庫の状態が変わりました。もう一度操作してください");
       if (failed || controller.signal.aborted || store.closed) return failVaultContext();
       try {
+        if (present(safePath(root, ["vault-transition.json"], false, true))) throw new Error("transition pending");
         const receipt = readReceipt(root), file = safePath(root, ["vaults", selected.context.vaultId, "vault.sqlite"]), stat = statSync(file);
         if (readPointer(root) !== selected.context.vaultId || receipt.state !== "committed" || receipt.vaultId !== selected.context.vaultId ||
             receipt.keyId !== selected.context.keyId || stat.dev !== identity.dev || stat.ino !== identity.ino) throw new Error("context changed");

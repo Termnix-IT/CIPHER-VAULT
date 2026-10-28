@@ -128,6 +128,7 @@ export function publishPointer(root: string, receipt: ActivationReceipt, recover
 export function inspectVaultSelection(directory: string) {
   try {
     const root = dataRoot(directory), marker = safePath(root, ["vault-activation.json"], false, true), pointer = safePath(root, ["vault-current.json"], false, true);
+    if (present(safePath(root, ["vault-transition.json"], false, true))) fail();
     if (!present(marker) && !present(pointer)) return Object.freeze({ format: "legacy" as const, database: safePath(root, ["password-manager.db"], false, true) });
     if (!present(marker) || !present(pointer)) fail();
     const receipt = readReceipt(root);
