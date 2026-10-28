@@ -17,11 +17,13 @@ test("sandbox preload runs with only Electron require, exposes explicit methods 
       on: (...args) => events.on(...args), removeListener: (...args) => events.removeListener(...args) } };
   const source = readFileSync(new URL("../apps/electron/dist/apps/electron/src/preload.cjs", import.meta.url), "utf8");
   vm.runInNewContext(source, { require(name) { assert.equal(name, "electron"); return electron; } });
-  assert.deepEqual(Object.keys(api).sort(), ["auditVault", "checkForUpdates", "copyText", "createEntry", "deleteEntry", "downloadUpdate", "exportBackup", "fetchEntries", "fetchEntry", "fetchVaultStatus", "generatePassword", "getUpdateState", "installUpdate", "lockVault", "onUpdateState", "onVaultState", "openReleasePage", "recordVaultActivity", "resetVault", "restoreBackup", "setupVault", "unlockVault", "updateEntry"].sort());
+  assert.deepEqual(Object.keys(api).sort(), ["auditVault", "checkForUpdates", "copyText", "createEntry", "deleteEntry", "downloadUpdate", "exportBackup", "fetchEntries", "fetchEntry", "fetchVaultStatus", "generatePassword", "getUpdateState", "installUpdate", "lockVault", "onUpdateState", "onVaultState", "openReleasePage", "recordVaultActivity", "resetVault", "restoreBackup", "runVaultMaintenance", "setupVault", "unlockVault", "updateEntry"].sort());
   await api.setupVault({ masterPassword: "synthetic" }, "epoch");
   await api.updateEntry("entry", { serviceName: "synthetic" }, "epoch");
   await api.exportBackup({ passphrase: "synthetic" }, "epoch");
-  assert.deepEqual(calls.map((args) => args[0]), ["vault:setup", "entries:update", "backup:export"]);
+  await api.runVaultMaintenance({ operation: "recover" }, "epoch");
+  assert.deepEqual(calls.map((args) => args[0]), ["vault:setup", "entries:update", "backup:export", "vault:maintenance"]);
+  assert.deepEqual(calls[3].slice(1), ["epoch", { operation: "recover" }]);
   assert.deepEqual(calls[1].slice(1), ["epoch", "entry", { serviceName: "synthetic" }]);
   for (const [method, channel] of [["onVaultState", "vault:state"], ["onUpdateState", "updates:state"]]) {
     let received;

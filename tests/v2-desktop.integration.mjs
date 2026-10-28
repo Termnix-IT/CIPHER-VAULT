@@ -68,6 +68,17 @@ async function run() {
     assert.equal((await ipc("fetchEntries")).items.length, summaries.length);
     assert.equal(digest(path.join(directory, "password-manager.db")), original);
     console.log("PASS actual v2 IPC delete, atomic v1 restore, audit and lock/re-unlock preserve the legacy original");
+    const previousStore = storage.getV2Vault().store, previousKey = vaultSession.requireKey(), previousPath = storage.getVaultStoragePath(), previousHash = digest(previousPath);
+    const replacementPassword = "synthetic-desktop-replacement-password";
+    const replaced = await ipc("runVaultMaintenance", { operation: "rekey", masterPassword: v2Password, newMasterPassword: replacementPassword,
+      confirmNewMasterPassword: replacementPassword, backupPassphrase: compatibility.backupV1.passphrase, confirmBackupPassphrase: compatibility.backupV1.passphrase });
+    assert.equal(replaced.isUnlocked, false); assert.equal(replaced.maintenance.state, "ready"); assert.equal(previousStore.closed, true);
+    assert.deepEqual(previousKey, Buffer.alloc(32)); assert.equal(digest(previousPath), previousHash); assert.notEqual(storage.getVaultStoragePath(), previousPath);
+    await waitFor("!!document.querySelector('.cipher-form input[type=password]')");
+    await fill('.cipher-form input[type=password]', replacementPassword); await click('.cipher-form button[type=submit]');
+    await waitFor("!!document.querySelector('.entry-row')&&!document.querySelector('.sidebar-lock').disabled");
+    assert.equal((await ipc("fetchEntries")).items.length, summaries.length);
+    console.log("PASS actual maintenance IPC rekeys, preserves the source, reopens locked and unlocks with the new master");
     const store = storage.getV2Vault().store, closingKey = vaultSession.requireKey();
     app.once("will-quit", () => {
       assert.equal(store.closed, true); assert.deepEqual(closingKey, Buffer.alloc(32));

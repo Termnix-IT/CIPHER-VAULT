@@ -29,7 +29,9 @@ export class VaultClientSession {
       this.blockedSessionId = null;
     }
     if (this.state?.sessionId !== state.sessionId || this.state.isUnlocked !== state.isUnlocked ||
-        this.state.isConfigured !== state.isConfigured || this.state.lockReason !== state.lockReason) {
+        this.state.isConfigured !== state.isConfigured || this.state.lockReason !== state.lockReason ||
+        this.state.maintenance?.state !== state.maintenance?.state || this.state.maintenance?.format !== state.maintenance?.format ||
+        this.state.maintenance?.operation !== state.maintenance?.operation || this.state.maintenance?.recoveryOperation !== state.maintenance?.recoveryOperation) {
       this.state = state;
       this.revision++;
       for (const listener of this.listeners) listener(state);
@@ -62,6 +64,20 @@ export class VaultClientSession {
     const state = await action(sessionId);
     if (control !== this.control) throw new VaultSessionChangedError();
     return this.observe(state, revision);
+  }
+
+  async maintain(action: (sessionId: string) => Promise<VaultStatus>, read: () => Promise<VaultStatus>) {
+    if (!this.state) throw new VaultSessionChangedError();
+    const sessionId = this.state.sessionId, control = ++this.control;
+    ++this.revision; this.lockLocally();
+    try { await action(sessionId); }
+    finally {
+      if (control === this.control) {
+        try { await this.readStatus(read); } catch (error) { this.lockLocally(); throw error; }
+      }
+    }
+    if (control !== this.control || !this.state) throw new VaultSessionChangedError();
+    return this.state;
   }
 
   async run<T>(action: (sessionId: string) => Promise<T>, read: () => Promise<VaultStatus>): Promise<T> {

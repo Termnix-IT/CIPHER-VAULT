@@ -9,6 +9,7 @@ import type {
 } from "@password-manager/shared/types";
 
 const passwordManagerApi: PasswordManagerDesktopApi = {
+  runVaultMaintenance: (payload, sessionId) => ipcRenderer.invoke("vault:maintenance", sessionId, payload),
   exportBackup: (payload, sessionId) => ipcRenderer.invoke("backup:export", sessionId, payload),
   restoreBackup: (payload, sessionId) => ipcRenderer.invoke("backup:restore", sessionId, payload),
   auditVault: (sessionId) => ipcRenderer.invoke("vault:audit", sessionId),

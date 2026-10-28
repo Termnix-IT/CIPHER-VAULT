@@ -13,17 +13,23 @@ import { vaultUnlockGuard } from "./vault-unlock-guard.js";
 import { parseMasterPassword, parseResetPayload } from "../lib/input-validation.js";
 import { assertVaultStorage, isV2Vault, isVaultContextFailed } from "../db/vault-context.js";
 import { unlockV2Vault } from "./v2-vault-service.js";
+import { assertVaultMaintenanceReady, getVaultMaintenanceState, isApplicationVaultStopping, onVaultMaintenanceState } from "./vault-maintenance-service.js";
 
-function isConfigured() { return isV2Vault() || isVaultContextFailed() || getVaultMetadata() !== null; }
+function isConfigured() {
+  const maintenance = getVaultMaintenanceState();
+  return isApplicationVaultStopping() || (maintenance !== undefined && maintenance.state !== "ready") || isV2Vault() || isVaultContextFailed() || getVaultMetadata() !== null;
+}
 
 export function getVaultStatus() {
   return {
     isConfigured: isConfigured(),
-    ...vaultSession.getState()
+    ...vaultSession.getState(),
+    ...(getVaultMaintenanceState() ? { maintenance: getVaultMaintenanceState() } : {})
   };
 }
 
 export async function setupVault(payload: unknown) {
+  assertVaultMaintenanceReady();
   assertVaultStorage();
   if (isConfigured()) {
     throw new HttpError(409, "保管庫はすでに設定済みです");
@@ -58,6 +64,7 @@ export async function setupVault(payload: unknown) {
 }
 
 export async function unlockVault(payload: unknown) {
+  assertVaultMaintenanceReady();
   assertVaultStorage();
   if (isV2Vault()) { await unlockV2Vault(payload); return getVaultStatus(); }
   const masterPassword = parseMasterPassword(payload, false);
@@ -120,10 +127,13 @@ export function recordVaultActivity(sessionId: unknown) {
 }
 
 export function onVaultState(listener: (state: VaultStatus) => void) {
-  return vaultSession.subscribe((state) => listener({ isConfigured: isConfigured(), ...state }));
+  const notify = () => listener(getVaultStatus());
+  const session = vaultSession.subscribe(notify), maintenance = onVaultMaintenanceState(notify);
+  return () => { session(); maintenance(); };
 }
 
 export function resetVault(payload: unknown) {
+  assertVaultMaintenanceReady();
   parseResetPayload(payload);
   assertVaultStorage();
 

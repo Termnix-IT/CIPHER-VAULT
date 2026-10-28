@@ -99,3 +99,4 @@ export function closeVaultStorage() {
   current = undefined; abort = undefined; failed = false;
 }
 export function getVaultStoragePath() { return current?.format === "v2" ? current.database : getDatabasePath(); }
+export function getVaultDataDirectory() { return current?.format === "v2" ? current.directory : path.dirname(getDatabasePath()); }

@@ -10,6 +10,7 @@ import { generatePassword } from "../services/password-service.js";
 import { createEntry, deleteEntry, getEntryById, listEntries, updateEntry } from "../services/entry-service.js";
 import { getVaultStatus, lockVaultForSession, recordVaultActivity, resetVault, setupVault, unlockVault } from "../services/vault-service.js";
 import { requireSessionId, vaultSession, withVaultSession } from "../services/vault-session.js";
+import { runVaultMaintenance } from "../services/vault-maintenance-service.js";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown) {
   response.writeHead(statusCode, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Cross-Origin-Resource-Policy": "same-origin" });
@@ -63,6 +64,18 @@ export async function router(request: IncomingMessage, response: ServerResponse)
     }
 
     if (method === "GET" && url === "/vault/status") {
+      sendJson(response, 200, getVaultStatus());
+      return;
+    }
+
+    if (method === "POST" && url === "/vault/maintenance") {
+      const intent = vaultSession.requireGeneration(sessionId);
+      const payload = await readJsonBody(request);
+      vaultSession.requireGeneration(intent);
+      const abort = new AbortController(), disconnected = () => { if (!response.writableEnded) abort.abort(); };
+      request.once("aborted", disconnected); response.once("close", disconnected);
+      try { await runVaultMaintenance(payload, intent, { signal: abort.signal }); }
+      finally { request.off("aborted", disconnected); response.off("close", disconnected); }
       sendJson(response, 200, getVaultStatus());
       return;
     }

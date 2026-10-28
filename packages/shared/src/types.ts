@@ -49,6 +49,24 @@ export type VaultSessionState = {
 
 export type VaultStatus = VaultSessionState & {
   isConfigured: boolean;
+  maintenance?: VaultMaintenanceState;
+};
+
+export type VaultMaintenanceOperation = "migrate" | "rekey" | "reset" | "recover";
+export type VaultMaintenanceState = {
+  state: "ready" | "running" | "recovery-required";
+  format: "legacy" | "v2" | "unknown";
+  operation?: VaultMaintenanceOperation;
+  recoveryOperation?: "migrate" | "rekey" | "reset";
+};
+export type VaultMaintenancePayload = {
+  operation: VaultMaintenanceOperation;
+  masterPassword: string;
+  newMasterPassword: string;
+  confirmNewMasterPassword: string;
+  backupPassphrase: string;
+  confirmBackupPassphrase?: string;
+  confirmation?: "RESET_ALL_DATA";
 };
 
 export type VaultSetupPayload = {
@@ -73,6 +91,7 @@ export type VaultMetadataRecord = {
 };
 
 export type PasswordManagerDesktopApi = {
+  runVaultMaintenance: (payload: VaultMaintenancePayload, sessionId: string) => Promise<VaultStatus>;
   exportBackup: (payload: BackupExportPayload, sessionId: string) => Promise<BackupFile>;
   restoreBackup: (payload: BackupRestorePayload, sessionId: string) => Promise<{ restoredCount: number }>;
   auditVault: (sessionId: string) => Promise<SecurityAudit>;

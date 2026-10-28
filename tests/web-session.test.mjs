@@ -3,6 +3,25 @@ import assert from "node:assert/strict";
 import { VaultClientSession, VaultSessionChangedError } from "../apps/web/src/lib/vault-client-session.ts";
 
 const state = (sessionId, isUnlocked = true) => ({ sessionId, isUnlocked, isConfigured: true, idleTimeoutMs: 300000 });
+
+test("maintenance observes intermediate generations and refreshes a locked final status", async () => {
+  const client = new VaultClientSession(); client.observe(state("source")); let last;client.subscribe(value=>{last=value});
+  await client.maintain(async id=>{assert.equal(id,"source");client.observe({...state("closed",false),maintenance:{state:"running",format:"v2",operation:"rekey"}});return state("target",false)},
+    async()=>({...state("target",false),maintenance:{state:"ready",format:"v2"}}));
+  assert.equal(last.sessionId,"target");assert.equal(last.isUnlocked,false);assert.equal(last.maintenance.state,"ready");
+});
+
+test("maintenance status changes notify the view even when the locked generation is unchanged",()=>{
+  const client=new VaultClientSession();client.observe({...state("same",false),maintenance:{state:"running",format:"unknown",operation:"recover"}});let calls=0;client.subscribe(()=>calls++);
+  client.observe({...state("same",false),maintenance:{state:"recovery-required",format:"unknown",operation:"recover",recoveryOperation:"reset"}});
+  assert.equal(calls,2);
+});
+
+test("maintenance cannot report success when its final status cannot be verified",async()=>{
+  const client=new VaultClientSession();client.observe(state("source"));let last;client.subscribe(value=>{last=value});
+  await assert.rejects(client.maintain(async()=>state("target",false),async()=>{throw new Error("unavailable")}),/unavailable/);
+  assert.equal(last.isUnlocked,false);
+});
 function deferred() {
   let resolve;
   const promise = new Promise((done) => { resolve = done; });

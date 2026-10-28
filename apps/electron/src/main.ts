@@ -63,6 +63,11 @@ type PasswordServiceModule = {
 };
 
 type AppServices = {
+  maintenance: {
+    runVaultMaintenance: (payload: unknown, sessionId: unknown) => Promise<void>;
+    waitForVaultMaintenance: () => Promise<void>;
+    stopVaultMaintenance: () => void;
+  };
   input: {
     requireArgumentCount: (args: unknown[], count: number) => void;
     parseClipboardText: (value: unknown) => string;
@@ -174,17 +179,19 @@ async function importModule<T>(filePath: string) {
 }
 
 async function loadAppServices(appRoot: string): Promise<AppServices> {
-  const [vault, entries, password, backup, audit, session, input] = await Promise.all([
+  const [vault, entries, password, backup, audit, session, input, maintenance] = await Promise.all([
     importModule<VaultServiceModule>(getApiBuildPath(appRoot, "services/vault-service.js")),
     importModule<EntryServiceModule>(getApiBuildPath(appRoot, "services/entry-service.js")),
     importModule<PasswordServiceModule>(getApiBuildPath(appRoot, "services/password-service.js")),
     importModule<AppServices["backup"]>(getApiBuildPath(appRoot, "services/backup-service.js")),
     importModule<AppServices["audit"]>(getApiBuildPath(appRoot, "services/audit-service.js")),
     importModule<AppServices["session"]>(getApiBuildPath(appRoot, "services/vault-session.js")),
-    importModule<AppServices["input"]>(getApiBuildPath(appRoot, "lib/input-validation.js"))
+    importModule<AppServices["input"]>(getApiBuildPath(appRoot, "lib/input-validation.js")),
+    importModule<AppServices["maintenance"]>(getApiBuildPath(appRoot, "services/vault-maintenance-service.js"))
   ]);
 
   return {
+    maintenance,
     input,
     session,
     backup,
@@ -242,6 +249,11 @@ function registerIpcHandlers(services: AppServices) {
   handle("vault:lock", 1, services.vault.lockVaultForSession);
   handle("vault:activity", 1, (id: unknown) => { assertAvailable(); return services.vault.recordVaultActivity(id); });
   handleControl("vault:reset", services.vault.resetVault);
+  handle("vault:maintenance", 2, async (sessionId: unknown, payload: unknown) => {
+    assertAvailable(); services.session.vaultSession.requireGeneration(sessionId);
+    await services.maintenance.runVaultMaintenance(payload, sessionId);
+    assertAvailable(); return services.vault.getVaultStatus();
+  });
   handleSession("entries:list", 0, services.entries.listEntries);
   handleSession("entries:getById", 1, services.entries.getEntryById);
   handleSession("entries:create", 1, services.entries.createEntry);
@@ -333,14 +345,13 @@ async function bootstrap() {
   }
 
   process.env.PASSWORD_MANAGER_DATA_DIR = path.join(app.getPath("userData"), "data");
-  const storage = await importModule<{ openVaultStorage: () => void; closeVaultStorage: () => void }>(getApiBuildPath(appRoot, "db/vault-context.js"));
-  storage.openVaultStorage();
+  const storage = await importModule<{ openApplicationVault: () => void; closeApplicationVault: () => void }>(getApiBuildPath(appRoot, "services/vault-maintenance-service.js"));
+  storage.openApplicationVault();
   // Register cleanup before loading services or the renderer, including failed startup.
   app.on("will-quit", () => {
     try {
       powerGuard?.dispose();
-      appServices?.vault.lockVault();
-    } finally { storage.closeVaultStorage(); }
+    } finally { storage.closeApplicationVault(); }
   });
   const services = await loadAppServices(appRoot);
   appServices = services;
@@ -364,10 +375,11 @@ async function bootstrap() {
     if (quitting) return;
     quitting = true;
     services.vault.lockVault();
+    services.maintenance.stopVaultMaintenance();
     let timer: ReturnType<typeof setTimeout> | undefined;
     // Clipboard APIs can be unavailable; never hold application exit indefinitely.
     void Promise.race([
-      protectedClipboard.clearOwned(),
+      Promise.all([protectedClipboard.clearOwned(), services.maintenance.waitForVaultMaintenance()]),
       new Promise((resolve) => { timer = setTimeout(resolve, 1500); })
     ]).finally(() => { clearTimeout(timer); quitReady = true; app.quit(); });
   });

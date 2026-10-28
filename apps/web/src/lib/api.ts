@@ -2,7 +2,7 @@ import type {
   BackupExportPayload, BackupRestorePayload, BackupFile, SecurityAudit,
   PasswordGenerationOptions, PasswordGenerationResult, PasswordManagerDesktopApi,
   PasswordEntry, PasswordEntrySummary, PasswordEntryUpsertPayload,
-  VaultResetPayload, VaultSetupPayload, VaultStatus, VaultUnlockPayload
+  VaultResetPayload, VaultSetupPayload, VaultStatus, VaultUnlockPayload, VaultMaintenancePayload
 } from "@password-manager/shared/types";
 import { VaultClientSession, VaultSessionChangedError } from "./vault-client-session";
 
@@ -39,6 +39,11 @@ async function readStatus() {
 }
 
 export function fetchVaultStatus() { return session.readStatus(readStatus); }
+
+export function runVaultMaintenance(payload: VaultMaintenancePayload) {
+  return session.maintain((id) => getDesktopApi()?.runVaultMaintenance(payload, id) ?? request<VaultStatus>("/vault/maintenance",
+    { method: "POST", body: JSON.stringify(payload), signal: AbortSignal.timeout(315000) }, id), readStatus);
+}
 
 export function observeVaultStatus(listener: (state: VaultStatus) => void) {
   let alive = true;
