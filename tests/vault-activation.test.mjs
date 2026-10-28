@@ -85,22 +85,29 @@ test("activation reauthenticates all recovery artifacts, commits strict pointer/
   assert.ok(passwords.every(password => !Buffer.isBuffer(password) || password.every(byte => byte === 0)));
 });
 
-test("source and target locks exclude separate process writers during KDF and preserve a pre-existing WAL", async () => {
+test("source and target locks exclude writers through KDF and publication and preserve a pre-existing WAL", async () => {
   const f = copy(), source = file(f, "password-manager.db");
   const child = spawnSync(process.execPath, ["-e", `const D=require(${JSON.stringify(require.resolve("better-sqlite3"))});const d=new D(process.argv[1]);d.pragma('journal_mode=WAL');d.exec('UPDATE password_entries SET service_name=service_name');process.exit(0)`, source], { encoding: "utf8", timeout: 10000 });
   assert.equal(child.status, 0, child.stdout + child.stderr);
-  const before = hash(source), wal = hash(source + "-wal"), scrypt = crypto.scrypt; let checked = false;
+  const before = hash(source), wal = hash(source + "-wal"), scrypt = crypto.scrypt, rename = fs.renameSync, checks = []; let checked = false;
+  function checkWriters() {
+    for (const database of [source, target(f)]) {
+      const writer = spawnSync(process.execPath, ["-e", `const D=require(${JSON.stringify(require.resolve("better-sqlite3"))});const d=new D(process.argv[1],{timeout:0});try{d.exec('BEGIN IMMEDIATE');process.exitCode=2}catch(e){if(e.code!=='SQLITE_BUSY')throw e}finally{d.close()}`, database], { encoding: "utf8", timeout: 10000 });
+      if (writer.error) throw writer.error;
+      checks.push(writer.status);
+    }
+  }
   mock.method(crypto, "scrypt", (password, salt, length, options, callback) => {
     if (!checked) {
-      for (const database of [source, target(f)]) {
-        const writer = spawnSync(process.execPath, ["-e", `const D=require(${JSON.stringify(require.resolve("better-sqlite3"))});const d=new D(process.argv[1],{timeout:0});try{d.exec('BEGIN IMMEDIATE');process.exitCode=2}catch(e){if(e.code!=='SQLITE_BUSY')throw e}finally{d.close()}`, database], { encoding: "utf8", timeout: 10000 });
-        assert.equal(writer.status, 0, writer.stdout + writer.stderr);
-      }
+      checkWriters();
       checked = true;
     }
     return scrypt(password, salt, length, options, callback);
-  }); syncBuiltinESMExports();
+  });
+  mock.method(fs, "renameSync", (from, to) => { if (path.basename(to) === "vault-current.json") checkWriters(); return rename(from, to); });
+  syncBuiltinESMExports();
   await activateStagedVault(f, context, input(), owner()); assert.ok(checked);
+  assert.deepEqual(checks, [0, 0, 0, 0], "both DB locks must survive the target's pre-publication fsync");
   assert.equal(hash(source), before); assert.equal(hash(source + "-wal"), wal);
 });
 

@@ -6,7 +6,10 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import Database from "better-sqlite3";
+import { SqliteFileScope } from "../apps/api/dist/apps/api/src/db/sqlite-file-scope.js";
 import * as storage from "../apps/api/dist/apps/api/src/db/database.js";
 import * as vault from "../apps/api/dist/apps/api/src/services/vault-service.js";
 import * as entries from "../apps/api/dist/apps/api/src/services/entry-service.js";
@@ -34,10 +37,33 @@ const oldSchema = schema.replace(/\s*group_name TEXT,/, "").replace(/\s*password
 
 afterEach(() => {
   mock.restoreAll();
+  syncBuiltinESMExports();
   vaultSession.lock();
   storage.closeDatabase();
   if (previousDirectory === undefined) delete process.env.PASSWORD_MANAGER_DATA_DIR;
   else process.env.PASSWORD_MANAGER_DATA_DIR = previousDirectory;
+});
+
+test("raw DB descriptors stay open through the SQLite lock and close only after its connections", () => {
+  const dir = directory(); seed(dir); const database = new Database(filename(dir)), files = new SqliteFileScope();
+  let descriptor, released;
+  try {
+    database.exec("BEGIN IMMEDIATE"); descriptor = fs.openSync(filename(dir), "r"); files.deferClose(descriptor);
+    assert.ok(fs.fstatSync(descriptor).isFile());
+    const writer = spawnSync(process.execPath, ["-e", `const D=require(${JSON.stringify(fileURLToPath(import.meta.resolve("better-sqlite3")))});const d=new D(process.argv[1],{timeout:0});try{d.exec('BEGIN IMMEDIATE');process.exitCode=2}catch(e){if(e.code!=='SQLITE_BUSY')throw e}finally{d.close()}`, filename(dir)], { encoding: "utf8", timeout: 10000 });
+    assert.equal(writer.status, 0, writer.stdout + writer.stderr);
+    assert.ok(database.inTransaction);
+  } finally { try { if (database.inTransaction) database.exec("ROLLBACK"); database.close(); } finally { released = files.close(); } }
+  assert.equal(released, true); assert.equal(files.close(), true);
+  assert.throws(() => fs.fstatSync(descriptor), { code: "EBADF" });
+});
+
+test("deferred close reports failure and still attempts every owned descriptor", () => {
+  const dir = directory(); seed(dir); const files = new SqliteFileScope(), first = fs.openSync(filename(dir), "r"), second = fs.openSync(filename(dir), "r"), close = fs.closeSync, closed = [];
+  files.deferClose(first); files.deferClose(second);
+  mock.method(fs, "closeSync", descriptor => { closed.push(descriptor); close(descriptor); if (descriptor === second) throw new Error("synthetic close failure"); }); syncBuiltinESMExports();
+  assert.equal(files.close(), false); assert.deepEqual(closed, [second, first]); assert.equal(files.close(), true);
+  for (const descriptor of [first, second]) assert.throws(() => fs.fstatSync(descriptor), { code: "EBADF" });
 });
 after(() => {
   assert.equal(path.dirname(root), path.resolve(tmpdir()));

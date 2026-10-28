@@ -54,7 +54,7 @@ export function inspectV2Replacement(directory: string) {
     return Object.freeze({ source: transition.source, target: transition.target, mode: transition.mode });
   } catch { return fail(); }
 }
-export async function hashFile(file: string, maximum: number, active: () => void) {
+export async function hashFile(file: string, maximum: number, active: () => void, release: (fd: number) => void = closeSync) {
   const fd = openSync(file, "r"), chunk = Buffer.alloc(64 * 1024), hash = createHash("sha256");
   try {
     const stat = fstatSync(fd);
@@ -66,7 +66,7 @@ export async function hashFile(file: string, maximum: number, active: () => void
       if (offset % (2 * 1024 * 1024) === 0) await setImmediate();
     }
     if (fstatSync(fd).size !== stat.size) fail(); active(); return hash.digest("hex");
-  } finally { chunk.fill(0); closeSync(fd); }
+  } finally { chunk.fill(0); release(fd); }
 }
 /** Same-directory write/fsync/close/rename. An interrupted temporary file is retained. */
 export function writeState(root: string, name: string, value: unknown, active: () => void, exclusive = false) {

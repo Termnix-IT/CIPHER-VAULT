@@ -157,10 +157,11 @@ test("late cancellation holds single-flight until native KDF completion and cann
 });
 
 test("source and target IMMEDIATE locks exclude independent writers during KDF and publication", async () => {
-  const f = fixture(), scrypt = crypto.scrypt; let checked = 0;
+  const f = fixture(), scrypt = crypto.scrypt, checks = []; let checked = 0;
   function writer(database) {
     const result = spawnSync(process.execPath, ["-e", `const D=require(${JSON.stringify(require.resolve("better-sqlite3"))});const d=new D(process.argv[1],{timeout:0});try{d.exec('BEGIN IMMEDIATE');process.exitCode=2}catch(e){if(e.code!=='SQLITE_BUSY')throw e}finally{d.close()}`, database], { encoding: "utf8", timeout: 10000 });
-    assert.equal(result.status, 0, result.stdout + result.stderr);
+    if (result.error) throw result.error;
+    checks.push(result.status);
   }
   mock.method(crypto, "scrypt", (password, salt, length, options, callback) => { if (!checked) { writer(source(f)); checked++; } return scrypt(password, salt, length, options, callback); });
   const rename = fs.renameSync;
@@ -169,6 +170,21 @@ test("source and target IMMEDIATE locks exclude independent writers during KDF a
     return rename(from, to);
   }); syncBuiltinESMExports();
   await replaceV2Vault(f, context, input(), owner()); assert.equal(checked, 2);
+  assert.deepEqual(checks, [0, 0, 0], "source during KDF, source and target during publication must remain locked");
+});
+
+test("replacement recovery retains source and target locks through hash checks and publication", async () => {
+  const f = fixture(), hint = await interrupted(f), rename = fs.renameSync, checks = [];
+  mock.method(fs, "renameSync", (from, to) => {
+    if (path.basename(to) === "vault-current.json") for (const database of [source(f), path.join(f, "vaults", hint.target.vaultId, "vault.sqlite")]) {
+      const writer = spawnSync(process.execPath, ["-e", `const D=require(${JSON.stringify(require.resolve("better-sqlite3"))});const d=new D(process.argv[1],{timeout:0});try{d.exec('BEGIN IMMEDIATE');process.exitCode=2}catch(e){if(e.code!=='SQLITE_BUSY')throw e}finally{d.close()}`, database], { encoding: "utf8", timeout: 10000 });
+      if (writer.error) throw writer.error;
+      checks.push(writer.status);
+    }
+    return rename(from, to);
+  }); syncBuiltinESMExports();
+  await recoverV2Replacement(f, hint, input(), owner());
+  assert.deepEqual(checks, [0, 0], "recovery must not drop locks when raw fingerprint descriptors close");
 });
 
 test("a source at the actual 2^20 nonce limit can rekey without resetting or reusing its old ledger", { timeout: 180000 }, async () => {

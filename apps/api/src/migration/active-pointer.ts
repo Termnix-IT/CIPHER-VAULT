@@ -74,8 +74,8 @@ export function stagedFiles(root: string, context: PasswordSlotContext) {
   return Object.freeze({ directory, snapshot: safePath(root, [...prefix, "legacy.sqlite"]), backup: safePath(root, [...prefix, "legacy.cvault"]),
     database: safePath(root, [...prefix, "vault.sqlite"]), exportBackup: safePath(root, [...prefix, "v2-export.cvault"]) });
 }
-export function syncFile(file: string) {
-  const fd = openSync(file, "r+"); try { fsyncSync(fd); } finally { closeSync(fd); }
+export function syncFile(file: string, release: (fd: number) => void = closeSync) {
+  const fd = openSync(file, "r+"); try { fsyncSync(fd); } finally { release(fd); }
 }
 export function syncDirectory(directory: string) {
   // Node/libuv cannot fsync Windows directories. Do not silently claim directory durability.
@@ -90,10 +90,13 @@ function temporary(root: string, label: string, bytes: Buffer) {
 }
 
 /** Called only while the legacy writer lock and authorization are held, after full verification. */
-export function publishPointer(root: string, receipt: ActivationReceipt, recovery: boolean, active: () => void) {
+export function publishPointer(root: string, receipt: ActivationReceipt, recovery: boolean, active: () => void,
+  releaseDatabaseFile: (fd: number) => void) {
   const context = parsePasswordSlotContext({ vaultId: receipt.vaultId, keyId: receipt.keyId, slotRevision: 1 });
   const files = stagedFiles(root, context);
-  for (const file of [files.backup, files.snapshot, files.database, files.exportBackup]) { active(); syncFile(file); }
+  for (const file of [files.backup, files.snapshot, files.database, files.exportBackup]) {
+    active(); syncFile(file, file === files.database ? releaseDatabaseFile : undefined);
+  }
   syncDirectory(files.directory); syncDirectory(path.dirname(files.directory)); syncDirectory(root); active();
   const marker = safePath(root, ["vault-activation.json"], false, !recovery);
   const pointer = safePath(root, ["vault-current.json"], false, true);

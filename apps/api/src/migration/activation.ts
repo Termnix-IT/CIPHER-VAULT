@@ -8,6 +8,7 @@ import { copyPlaintext, parsePasswordSlotContext, record } from "../crypto/v2-fo
 import type { PasswordSlotContext } from "../crypto/v2-format.js";
 import { openV2Store } from "../db/v2-store.js";
 import type { V2Store } from "../db/v2-store.js";
+import { SqliteFileScope } from "../db/sqlite-file-scope.js";
 import { INPUT_LIMITS, parseBackupPayload } from "../lib/input-validation.js";
 import { VaultSession } from "../services/vault-session.js";
 import { verifyBackupRecovery } from "./backup-recovery.js";
@@ -32,6 +33,7 @@ async function activate(directory: string, contextInput: PasswordSlotContext, in
   options: { signal?: AbortSignal }, recovery: boolean) {
   if (busy) throw new VaultActivationError("BUSY");
   busy = true;
+  const rawFiles = new SqliteFileScope();
   let source: Database.Database | undefined, locker: Database.Database | undefined, targetLocker: Database.Database | undefined;
   let snapshot: Database.Database | undefined, store: V2Store | undefined;
   let master: Buffer | undefined, passphrase: Buffer | undefined, oldKey: Buffer | undefined, root: Buffer | undefined;
@@ -120,7 +122,7 @@ async function activate(directory: string, contextInput: PasswordSlotContext, in
       vaultId: context.vaultId, keyId: context.keyId, entryCount: expected.length,
       state: recovery ? readReceipt(rootPath).state : "prepared" as const });
     if (recovery) same(readReceipt(rootPath), receipt);
-    const durability = publishPointer(rootPath, receipt, recovery, active); active();
+    const durability = publishPointer(rootPath, receipt, recovery, active, rawFiles.deferClose); active();
     return Object.freeze({ state: "v2-selected" as const, context, entryCount: expected.length, database: files.database, durability });
   } catch (error) {
     // Any observed receipt means publication may have happened. Require explicit recovery, never rollback.
@@ -144,6 +146,7 @@ async function activate(directory: string, contextInput: PasswordSlotContext, in
       try { if (database?.inTransaction) database.exec("ROLLBACK"); } catch { failed = true; }
       try { if (database?.open) database.close(); } catch { failed = true; }
     }
+    if (!rawFiles.close()) failed = true;
     try { if (started && session && session.getState().sessionId === sessionId) session.lock(); } catch { failed = true; }
     busy = false;
     if (failed) throw new VaultActivationError("RECOVERY_REQUIRED");

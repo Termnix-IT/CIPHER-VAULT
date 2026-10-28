@@ -9,6 +9,7 @@ import type { PasswordSlotContext } from "../crypto/v2-format.js";
 import { hasVaultStorage } from "../db/vault-context.js";
 import { createV2Store, openV2Store, V2StoreError } from "../db/v2-store.js";
 import type { V2Store } from "../db/v2-store.js";
+import { SqliteFileScope } from "../db/sqlite-file-scope.js";
 import { HttpError } from "../lib/errors.js";
 import { INPUT_LIMITS, parseBackupPayload } from "../lib/input-validation.js";
 import { VaultSession } from "../services/vault-session.js";
@@ -39,6 +40,7 @@ export function recoverV2Replacement(directory: string, expected: RecoveryContex
 async function replace(directory: string, sourceInput: PasswordSlotContext | undefined, recoveryInput: RecoveryContext | undefined,
   input: Request, authorization: Authorization, options: { signal?: AbortSignal }) {
   if (busy) throw new V2ReplacementError("BUSY"); busy = true;
+  const rawFiles = new SqliteFileScope();
   let sourceStore: V2Store | undefined, targetStore: V2Store | undefined;
   let sourceLocker: Database.Database | undefined, targetLocker: Database.Database | undefined, snapshotReader: Database.Database | undefined;
   let sourceKey: Buffer | undefined, targetKey: Buffer | undefined, passphrase: Buffer | undefined;
@@ -134,7 +136,7 @@ async function replace(directory: string, sourceInput: PasswordSlotContext | und
       }
       targetStore.close(); targetStore = undefined; syncFile(files.database);
     } else {
-      await checkHashes(root, transition, active);
+      await checkHashes(root, transition, active, rawFiles.deferClose);
       await verifyBackup(files.backup, passphrase!, original, active);
       await verifySnapshot(files.snapshot, source, oldPassword!, sourceKey, original, sourceUses, active, signal);
       const savedPointer = JSON.parse(boundedRead(files.sourcePointer, 512).toString("utf8"));
@@ -160,14 +162,16 @@ async function replace(directory: string, sourceInput: PasswordSlotContext | und
     targetStore.close(); targetStore = undefined;
     if (transition) {
       await verifyBackup(files.targetBackup, passphrase!, actual, active);
-      await checkHashes(root, transition, active); // Includes the target after its writer lock is held.
+      await checkHashes(root, transition, active, rawFiles.deferClose); // Includes the target after its writer lock is held.
       same(readTransition(root), transition); preserveGlobals(root, files.directory, source, target!, active);
     } else {
       await exportBackup(files.targetBackup, actual, passphrase!, active); active();
       files = replacementFiles(root, target!);
       transition = Object.freeze({ format: "CIPHER-VAULT-TRANSITION", version: 1, mode, source, target: target!,
-        sourceCount: original.length, targetCount: actual.length, sourceUses, hashes: await fingerprints(root, source, target!, active) });
-      for (const file of [files.database, files.snapshot, files.backup, files.sourcePointer, files.sourceReceipt, files.targetBackup]) { active(); syncFile(file); }
+        sourceCount: original.length, targetCount: actual.length, sourceUses, hashes: await fingerprints(root, source, target!, active, rawFiles.deferClose) });
+      for (const file of [files.database, files.snapshot, files.backup, files.sourcePointer, files.sourceReceipt, files.targetBackup]) {
+        active(); syncFile(file, file === files.database ? rawFiles.deferClose : undefined);
+      }
       syncDirectory(files.directory); syncDirectory(path.dirname(files.directory)); syncDirectory(root);
       active(); selectedSource();
       writeState(root, "vault-transition.json", transition, () => { active(); selectedSource(); }, true);
@@ -209,21 +213,23 @@ async function replace(directory: string, sourceInput: PasswordSlotContext | und
       try { if (db?.inTransaction) db.exec("ROLLBACK"); } catch { failed = true; }
       try { if (db?.open) db.close(); } catch { failed = true; }
     }
+    if (!rawFiles.close()) failed = true;
     try { if (started && session && session.getState().sessionId === sessionId) session.lock(); } catch { failed = true; }
     busy = false;
     if (failed) throw new V2ReplacementError("RECOVERY_REQUIRED");
   }
 }
 
-async function fingerprints(root: string, source: PasswordSlotContext, target: PasswordSlotContext, active: () => void) {
+async function fingerprints(root: string, source: PasswordSlotContext, target: PasswordSlotContext, active: () => void,
+  releaseDatabaseFile: (fd: number) => void) {
   const files = replacementFiles(root, target);
-  return Object.freeze({ source: await hashFile(safePath(root, ["vaults", source.vaultId, "vault.sqlite"]), REPLACEMENT_SNAPSHOT_BYTES, active),
+  return Object.freeze({ source: await hashFile(safePath(root, ["vaults", source.vaultId, "vault.sqlite"]), REPLACEMENT_SNAPSHOT_BYTES, active, releaseDatabaseFile),
     snapshot: await hashFile(files.snapshot, REPLACEMENT_SNAPSHOT_BYTES, active), backup: await hashFile(files.backup, INPUT_LIMITS.backupFileBytes, active),
     sourcePointer: await hashFile(files.sourcePointer, 512, active), sourceReceipt: await hashFile(files.sourceReceipt, 512, active),
-    target: await hashFile(files.database, REPLACEMENT_SNAPSHOT_BYTES, active), targetBackup: await hashFile(files.targetBackup, INPUT_LIMITS.backupFileBytes, active) });
+    target: await hashFile(files.database, REPLACEMENT_SNAPSHOT_BYTES, active, releaseDatabaseFile), targetBackup: await hashFile(files.targetBackup, INPUT_LIMITS.backupFileBytes, active) });
 }
-async function checkHashes(root: string, transition: Transition, active: () => void) {
-  same(await fingerprints(root, transition.source, transition.target, active), transition.hashes);
+async function checkHashes(root: string, transition: Transition, active: () => void, releaseDatabaseFile: (fd: number) => void) {
+  same(await fingerprints(root, transition.source, transition.target, active, releaseDatabaseFile), transition.hashes);
 }
 function preserveGlobals(root: string, directory: string, source: PasswordSlotContext, target: PasswordSlotContext, active: () => void) {
   // Preserve bounded malformed metadata too, but never overwrite a valid selection of an unrelated vault.
