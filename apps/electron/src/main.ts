@@ -11,6 +11,7 @@ import { VaultPowerGuard } from "./vault-power-guard.js";
 import { ExpiringClipboard } from "./expiring-clipboard.js";
 import { createClipboardPort } from "./clipboard-port.js";
 import { installRendererSessionSecurity } from "./renderer-session.js";
+import { desktopPlatformCapabilities, desktopVaultDataDirectory } from "./desktop-platform.js";
 import { localDevelopmentUrl } from "@password-manager/shared";
 import type {
   PasswordGenerationOptions,
@@ -24,6 +25,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const rendererDevUrl = process.env.PASSWORD_MANAGER_RENDERER_URL ?? "http://localhost:5173";
+const platformCapabilities = desktopPlatformCapabilities({ platform: process.platform, packaged: app.isPackaged, portable: Boolean(process.env.PORTABLE_EXECUTABLE_FILE) });
 
 let mainWindow: BrowserWindow | null = null;
 let trustedRendererUrl: string | null = null;
@@ -344,7 +346,7 @@ async function bootstrap() {
     throw new Error("Application root was not found");
   }
 
-  process.env.PASSWORD_MANAGER_DATA_DIR = path.join(app.getPath("userData"), "data");
+  process.env.PASSWORD_MANAGER_DATA_DIR = desktopVaultDataDirectory(app);
   const storage = await importModule<{ openApplicationVault: () => void; closeApplicationVault: () => void }>(getApiBuildPath(appRoot, "services/vault-maintenance-service.js"));
   storage.openApplicationVault();
   // Register cleanup before loading services or the renderer, including failed startup.
@@ -368,7 +370,7 @@ async function bootstrap() {
   });
   powerGuard = new VaultPowerGuard(powerMonitor, (reason) => { services.vault.lockVault(reason); });
   const version = app.isPackaged ? app.getVersion() : JSON.parse(readFileSync(path.join(appRoot, "package.json"), "utf8")).version as string;
-  registerUpdateHandlers(() => mainWindow, () => { services.vault.lockVault("update"); }, version, assertTrustedSender);
+  registerUpdateHandlers(() => mainWindow, () => { services.vault.lockVault("update"); }, version, assertTrustedSender, platformCapabilities.inAppUpdates);
   app.on("before-quit", (event) => {
     if (quitReady) return;
     event.preventDefault();
@@ -387,7 +389,7 @@ async function bootstrap() {
 }
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
+  if (!platformCapabilities.keepAliveAfterLastWindow) {
     app.quit();
   }
 });

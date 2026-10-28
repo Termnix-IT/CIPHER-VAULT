@@ -1,5 +1,6 @@
 import type { PowerMonitor } from "electron";
 import type { VaultLockReason } from "@password-manager/shared/types";
+import { supportsScreenLockEvents } from "./desktop-platform.js";
 
 // OS policy stays in Electron; Core still owns the key, deadlines and generations.
 export class VaultPowerGuard {
@@ -13,7 +14,7 @@ export class VaultPowerGuard {
     private readonly lock: (reason: VaultLockReason) => void,
     platform: string = process.platform
   ) {
-    this.screenEventsSupported = platform === "win32" || platform === "darwin";
+    this.screenEventsSupported = supportsScreenLockEvents(platform);
     this.listen("suspend", () => { this.suspended = true; lock("suspend"); });
     this.listen("resume", () => { this.suspended = false; lock("resume"); });
     if (this.screenEventsSupported) {

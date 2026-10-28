@@ -41,6 +41,8 @@ jobs:
         run: npm run test:sessions
       - name: Manual updater
         run: npm run test:updates
+      - name: Desktop platform capability probe
+        run: npm run test:desktop-platform
       - name: Built desktop integration
         run: npm run test:desktop-session
       - name: Migrated v2 desktop integration

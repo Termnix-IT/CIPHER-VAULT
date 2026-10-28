@@ -1,14 +1,14 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { BrowserWindow, dialog, ipcMain, shell } from "electron";
 import electronUpdater from "electron-updater";
 import { ManualUpdater } from "./manual-updater.js";
 
 const RELEASE_PAGE = "https://github.com/Termnix-IT/CIPHER-VAULT/releases/latest";
 
 export function registerUpdateHandlers(getWindow: () => BrowserWindow | null, lockVault: () => void, version: string,
-  assertSender: (event: Electron.IpcMainInvokeEvent) => void) {
+  assertSender: (event: Electron.IpcMainInvokeEvent) => void, inAppUpdates: boolean) {
   const { autoUpdater } = electronUpdater;
   const controller = new ManualUpdater(autoUpdater, version,
-    app.isPackaged && process.platform === "win32" && !process.env.PORTABLE_EXECUTABLE_FILE,
+    inAppUpdates,
     (state) => {
       const window = getWindow();
       if (window && !window.isDestroyed()) window.webContents.send("updates:state", state);
