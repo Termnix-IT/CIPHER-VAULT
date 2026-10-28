@@ -144,6 +144,9 @@ npm run dev:desktop
 | `npm run test:web-policy` | 一時HTTPサーバーでWeb版のCSP・画面・API通信を確認 |
 | `npm run test:updates` | 手動更新の制御確認 |
 | `npm run package:desktop` | `dist-desktop/` にWindows用setup・portableを生成（公開しない） |
+| `npm run package:desktop:linux` / `npm run package:desktop:mac` | 対象OS上でLinux / macOSの評価用パッケージを生成（公開しない） |
+| `npm run test:desktop-package` | 生成済みアプリをソース外へコピーし、一時保管庫の移行・再起動・鍵消去を確認 |
+| `npm run test:desktop-artifacts` | Linuxのtar.gz・展開AppImage、macOSのzip・読み取り専用dmg内のアプリを確認 |
 | `npm run package` | Node.jsで動かすWeb/API配布フォルダ `release/` を生成 |
 
 ElectronはpreloadとIPCを経由して共通サービスを呼び出し、保管庫操作にHTTPサーバーを使いません。Web/APIのDBは既定で `apps/api/data/`、Electronは `userData/data/` に保存します。開発・テストでは利用中の保管庫を初期化・上書きしないでください。
@@ -152,7 +155,7 @@ Electronの画面はsandboxとcontextIsolationを有効にし、ブラウザの�
 
 個別起動、ネイティブ依存、保存先、配布手順は[開発・配布手順](docs/開発・配布手順.md)を参照してください。
 
-CIはWindows・Node.js 24で上記の回帰・画面テストを実行します。本番依存のhigh以上と、全依存のlow以上の指摘を失敗条件にします。[CIと依存監査](docs/開発・配布手順.md#ciと依存監査)を参照してください。
+CIにはWindowsの回帰・画面テスト、Linux/macOSのCore試験、各OSの配布アプリ検証を設定しています。本番依存のhigh以上と、全依存のlow以上の指摘を失敗条件にします。Linux/macOSのパッケージは評価用で、公開済みの製品対応を意味しません。検証範囲と署名の制約は[開発・配布手順](docs/開発・配布手順.md#ciと依存監査)を参照してください。
 
 ## 関連ドキュメント
 

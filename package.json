@@ -11,6 +11,7 @@
     "packages/*"
   ],
   "dependencies": {
+    "@password-manager/shared": "*",
     "@zxcvbn-ts/core": "^4.2.0",
     "@zxcvbn-ts/language-common": "^4.1.3",
     "@zxcvbn-ts/language-en": "^4.1.1",
@@ -33,6 +34,11 @@
     "build": "npm run build:web && npm run build:api",
     "build:desktop": "npm run build && npm run build:electron",
     "package:desktop": "npm run build:desktop && electron-builder --win nsis portable --publish never",
+    "package:desktop:linux": "node scripts/require-native-build.mjs linux && npm run build:desktop && electron-builder --linux --publish never --config.directories.output=dist-desktop/linux",
+    "package:desktop:mac": "node scripts/require-native-build.mjs mac && npm run build:desktop && electron-builder --mac --publish never --config.directories.output=dist-desktop/macos",
+    "test:desktop-package": "node scripts/test-packaged-desktop.mjs",
+    "test:desktop-artifacts": "node scripts/test-desktop-artifacts.mjs",
+    "test:packaging-contract": "node --test tests/desktop-packaging.test.mjs",
     "test:updates": "npm run build:electron && node --test tests/manual-updater.test.mjs",
     "test:security": "npm run build:desktop && node --test tests/renderer-security.test.mjs tests/renderer-hardening.test.mjs",
     "test:sessions": "npm run build:api && npm run build:electron && node --import tsx --test tests/vault-session.test.mjs tests/web-session.test.mjs tests/vault-lifecycle.test.mjs tests/vault-kdf.test.mjs tests/input-validation.test.mjs tests/expiring-clipboard.test.mjs tests/desktop-platform.test.mjs",
@@ -92,6 +98,28 @@
     },
     "portable": {
       "artifactName": "CIPHER-VAULT-${version}-${arch}-portable.${ext}"
+    },
+    "linux": {
+      "target": ["AppImage", "tar.gz"],
+      "icon": "build/icon.png",
+      "executableName": "cipher-vault",
+      "category": "Utility",
+      "artifactName": "CIPHER-VAULT-${version}-linux-${arch}.${ext}"
+    },
+    "appImage": {
+      "executableArgs": []
+    },
+    "toolsets": {
+      "appimage": "1.0.3"
+    },
+    "mac": {
+      "target": ["zip", "dmg"],
+      "icon": "build/icon.png",
+      "category": "public.app-category.utilities",
+      "identity": "-",
+      "notarize": false,
+      "hardenedRuntime": true,
+      "artifactName": "CIPHER-VAULT-${version}-macos-${arch}.${ext}"
     }
   }
 }

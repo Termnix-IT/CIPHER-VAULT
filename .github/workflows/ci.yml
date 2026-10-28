@@ -86,6 +86,60 @@ jobs:
       - name: Session, KDF, input and platform contracts
         run: npm run test:sessions
 
+  desktop-packages:
+    name: Desktop package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            package: npm run build:desktop && node node_modules/electron-builder/cli.js --win --dir --publish never
+          # Keep normal Chromium sandboxing; newer Ubuntu userns policy needs a separate acceptance test.
+          # Migrate this evaluation job before the runner's April 2027 retirement.
+          - os: ubuntu-22.04
+            package: npm run package:desktop:linux
+          - os: macos-15
+            package: npm run package:desktop:mac
+    defaults:
+      run:
+        shell: bash
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Linux package runtime and display prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3 make libnspr4 libnss3 libasound2 xvfb xauth
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Package inclusion and native target contracts
+        run: npm run test:packaging-contract
+      - name: Build native evaluation packages without publishing
+        run: ${{ matrix.package }}
+      - name: Packaged sandbox, migration, restart and key cleanup (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:desktop-package
+      - name: Packaged sandbox, migration, restart and key cleanup
+        if: runner.os != 'Linux'
+        run: npm run test:desktop-package
+      - name: Extracted Linux artifacts
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:desktop-artifacts
+      - name: Signed macOS zip and read-only dmg
+        if: runner.os == 'macOS'
+        run: npm run test:desktop-artifacts
+
   dependencies:
     name: Dependency audit
     runs-on: windows-2025
