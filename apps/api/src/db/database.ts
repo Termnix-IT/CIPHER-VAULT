@@ -89,6 +89,16 @@ function initializeLegacyDatabase(database: Database.Database) {
   if (!columns.some(column => column.name === "password_changed_at")) database.exec("ALTER TABLE password_entries ADD COLUMN password_changed_at TEXT");
 }
 
+/** Independent scratch vault: no provider switch and no filesystem-backed temporary store. */
+export function createMemoryDatabase(): Database.Database {
+  const database = new Database(":memory:");
+  try {
+    database.pragma("temp_store = MEMORY");
+    initializeLegacyDatabase(database);
+    return database;
+  } catch (error) { closeConnection(database); return storageError(error); }
+}
+
 export function openDatabase(options: DatabaseOptions = {}): Database.Database {
   if (connection?.open) throw new VaultStorageError("ALREADY_OPEN");
   const databasePath = path.join(options.dataDirectory ? path.resolve(options.dataDirectory) : resolveDataDirectory(), "password-manager.db");

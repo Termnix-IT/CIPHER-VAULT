@@ -8,6 +8,7 @@ import { HttpError } from "../lib/errors.js";
 import { decryptSecret, encryptSecret } from "./crypto-service.js";
 import { vaultSession } from "./vault-session.js";
 import { INPUT_LIMITS, parseEntryId, parseEntryPayload } from "../lib/input-validation.js";
+import { restoreLegacyEntries } from "../db/legacy-entry-writer.js";
 
 type PasswordEntryRow = {
   id: string;
@@ -189,21 +190,5 @@ export function deleteEntry(inputId: unknown) {
 
 export function restoreEntriesIntoEmptyVault(entries: PasswordEntry[]) {
   const session = requireUnlockedVault();
-  return getDatabase().transaction(() => {
-    requireUnlockedVault(session);
-    if (listEntriesStatement().get()) throw new HttpError(409, "復元できるのは空の保管庫のみです");
-    const insert = insertEntryStatement();
-    for (const entry of entries) {
-      insert.run({
-        id: entry.id, service_name: entry.serviceName, login_id: entry.loginId,
-        encrypted_password: encryptSecret(entry.password),
-        encrypted_notes: encryptSecret(entry.notes), url: entry.url,
-        tags: JSON.stringify(entry.tags), group_name: entry.group,
-        created_at: entry.createdAt, updated_at: entry.updatedAt,
-        password_changed_at: entry.passwordChangedAt
-      });
-    }
-    requireUnlockedVault(session);
-    return { restoredCount: entries.length };
-  })();
+  return restoreLegacyEntries(getDatabase(), entries, encryptSecret, () => { requireUnlockedVault(session); });
 }
