@@ -43,6 +43,8 @@
     "test:desktop-dev": "npm run build:desktop && node scripts/run-desktop-tests.mjs --dev",
     "test:web-policy": "npm run build && node scripts/run-desktop-tests.mjs --web",
     "test:api": "npm run build:api && node scripts/run-api-tests.mjs",
+    "test:core": "npm run build:api && node scripts/run-api-tests.mjs --core",
+    "test:windows-release": "npm run build:api && node scripts/run-api-tests.mjs --windows-release",
     "start": "npm --workspace apps/api run start",
     "start:desktop": "npm --workspace apps/electron run start",
     "package": "npm run build && pwsh -File scripts/package-release.ps1"

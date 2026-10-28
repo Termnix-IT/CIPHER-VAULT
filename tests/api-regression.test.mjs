@@ -1,15 +1,13 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createServer, request as httpRequest } from "node:http";
-import { spawnSync } from "node:child_process";
 import { createCipheriv, scryptSync } from "node:crypto";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import Database from "better-sqlite3";
 import { validEntryPayload, invalidContractCases, contractRoutes } from "./input-contract-fixtures.mjs";
-import { verifyReleaseLock } from "../scripts/web-release-manifest.mjs";
 
 const temporaryRoot = mkdtempSync(path.join(tmpdir(), "cipher-vault-regression-"));
 process.env.PASSWORD_MANAGER_DATA_DIR = path.join(temporaryRoot, "db");
@@ -663,55 +661,4 @@ test("the new-entry count limit preserves viewing and deletion of existing recor
   entries.deleteEntry("capacity-1");
   assert.ok(entries.createEntry(validEntryPayload()).id);
   assert.equal(entries.listEntries().items.length, 10000);
-});
-
-test("Web packaging excludes development DB and preserves existing release data", () => {
-  const fixture = path.join(temporaryRoot, "package");
-  for (const directory of ["scripts", "apps/api/dist", "apps/web/dist", "apps/api/data", "packages/shared/dist"]) {
-    mkdirSync(path.join(fixture, directory), { recursive: true });
-  }
-  for (const file of ["scripts/package-release.ps1", "scripts/web-release-manifest.mjs", "scripts/start-web-release.mjs",
-    "package.json", "package-lock.json", "apps/api/package.json", "packages/shared/package.json"]) {
-    cpSync(new URL(`../${file}`, import.meta.url), path.join(fixture, file));
-  }
-  writeFileSync(path.join(fixture, "packages/shared/dist/index.js"), "export const fixture = true;");
-  writeFileSync(path.join(fixture, "apps/api/data/password-manager.db"), "development sentinel");
-  const run = () => spawnSync("pwsh", ["-NoProfile", "-File", path.join(fixture, "scripts/package-release.ps1")], {
-    cwd: temporaryRoot, encoding: "utf8", env: { ...process.env, npm_config_cache: path.join(fixture, "empty-npm-cache") }
-  });
-  const first = run();
-  assert.equal(first.status, 0, first.stdout + first.stderr);
-  assert.deepEqual(readdirSync(path.join(fixture, "release/data")), []);
-  const releaseManifest = JSON.parse(readFileSync(path.join(fixture, "release/package.json"), "utf8").replace(/^\uFEFF/, ""));
-  assert.ok(releaseManifest.dependencies["@zxcvbn-ts/core"]);
-  assert.ok(releaseManifest.dependencies["@zxcvbn-ts/language-common"]);
-  assert.ok(releaseManifest.dependencies["@zxcvbn-ts/language-en"]);
-  assert.deepEqual(releaseManifest.workspaces, ["packages/shared"]);
-  assert.equal(readFileSync(path.join(fixture, "release/packages/shared/dist/index.js"), "utf8"), "export const fixture = true;");
-  verifyReleaseLock(fixture, path.join(fixture, "release"));
-  const lockPath = path.join(fixture, "release/package-lock.json");
-  const lockBytes = readFileSync(lockPath);
-  assert.equal(run().status, 0, "a second clean package generation should succeed");
-  assert.deepEqual(readFileSync(lockPath), lockBytes, "packaging must preserve deterministic locked resolutions");
-  const changedLock = JSON.parse(lockBytes);
-  changedLock.packages["node_modules/better-sqlite3"].integrity = "sha512-untrusted-fixture";
-  writeFileSync(lockPath, JSON.stringify(changedLock));
-  assert.throws(() => verifyReleaseLock(fixture, path.join(fixture, "release")), /Locked package changed/);
-  changedLock.packages["node_modules/better-sqlite3"].dev = true;
-  writeFileSync(lockPath, JSON.stringify(changedLock));
-  assert.throws(() => verifyReleaseLock(fixture, path.join(fixture, "release")), /Unexpected non-runtime/);
-  writeFileSync(lockPath, lockBytes);
-
-  const apiPath = path.join(fixture, "apps/api/package.json");
-  const apiBytes = readFileSync(apiPath);
-  const changedApi = JSON.parse(apiBytes);
-  changedApi.dependencies["better-sqlite3"] = "999.0.0";
-  writeFileSync(apiPath, JSON.stringify(changedApi));
-  assert.notEqual(run().status, 0);
-  assert.deepEqual(readFileSync(lockPath), lockBytes, "failed preparation must preserve the previous release");
-  writeFileSync(apiPath, apiBytes);
-  const protectedDatabase = path.join(fixture, "release/data/password-manager.db");
-  writeFileSync(protectedDatabase, "existing user data sentinel");
-  assert.notEqual(run().status, 0);
-  assert.equal(readFileSync(protectedDatabase, "utf8"), "existing user data sentinel");
 });
