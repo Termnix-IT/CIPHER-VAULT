@@ -6,7 +6,7 @@ import { INPUT_LIMITS, parseBackupPayload } from "../lib/input-validation.js";
 import { decodeBackupV1, deriveBackupKey, encodeBackupV1, parseBackupV1 } from "../crypto/backup-v1.js";
 
 let busy = false;
-async function withBackupKey<T>(passphrase: string, salt: Buffer, action: (key: Buffer) => T): Promise<T> {
+async function withBackupKey<T>(passphrase: string, salt: Buffer, action: (key: Buffer) => T | Promise<T>): Promise<T> {
   requireUnlockedVault();
   if (busy) throw new HttpError(409, "バックアップ処理の完了を待ってください");
   busy = true;
@@ -16,7 +16,7 @@ async function withBackupKey<T>(passphrase: string, salt: Buffer, action: (key: 
     key = await deriveBackupKey(passphrase, salt);
     requireUnlockedVault();
     if (getVaultSession() !== session) throw new HttpError(409, "保管庫の状態が変わりました。もう一度操作してください");
-    const result = action(key);
+    const result = await action(key);
     requireUnlockedVault(session);
     return result;
   } finally { key?.fill(0); busy = false; }

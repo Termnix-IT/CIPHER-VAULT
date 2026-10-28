@@ -9,6 +9,8 @@ import { decryptSecret, encryptSecret } from "./crypto-service.js";
 import { vaultSession } from "./vault-session.js";
 import { INPUT_LIMITS, parseEntryId, parseEntryPayload } from "../lib/input-validation.js";
 import { restoreLegacyEntries } from "../db/legacy-entry-writer.js";
+import { assertVaultStorage, isV2Vault } from "../db/vault-context.js";
+import { createV2Entry, deleteV2Entry, getV2Entry, listV2Entries, restoreV2Entries, updateV2Entry } from "./v2-vault-service.js";
 
 type PasswordEntryRow = {
   id: string;
@@ -62,7 +64,8 @@ const deleteEntryStatement = () => getDatabase().prepare("DELETE FROM password_e
 const countEntriesStatement = () => getDatabase().prepare("SELECT COUNT(*) AS count FROM password_entries");
 
 export function requireUnlockedVault(expectedSessionId?: string) {
-  return vaultSession.requireUnlocked(expectedSessionId);
+  const session = vaultSession.requireUnlocked(expectedSessionId);
+  assertVaultStorage(); return session;
 }
 
 function parseTags(tags: string) {
@@ -97,6 +100,7 @@ function mapRowToEntry(row: PasswordEntryRow): PasswordEntry {
 }
 
 export function listEntries() {
+  if (isV2Vault()) return listV2Entries();
   const session = requireUnlockedVault();
   const rows = listEntriesStatement().all() as PasswordEntryRow[];
   const items = rows.map(mapRowToSummary);
@@ -105,6 +109,7 @@ export function listEntries() {
 }
 
 export function getEntryById(inputId: unknown) {
+  if (isV2Vault()) return getV2Entry(inputId);
   const session = requireUnlockedVault();
   const id = parseEntryId(inputId);
   const row = getEntryStatement().get(id) as PasswordEntryRow | undefined;
@@ -119,6 +124,7 @@ export function getEntryById(inputId: unknown) {
 }
 
 export function createEntry(input: unknown) {
+  if (isV2Vault()) return createV2Entry(input);
   requireUnlockedVault();
   const payload = parseEntryPayload(input);
   if ((countEntriesStatement().get() as { count: number }).count >= INPUT_LIMITS.entries) {
@@ -146,6 +152,7 @@ export function createEntry(input: unknown) {
 }
 
 export function updateEntry(inputId: unknown, input: unknown) {
+  if (isV2Vault()) return updateV2Entry(inputId, input);
   requireUnlockedVault();
   const id = parseEntryId(inputId);
   const payload = parseEntryPayload(input);
@@ -175,6 +182,7 @@ export function updateEntry(inputId: unknown, input: unknown) {
 }
 
 export function deleteEntry(inputId: unknown) {
+  if (isV2Vault()) return deleteV2Entry(inputId);
   requireUnlockedVault();
   const id = parseEntryId(inputId);
   const result = deleteEntryStatement().run(id);
@@ -189,6 +197,7 @@ export function deleteEntry(inputId: unknown) {
 }
 
 export function restoreEntriesIntoEmptyVault(entries: PasswordEntry[]) {
+  if (isV2Vault()) return restoreV2Entries(entries);
   const session = requireUnlockedVault();
   return restoreLegacyEntries(getDatabase(), entries, encryptSecret, () => { requireUnlockedVault(session); });
 }

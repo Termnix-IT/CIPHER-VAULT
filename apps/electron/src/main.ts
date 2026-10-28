@@ -48,11 +48,11 @@ type VaultServiceModule = {
 type EntryServiceModule = {
   listEntries: () => { items: import("@password-manager/shared/types").PasswordEntrySummary[] };
   getEntryById: (id: string) => import("@password-manager/shared/types").PasswordEntry;
-  createEntry: (payload: PasswordEntryUpsertPayload) => import("@password-manager/shared/types").PasswordEntry;
+  createEntry: (payload: PasswordEntryUpsertPayload) => import("@password-manager/shared/types").PasswordEntry | Promise<import("@password-manager/shared/types").PasswordEntry>;
   updateEntry: (
     id: string,
     payload: PasswordEntryUpsertPayload
-  ) => import("@password-manager/shared/types").PasswordEntry;
+  ) => import("@password-manager/shared/types").PasswordEntry | Promise<import("@password-manager/shared/types").PasswordEntry>;
   deleteEntry: (id: string) => { success: boolean };
 };
 
@@ -333,14 +333,14 @@ async function bootstrap() {
   }
 
   process.env.PASSWORD_MANAGER_DATA_DIR = path.join(app.getPath("userData"), "data");
-  const storage = await importModule<{ openDatabase: () => void; closeDatabase: () => void }>(getApiBuildPath(appRoot, "db/database.js"));
-  storage.openDatabase();
+  const storage = await importModule<{ openVaultStorage: () => void; closeVaultStorage: () => void }>(getApiBuildPath(appRoot, "db/vault-context.js"));
+  storage.openVaultStorage();
   // Register cleanup before loading services or the renderer, including failed startup.
   app.on("will-quit", () => {
     try {
       powerGuard?.dispose();
       appServices?.vault.lockVault();
-    } finally { storage.closeDatabase(); }
+    } finally { storage.closeVaultStorage(); }
   });
   const services = await loadAppServices(appRoot);
   appServices = services;

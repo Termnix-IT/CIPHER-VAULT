@@ -11,16 +11,21 @@ import { getVaultMetadata, resetVaultData, saveVaultMetadata } from "./vault-sto
 import { requireSessionId, vaultSession } from "./vault-session.js";
 import { vaultUnlockGuard } from "./vault-unlock-guard.js";
 import { parseMasterPassword, parseResetPayload } from "../lib/input-validation.js";
+import { assertVaultStorage, isV2Vault, isVaultContextFailed } from "../db/vault-context.js";
+import { unlockV2Vault } from "./v2-vault-service.js";
+
+function isConfigured() { return isV2Vault() || isVaultContextFailed() || getVaultMetadata() !== null; }
 
 export function getVaultStatus() {
   return {
-    isConfigured: getVaultMetadata() !== null,
+    isConfigured: isConfigured(),
     ...vaultSession.getState()
   };
 }
 
 export async function setupVault(payload: unknown) {
-  if (getVaultMetadata() !== null) {
+  assertVaultStorage();
+  if (isConfigured()) {
     throw new HttpError(409, "保管庫はすでに設定済みです");
   }
 
@@ -33,6 +38,7 @@ export async function setupVault(payload: unknown) {
 
     try {
       vaultSession.requireGeneration(intent);
+      assertVaultStorage();
       const now = new Date().toISOString();
       saveVaultMetadata({
         id: 1,
@@ -52,6 +58,8 @@ export async function setupVault(payload: unknown) {
 }
 
 export async function unlockVault(payload: unknown) {
+  assertVaultStorage();
+  if (isV2Vault()) { await unlockV2Vault(payload); return getVaultStatus(); }
   const masterPassword = parseMasterPassword(payload, false);
   const metadata = getVaultMetadata();
 
@@ -76,6 +84,7 @@ export async function unlockVault(payload: unknown) {
     const vaultKey = await deriveVaultKey(masterPassword, metadata.passwordSalt);
     try {
       vaultSession.requireGeneration(intent);
+      assertVaultStorage();
       if (!verifyVaultKey(vaultKey, metadata.passwordVerifier, legacy)) {
         throw new HttpError(401, "マスターパスワードが正しくありません");
       }
@@ -111,13 +120,15 @@ export function recordVaultActivity(sessionId: unknown) {
 }
 
 export function onVaultState(listener: (state: VaultStatus) => void) {
-  return vaultSession.subscribe((state) => listener({ isConfigured: getVaultMetadata() !== null, ...state }));
+  return vaultSession.subscribe((state) => listener({ isConfigured: isConfigured(), ...state }));
 }
 
 export function resetVault(payload: unknown) {
   parseResetPayload(payload);
+  assertVaultStorage();
 
   vaultSession.lock("reset");
+  if (isV2Vault()) throw new HttpError(409, "この保管庫の初期化は現在利用できません");
   resetVaultData();
 
   return getVaultStatus();

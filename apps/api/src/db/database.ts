@@ -8,7 +8,7 @@ export { VaultStorageError } from "./database-format.js";
 export type DatabaseOptions = { dataDirectory?: string; readonly?: boolean; createIfMissing?: boolean };
 let connection: Database.Database | undefined;
 
-function resolveDataDirectory() {
+export function resolveDataDirectory() {
   const override = process.env.PASSWORD_MANAGER_DATA_DIR;
 
   if (override) {
@@ -99,7 +99,7 @@ export function createMemoryDatabase(): Database.Database {
   } catch (error) { closeConnection(database); return storageError(error); }
 }
 
-export function openDatabase(options: DatabaseOptions = {}): Database.Database {
+export function openDatabase(options: DatabaseOptions = {}, assertCurrent?: () => void): Database.Database {
   if (connection?.open) throw new VaultStorageError("ALREADY_OPEN");
   const databasePath = path.join(options.dataDirectory ? path.resolve(options.dataDirectory) : resolveDataDirectory(), "password-manager.db");
   const initial = inspectDatabaseFile(databasePath);
@@ -116,6 +116,7 @@ export function openDatabase(options: DatabaseOptions = {}): Database.Database {
     candidate = new Database(databasePath, { readonly: options.readonly ?? false, fileMustExist: true });
     const database = candidate;
     const prepare = () => {
+      assertCurrent?.();
       // Recheck under the transaction used for migration; no async gap or cached schema.
       const current = inspectDatabase(database);
       if (options.readonly) {
@@ -143,3 +144,4 @@ export function closeDatabase() {
 }
 
 export function getDatabasePath() { return getDatabase().name; }
+export function hasOpenDatabase() { return connection?.open === true; }
