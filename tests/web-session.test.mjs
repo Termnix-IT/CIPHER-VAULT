@@ -4,6 +4,23 @@ import { VaultClientSession, VaultSessionChangedError } from "../apps/web/src/li
 
 const state = (sessionId, isUnlocked = true) => ({ sessionId, isUnlocked, isConfigured: true, idleTimeoutMs: 300000 });
 
+test("maintenance cancellation locks only its own pending or running operation, preserving later sessions",async()=>{
+  const saved=Object.getOwnPropertyDescriptor(globalThis,"window");
+  try{
+    const cases=[
+      {current:state("source"),expected:["source"]},
+      {current:{...state("running",false),maintenance:{state:"running",format:"v2",operation:"rekey",sourceSessionId:"source"}},expected:["running"]},
+      {current:{...state("another-running",false),maintenance:{state:"running",format:"v2",operation:"rekey",sourceSessionId:"another-source"}},expected:[]},
+      {current:state("later-unlock"),expected:[]}
+    ];
+    for(const [index,item] of cases.entries()){
+      const calls=[];globalThis.window={passwordManager:{fetchVaultStatus:async()=>item.current,lockVault:async id=>{calls.push(id);return state("locked",false)}}};
+      const api=await import(`../apps/web/src/lib/api.ts?maintenance-cancel=${index}`);
+      const result=await api.cancelVaultMaintenance("source");assert.deepEqual(calls,item.expected);assert.equal(result.requested,item.expected.length>0);
+    }
+  }finally{if(saved)Object.defineProperty(globalThis,"window",saved);else delete globalThis.window}
+});
+
 test("maintenance observes intermediate generations and refreshes a locked final status", async () => {
   const client = new VaultClientSession(); client.observe(state("source")); let last;client.subscribe(value=>{last=value});
   await client.maintain(async id=>{assert.equal(id,"source");client.observe({...state("closed",false),maintenance:{state:"running",format:"v2",operation:"rekey"}});return state("target",false)},

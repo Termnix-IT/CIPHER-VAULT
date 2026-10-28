@@ -9,7 +9,7 @@ import type { DatabaseOptions } from "../db/database.js";
 import { assertVaultStorage, closeVaultStorage, getVaultDataDirectory, hasVaultStorage, isV2Vault, openVaultStorage } from "../db/vault-context.js";
 import { openV2Store } from "../db/v2-store.js";
 import { HttpError } from "../lib/errors.js";
-import { INPUT_LIMITS, parseBackupPayload } from "../lib/input-validation.js";
+import { INPUT_LIMITS, parseBackupPayload, parseMasterPassword } from "../lib/input-validation.js";
 import { activateStagedVault, recoverVaultActivation } from "../migration/activation.js";
 import { dataRoot, inspectVaultSelection, present, readReceipt, safePath, VaultActivationError } from "../migration/active-pointer.js";
 import { inspectLegacySource, readLegacyMetadata } from "../migration/legacy-reader.js";
@@ -73,11 +73,15 @@ function parse(value: unknown): VaultMaintenancePayload {
         (input.operation !== "recover" && input.backupPassphrase !== input.confirmBackupPassphrase) ||
         (input.operation === "reset" ? input.confirmation !== "RESET_ALL_DATA" : input.operation !== "recover" && input.confirmation !== undefined) ||
         (input.confirmation !== undefined && input.confirmation !== "RESET_ALL_DATA")) throw new Error();
-    for (const password of [input.masterPassword, input.newMasterPassword]) copyPlaintext(password, INPUT_LIMITS.masterPasswordBytes).fill(0);
+    for (const [password, setup] of [[input.masterPassword, false], [input.newMasterPassword, true]] as const)
+      copyPlaintext(parseMasterPassword({ masterPassword: password }, setup), INPUT_LIMITS.masterPasswordBytes).fill(0);
     copyPlaintext(parseBackupPayload({ passphrase: input.backupPassphrase }, false).passphrase, 4096).fill(0);
     if (input.confirmBackupPassphrase !== undefined && input.confirmBackupPassphrase !== input.backupPassphrase) throw new Error();
     return input as unknown as VaultMaintenancePayload;
-  } catch { throw new HttpError(400, "操作・パスワード・確認入力・バックアップ用パスフレーズを確認してください"); }
+  } catch (error) {
+    if (error instanceof HttpError && error.statusCode === 413) throw error;
+    throw new HttpError(400, "操作・パスワード・確認入力・バックアップ用パスフレーズを確認してください");
+  }
 }
 function translate(error: unknown): HttpError {
   if (error instanceof HttpError) return error;
@@ -150,7 +154,7 @@ export async function runVaultMaintenance(value: unknown, expectedSessionId: unk
   let release!: () => void; pending = new Promise(resolve => { release = resolve; });
   try {
     closeVaultStorage(); closing = false; active();
-    publish({ state: "running", format: selected?.format ?? "unknown", operation: input.operation });
+    publish({ state: "running", format: selected?.format ?? "unknown", operation: input.operation, sourceSessionId: generation });
     const legacy = selected?.format === "legacy" || hint?.kind === "legacy";
     if (legacy) await vaultUnlockGuard.run(async () => {
       try {

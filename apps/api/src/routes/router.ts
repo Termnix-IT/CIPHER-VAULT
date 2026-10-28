@@ -70,7 +70,7 @@ export async function router(request: IncomingMessage, response: ServerResponse)
 
     if (method === "POST" && url === "/vault/maintenance") {
       const intent = vaultSession.requireGeneration(sessionId);
-      const payload = await readJsonBody(request);
+      const payload = await readJsonBody(request, INPUT_LIMITS.maintenanceRequestBytes);
       vaultSession.requireGeneration(intent);
       const abort = new AbortController(), disconnected = () => { if (!response.writableEnded) abort.abort(); };
       request.once("aborted", disconnected); response.once("close", disconnected);

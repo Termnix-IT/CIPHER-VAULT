@@ -32,11 +32,12 @@ afterEach(async()=>{mock.restoreAll();syncBuiltinESMExports();maintenance.closeA
 after(()=>{assert.equal(path.dirname(root),path.resolve(tmpdir()));assert.ok(path.basename(root).startsWith("cipher-vault-maintenance-"));fs.rmSync(root,{recursive:true,force:true,maxRetries:5,retryDelay:200})});
 
 test("normal rekey closes the source, reopens the verified target locked, and reports no secrets or paths",async()=>{
-  const dir=await open(),before=hash(source(dir)),states=[],unsubscribe=vault.onVaultState(state=>states.push(state)),key=vaultSession.requireKey();
+  const dir=await open(),before=hash(source(dir)),states=[],unsubscribe=vault.onVaultState(state=>states.push(state)),key=vaultSession.requireKey(),generation=vaultSession.requireUnlocked();
   await run(payload());unsubscribe();const status=vault.getVaultStatus();
   assert.equal(status.isUnlocked,false);assert.deepEqual(status.maintenance,{state:"ready",format:"v2"});assert.deepEqual(key,Buffer.alloc(32));
   assert.ok(states.some(s=>s.maintenance?.state==="running"));assert.equal(hash(source(dir)),before);assert.notEqual(storage.getVaultStoragePath(),source(dir));
   assert.ok(states.filter(s=>s.maintenance?.state==="running").every(s=>!s.isUnlocked));
+  assert.ok(states.filter(s=>s.maintenance?.state==="running").every(s=>s.maintenance.sourceSessionId===generation));
   assert.ok(!JSON.stringify(states).includes(dir));assert.ok(!JSON.stringify(states).includes(newPassword));
   await vault.unlockVault({masterPassword:newPassword});assert.deepEqual(sorted(entries.listEntries().items.map(e=>entries.getEntryById(e.id))),sorted(compatibility.legacy.entries));
 });
@@ -61,6 +62,12 @@ test("locked and stale generations, input extras and readonly storage refuse cha
 test("wrong source master leaves the original selected and requires a new unlock",async()=>{
   const dir=await open(),before=hash(source(dir));await assert.rejects(run(payload("rekey","synthetic-wrong-master")),{statusCode:401});
   assert.equal(hash(source(dir)),before);assert.equal(storage.getVaultStoragePath(),source(dir));assert.equal(vault.getVaultStatus().isUnlocked,false);
+});
+test("a new password rejected by ordinary unlock cannot create an inaccessible replacement",async()=>{
+  const dir=await open(),before=hash(source(dir)),password="\0".repeat(200000);
+  mock.method(crypto,"scrypt",()=>{throw new Error("must not derive")});syncBuiltinESMExports();
+  await assert.rejects(run({...payload(),newMasterPassword:password,confirmNewMasterPassword:password}),{statusCode:413});
+  assert.equal(hash(source(dir)),before);assert.equal(vaultSession.getState().isUnlocked,true);
 });
 test("manual lock cancels native KDF, rejects concurrent controls and keeps the gate until cleanup",async()=>{
   const dir=await open(),before=hash(source(dir)),scrypt=crypto.scrypt;let callback,key;
@@ -129,7 +136,9 @@ test("HTTP maintenance requires trusted origin, CSRF, current generation and sou
     let response=await fetch(base+"/vault/maintenance",{method:"POST",headers:{...headers,Origin:"https://untrusted.example.test"},body:JSON.stringify(payload())});assert.equal(response.status,403);
     response=await fetch(base+"/vault/maintenance",{method:"POST",headers:{...headers,"X-Cipher-Vault-CSRF":"wrong"},body:JSON.stringify(payload())});assert.equal(response.status,403);
     response=await fetch(base+"/vault/maintenance",{method:"POST",headers:{...headers,"X-Cipher-Vault-Session":"stale"},body:JSON.stringify(payload())});assert.equal(response.status,409);
-    response=await fetch(base+"/vault/maintenance",{method:"POST",headers,body:JSON.stringify(payload())});assert.equal(response.status,200);const status=await response.json();assert.equal(status.isUnlocked,false);assert.equal(status.maintenance.format,"v2");
+    const largePassword='"'.repeat(300000),body=JSON.stringify({...payload(),newMasterPassword:largePassword,confirmNewMasterPassword:largePassword});assert.ok(Buffer.byteLength(body)>1024*1024);
+    response=await fetch(base+"/vault/maintenance",{method:"POST",headers,body});assert.equal(response.status,200);const status=await response.json();assert.equal(status.isUnlocked,false);assert.equal(status.maintenance.format,"v2");
+    await vault.unlockVault({masterPassword:largePassword});assert.equal(entries.listEntries().items.length,compatibility.legacy.entries.length);
   }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve))}
 });
 

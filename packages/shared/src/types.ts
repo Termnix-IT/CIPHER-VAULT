@@ -58,6 +58,7 @@ export type VaultMaintenanceState = {
   format: "legacy" | "v2" | "unknown";
   operation?: VaultMaintenanceOperation;
   recoveryOperation?: "migrate" | "rekey" | "reset";
+  sourceSessionId?: string;
 };
 export type VaultMaintenancePayload = {
   operation: VaultMaintenanceOperation;

@@ -21,6 +21,7 @@ type AppMenuProps = {
   onGroupedViewChange: (grouped: boolean) => void;
   onSelectEntry: (id: string) => Promise<void>;
   onCopy: (value: string, label: string) => Promise<void>;
+  onMaintenance: () => void;
 };
 
 export function AppMenu(props: AppMenuProps) {
@@ -96,7 +97,8 @@ export function AppMenu(props: AppMenuProps) {
             ])}
             {group("tools", "ツール", [
               { label: "セキュリティ監査", disabled: toolsDisabled, action: () => openTool("audit") },
-              { label: "バックアップ / 復元", disabled: toolsDisabled, action: () => openTool("backup") }
+              { label: "バックアップ / 復元", disabled: toolsDisabled, action: () => openTool("backup") },
+              { label: "保管庫の管理", disabled: toolsDisabled, action: props.onMaintenance }
             ])}
             {group("help", "ヘルプ", [{ label: "アプリ情報 / 更新", action: openInfo }])}
           </div>

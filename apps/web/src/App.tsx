@@ -9,8 +9,10 @@ import { LockScreen } from "./pages/LockScreen";
 import { VaultDashboard } from "./pages/VaultDashboard";
 import { AppMenu } from "./components/AppMenu";
 import { VaultSessionChangedError } from "./lib/vault-client-session";
+import { VaultMaintenance } from "./components/VaultMaintenance";
 
 export function App() {
+  const [maintenanceOpened, setMaintenanceOpened] = useState(false);
   const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null);
   const [entries, setEntries] = useState<PasswordEntrySummary[]>([]);
   const [selectedEntry, setSelectedEntry] = useState<PasswordEntry | null>(null);
@@ -28,6 +30,8 @@ export function App() {
   const [isEditingEntry, setIsEditingEntry] = useState(false);
   const [isGroupedView, setIsGroupedView] = useState(false);
   const statusRef = useRef<VaultStatus | null>(null);
+  const maintenanceRequired = vaultStatus?.maintenance?.state !== undefined && vaultStatus.maintenance.state !== "ready";
+  useEffect(() => { if (maintenanceRequired) setMaintenanceOpened(true); }, [maintenanceRequired]);
   const viewEpoch = useRef(0);
   const submission = useRef(0);
 
@@ -243,6 +247,7 @@ export function App() {
     onGroupedViewChange={setIsGroupedView}
     onSelectEntry={handleSelectEntry}
     onCopy={handleCopyToClipboard}
+    onMaintenance={() => setMaintenanceOpened(true)}
   />;
 
   if (vaultStatus === null) {
@@ -260,7 +265,7 @@ export function App() {
   return (
     <main className="app-shell">
       {menu}
-      {vaultStatus.isUnlocked ? (
+      {maintenanceRequired ? <div className="cipher-auth-shell"><p role="status">保管庫の切り替え状態を確認しています。</p></div> : vaultStatus.isUnlocked ? (
         <VaultDashboard key={`vault-${vaultStatus.sessionId}`}
           hasUnsavedChanges={hasUnsavedChanges}
           isFormOpen={isFormOpen}
@@ -294,12 +299,14 @@ export function App() {
         <LockScreen
           onDirtyChange={setHasUnsavedChanges}
           isConfigured={vaultStatus.isConfigured}
+          allowReset={vaultStatus.maintenance?.format !== "v2"}
           isSubmitting={isSubmitting}
           errorMessage={errorMessage}
           onSubmit={handleVaultSubmit}
           onReset={handleResetVault}
         />
       )}
+      <VaultMaintenance status={vaultStatus} opened={maintenanceOpened || maintenanceRequired} onClose={() => setMaintenanceOpened(false)} />
     </main>
   );
 }

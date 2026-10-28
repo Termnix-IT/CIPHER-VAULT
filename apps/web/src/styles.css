@@ -57,6 +57,20 @@
 .vault-tool-details { font-size: 12px; color: var(--text-dim); }
 .vault-tool-details summary { cursor: pointer; color: var(--text-primary); }
 .vault-tool-message { color: var(--accent-green); }
+.vault-maintenance-dialog { width: min(830px, calc(100vw - 32px)); }
+.maintenance-options { display: flex; flex-wrap: wrap; gap: 8px; margin: 22px 0; }
+.maintenance-options button[aria-pressed="true"] { border-color: var(--accent-cyan); color: var(--accent-cyan); background: var(--bg-void); }
+.maintenance-content { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
+.maintenance-summary { margin: 14px 0 18px; padding: 12px 16px; border-left: 2px solid var(--accent-cyan); background: var(--bg-void); }
+.maintenance-summary p { color: var(--text-dim); font-size: 13px; }
+.maintenance-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0 22px; }
+.maintenance-fields .vault-tool-field { margin-top: 12px; }
+.maintenance-wide { grid-column: 1 / -1; }
+.maintenance-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border); }
+.maintenance-acknowledgement { display: flex; align-items: flex-start; gap: 10px; margin: 18px 0; }
+.maintenance-acknowledgement input { margin-top: 6px; flex-shrink: 0; }
+.maintenance-progress { padding: 18px 0; }
+@media (max-width: 620px) { .maintenance-fields { grid-template-columns: 1fr; } .maintenance-options { align-items: stretch; flex-direction: column; } }
 .audit-score { padding: 24px 0 18px; display: grid; border-bottom: 1px solid var(--border); }
 .audit-score > span { font-size: 13px; color: var(--text-dim); }
 .audit-score > strong { font-family: var(--font-mono); color: var(--accent-cyan); font-size: 52px; line-height: 1.2; }

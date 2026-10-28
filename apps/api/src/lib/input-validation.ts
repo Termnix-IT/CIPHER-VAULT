@@ -4,6 +4,7 @@ import { HttpError } from "./errors.js";
 // Write limits do not apply to records already stored in a vault or v1 backup.
 export const INPUT_LIMITS = Object.freeze({
   requestBytes: 1024 * 1024, restoreRequestBytes: 18 * 1024 * 1024,
+  maintenanceRequestBytes: 4 * 1024 * 1024,
   masterPasswordBytes: 1024 * 1024, clipboardBytes: 1024 * 1024, idBytes: 128,
   serviceNameBytes: 1024, loginIdBytes: 4096, passwordBytes: 64 * 1024,
   notesBytes: 256 * 1024, urlBytes: 8192, groupBytes: 1024,

@@ -45,6 +45,12 @@ export function runVaultMaintenance(payload: VaultMaintenancePayload) {
     { method: "POST", body: JSON.stringify(payload), signal: AbortSignal.timeout(315000) }, id), readStatus);
 }
 
+export async function cancelVaultMaintenance(sourceSessionId: string) {
+  const state = await fetchVaultStatus();
+  if (state.sessionId !== sourceSessionId && state.maintenance?.sourceSessionId !== sourceSessionId) return { state, requested: false };
+  return { state: await session.change(() => getDesktopApi()?.lockVault(state.sessionId) ?? request<VaultStatus>("/vault/lock", { method: "POST" }, state.sessionId)), requested: true };
+}
+
 export function observeVaultStatus(listener: (state: VaultStatus) => void) {
   let alive = true;
   let reading = false;

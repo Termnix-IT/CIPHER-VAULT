@@ -45,6 +45,8 @@ jobs:
         run: npm run test:desktop-session
       - name: Migrated v2 desktop integration
         run: npm run test:desktop-v2
+      - name: Interrupted vault recovery integration
+        run: npm run test:desktop-maintenance
       - name: Vite desktop integration and HMR
         run: npm run test:desktop-dev
       - name: Production HTTP policy integration

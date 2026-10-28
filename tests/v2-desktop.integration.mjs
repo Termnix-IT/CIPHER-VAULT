@@ -2,7 +2,8 @@
 import { app, dialog, powerMonitor } from "electron";
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync } from "node:fs";
-import { createHash } from "node:crypto";
+import crypto, { createHash } from "node:crypto";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -79,6 +80,64 @@ async function run() {
     await waitFor("!!document.querySelector('.entry-row')&&!document.querySelector('.sidebar-lock').disabled");
     assert.equal((await ipc("fetchEntries")).items.length, summaries.length);
     console.log("PASS actual maintenance IPC rekeys, preserves the source, reopens locked and unlocks with the new master");
+    async function openMaintenance() {
+      await evaluate("[...document.querySelectorAll('.app-menu-trigger')].find(b=>b.textContent==='ツール').click()");
+      await waitFor("[...document.querySelectorAll('.app-menu-item')].some(b=>b.textContent==='保管庫の管理'&&!b.disabled)");
+      await evaluate("[...document.querySelectorAll('.app-menu-item')].find(b=>b.textContent==='保管庫の管理').click()");
+      try { await waitFor("!!document.querySelector('.vault-maintenance-dialog[open] form')"); }
+      catch(error) {
+        console.error("Management view diagnostics", await ipc("fetchVaultStatus"), await evaluate("(()=>{const d=document.querySelector('.vault-maintenance-dialog');return {dialogOpen:d?.open,formCount:d?.querySelectorAll('form').length,dashboard:!!document.querySelector('.cipher-dashboard'),activeElement:document.activeElement?.tagName}})()"));
+        throw error;
+      }
+    }
+    async function fillMaintenance(master, next) {
+      for (const [index,value] of [master,next,next,compatibility.backupV1.passphrase,compatibility.backupV1.passphrase].entries())
+        await fill(`.maintenance-fields label:nth-child(${index+1}) input`,value);
+    }
+    async function finishMaintenance(password) {
+      await waitFor("document.querySelector('.vault-maintenance-dialog .vault-tool-message')?.textContent.includes('切り替えを完了')");
+      assert.equal((await ipc("fetchVaultStatus")).isUnlocked,false);
+      await click('.vault-maintenance-dialog .vault-tool-heading button');
+      await waitFor("!document.querySelector('.vault-maintenance-dialog[open]')");
+      assert.equal(await evaluate("document.querySelector('.reset-entry-link')===null"),true);
+      await fill('.cipher-form input[type=password]',password);await click('.cipher-form button[type=submit]');
+      await waitFor("!!document.querySelector('.cipher-dashboard')&&!document.querySelector('.sidebar-lock').disabled");
+    }
+    const uiPassword="synthetic-maintenance-ui-new-password",beforeUiPath=storage.getVaultStoragePath(),beforeUiHash=digest(beforeUiPath);
+    await openMaintenance();await fillMaintenance(replacementPassword,uiPassword);
+    await fill('.maintenance-fields label:nth-child(3) input','synthetic-wrong-confirmation');await click('.vault-maintenance-dialog button[type=submit]');
+    await waitFor("document.querySelector('.vault-maintenance-dialog .form-error')?.textContent.includes('一致しません')");assert.equal(vaultSession.getState().isUnlocked,true);
+    await fill('.maintenance-fields label:nth-child(3) input',uiPassword);await click('.vault-maintenance-dialog button[type=submit]');
+    await waitFor("!!document.querySelector('.maintenance-progress')");
+    assert.equal(await evaluate("[...document.querySelectorAll('.vault-maintenance-dialog input[type=password]')].every(i=>i.value==='')"),true);
+    await finishMaintenance(uiPassword);assert.equal(digest(beforeUiPath),beforeUiHash);assert.equal((await ipc('fetchEntries')).items.length,summaries.length);
+    console.log("PASS actual management form validates confirmation, clears credentials and rekeys through the renderer");
+    for (let repeat=0;repeat<3;repeat++) {
+      await openMaintenance();
+      if (repeat===1) { window.webContents.sendInputEvent({type:"keyDown",keyCode:"Escape"}); window.webContents.sendInputEvent({type:"keyUp",keyCode:"Escape"}); }
+      else await click('.vault-maintenance-dialog .vault-tool-heading button');
+      await waitFor("!document.querySelector('.vault-maintenance-dialog[open]')");
+    }
+    const emptyPassword="synthetic-empty-vault-ui-password",beforeResetPath=storage.getVaultStoragePath(),beforeResetHash=digest(beforeResetPath);
+    await openMaintenance();await click('.maintenance-options button:nth-child(2)');await fillMaintenance(uiPassword,emptyPassword);
+    await click('.vault-maintenance-dialog button[type=submit]');assert.equal(vaultSession.getState().isUnlocked,true);assert.equal(storage.getVaultStoragePath(),beforeResetPath);
+    await click('.maintenance-acknowledgement input');await click('.vault-maintenance-dialog button[type=submit]');await finishMaintenance(emptyPassword);
+    assert.equal((await ipc('fetchEntries')).items.length,0);assert.equal(digest(beforeResetPath),beforeResetHash);
+    console.log("PASS actual safe-reset form requires acknowledgement and preserves the previous vault");
+    await openMaintenance();await fillMaintenance(emptyPassword,'synthetic-cancelled-ui-password');
+    const scrypt=crypto.scrypt,beforeCancelPath=storage.getVaultStoragePath(),beforeCancelHash=digest(beforeCancelPath);let releaseKdf;
+    const kdfStarted=new Promise(resolve=>{crypto.scrypt=(p,s,n,o,done)=>scrypt(p,s,n,o,(error,key)=>{releaseKdf=()=>done(error,key);resolve()});syncBuiltinESMExports()});
+    try{
+      await click('.vault-maintenance-dialog button[type=submit]');await kdfStarted;await waitFor("!!document.querySelector('.maintenance-progress')");
+      await evaluate("[...document.querySelectorAll('.vault-maintenance-dialog button')].find(b=>b.textContent==='処理を取り消す').click()");
+      await waitFor("document.querySelector('.vault-maintenance-dialog .vault-tool-message')?.textContent.includes('取消を要求')");releaseKdf();releaseKdf=undefined;
+      await waitFor("!document.querySelector('.maintenance-progress')&&!!document.querySelector('.vault-maintenance-dialog .vault-tool-heading button')");
+      assert.equal(storage.getVaultStoragePath(),beforeCancelPath);assert.equal(digest(beforeCancelPath),beforeCancelHash);assert.equal(vaultSession.getState().isUnlocked,false);
+      await click('.vault-maintenance-dialog .vault-tool-heading button');
+    }finally{crypto.scrypt=scrypt;syncBuiltinESMExports();releaseKdf?.()}
+    await fill('.cipher-form input[type=password]',emptyPassword);await click('.cipher-form button[type=submit]');
+    await waitFor("!!document.querySelector('.cipher-dashboard')&&!document.querySelector('.sidebar-lock').disabled");
+    console.log("PASS actual cancel action invalidates the pending operation without switching its source");
     const store = storage.getV2Vault().store, closingKey = vaultSession.requireKey();
     app.once("will-quit", () => {
       assert.equal(store.closed, true); assert.deepEqual(closingKey, Buffer.alloc(32));

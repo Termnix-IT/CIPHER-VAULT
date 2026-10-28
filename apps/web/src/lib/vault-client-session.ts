@@ -31,7 +31,8 @@ export class VaultClientSession {
     if (this.state?.sessionId !== state.sessionId || this.state.isUnlocked !== state.isUnlocked ||
         this.state.isConfigured !== state.isConfigured || this.state.lockReason !== state.lockReason ||
         this.state.maintenance?.state !== state.maintenance?.state || this.state.maintenance?.format !== state.maintenance?.format ||
-        this.state.maintenance?.operation !== state.maintenance?.operation || this.state.maintenance?.recoveryOperation !== state.maintenance?.recoveryOperation) {
+        this.state.maintenance?.operation !== state.maintenance?.operation || this.state.maintenance?.recoveryOperation !== state.maintenance?.recoveryOperation ||
+        this.state.maintenance?.sourceSessionId !== state.maintenance?.sourceSessionId) {
       this.state = state;
       this.revision++;
       for (const listener of this.listeners) listener(state);
