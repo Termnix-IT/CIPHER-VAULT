@@ -98,13 +98,17 @@ public static class LocalEndpointProbe
             AclResult acl = InspectAcl(pipe.SafePipeHandle);
             if (!acl.ownerMatchesUser || !acl.onlyUserAllowed || acl.broadReadAllowAce) throw new InvalidOperationException("ACL check failed");
             Console.WriteLine("{\"ready\":true}"); Console.Out.Flush();
-            for (int index = 0; index < count; index++)
+            for (int index = 0; index < count;)
             {
                 using (CancellationTokenSource deadline = new CancellationTokenSource(10000))
                 {
+                    bool accepted = false;
                     try
                     {
                         pipe.WaitForConnectionAsync(deadline.Token).GetAwaiter().GetResult();
+                        accepted = true;
+                        // A stale disconnected accept may throw; it must not spend a connection slot.
+                        index++;
                         uint peer; if (!GetNamedPipeClientProcessId(pipe.SafePipeHandle, out peer)) throw new Win32Exception();
                         byte[] request = new byte[4]; int offset = 0;
                         while (offset < 4) { int read = pipe.ReadAsync(request, offset, 4 - offset, deadline.Token).GetAwaiter().GetResult(); if (read == 0) throw new EndOfStreamException(); offset += read; }
@@ -122,7 +126,9 @@ public static class LocalEndpointProbe
                     catch (Win32Exception error) when (error.NativeErrorCode == 109 || error.NativeErrorCode == 232 || error.NativeErrorCode == 233) { /* Peer closed before identity query. */ }
                     finally
                     {
-                        if (pipe.IsConnected)
+                        // EOF can mark the managed stream Broken (IsConnected=false).
+                        // Disconnect still resets that state before the next accept.
+                        if (accepted)
                         {
                             try { pipe.Disconnect(); }
                             catch (IOException) { /* The peer may already have disconnected. */ }
