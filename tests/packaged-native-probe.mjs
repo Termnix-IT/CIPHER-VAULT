@@ -13,6 +13,7 @@ function expression(electron, input, restore) {
     const authentication=req(base+'/apps/electron/dist/apps/electron/src/local-client-auth.js');
     const {createLocalClientStore,openLocalClientStore}=req(base+'/apps/electron/dist/apps/electron/src/local-client-store.js');
     const {LocalClientRegistry}=req(base+'/apps/electron/dist/apps/electron/src/local-client-registry.js');
+    const {LocalPairingCoordinator,encodeLocalPairingRequest}=req(base+'/apps/electron/dist/apps/electron/src/local-pairing.js');
     const {generateLocalIdentity}=req(base+'/apps/electron/dist/apps/electron/src/local-identity.js');
     const {electronDeviceKeyProtector,IdentityStorageError}=req(base+'/apps/electron/dist/apps/electron/src/device-key-protector.js');
     const {ProtectedLocalIdentityStore,localIdentityFile}=req(base+'/apps/electron/dist/apps/electron/src/protected-local-identity.js');
@@ -21,7 +22,7 @@ function expression(electron, input, restore) {
     const executable=transport.nativeTransportExecutable({packaged:e.app.isPackaged,resourcesPath:process.resourcesPath,workspaceRoot:base});
     if(!e.app.isPackaged || executable!==input.executable)throw new Error('Packaged helper path mismatch');
     const session=new VaultSession(),keys=new ProtectedLocalIdentityStore(electronDeviceKeyProtector(e.app,e.safeStorage));
-    let listener,serverNative,clientNative,server,remote,registry,host,client,protectedKeys=true,references=input.references;
+    let listener,serverNative,clientNative,server,remote,registry,pairing,host,client,protectedKeys=true,references=input.references;
     try{
       session.unlock(Buffer.alloc(32,9));const sessionId=session.getState().sessionId,current=()=>session.requireUnlocked(sessionId);
       if(restore){
@@ -42,7 +43,9 @@ function expression(electron, input, restore) {
       }
       const store=restore?openLocalClientStore(input.registryPath,host.certificate):createLocalClientStore(input.registryPath,host.certificate);
       registry=new LocalClientRegistry(store,session);
-      const registration=restore?registry.list(sessionId).clients[0]:registry.enroll(sessionId,0,{displayName:'Synthetic packaged client',kind:'agent',certificate:client.certificate,expiresAt:Date.now()+60000});
+      pairing=new LocalPairingCoordinator(registry,session);
+      const review=restore?null:pairing.stage(sessionId,encodeLocalPairingRequest({displayName:'Synthetic packaged client',kind:'agent',certificate:client.certificate}));
+      const registration=restore?registry.list(sessionId).clients[0]:pairing.approve(sessionId,{pendingId:review.pendingId,expectedRevision:review.revision,fingerprint256:review.fingerprint256,confirmation:'MATCHED_FINGERPRINT'});
       if(!registration||registration.revokedAt!==null)throw new Error('Missing active registration');
       listener=await transport.listenNativeTransport({executable,endpoint:input.endpoint});
       [serverNative,clientNative]=await Promise.all([listener.accepted,transport.connectNativeTransport({executable,endpoint:input.endpoint})]);
@@ -52,11 +55,11 @@ function expression(electron, input, restore) {
         server.socket.on('error',reject);server.socket.on('data',chunk=>{parts.push(chunk);length+=chunk.length;if(length>=expected.length)resolve(Buffer.concat(parts).equals(expected));});});
       remote.socket.write(expected);if(!await received)throw new Error('Packaged TLS payload mismatch');server.assertCurrent();
       const verified=server.peerProcessId===clientNative.processId&&remote.peerProcessId===serverNative.processId&&server.clientId===registration.clientId&&server.socket.getProtocol()==='TLSv1.3';
-      if(restore||!protectedKeys)registry.revoke(registry.list(sessionId).revision,registration.clientId);else session.lock();
+      if(restore||!protectedKeys)pairing.revoke(sessionId,registry.list(sessionId).revision,registration.clientId);else session.lock();
       await Promise.all([serverNative.closed,clientNative.closed]);
       return {verified,closed:server.socket.destroyed&&remote.socket.destroyed,protectedKeys,references};
     }finally{
-      registry?.close();session.lock();await remote?.close();await server?.close();await clientNative?.close();await serverNative?.close();await listener?.close();host?.dispose();client?.dispose();
+      pairing?.close();registry?.close();session.lock();await remote?.close();await server?.close();await clientNative?.close();await serverNative?.close();await listener?.close();host?.dispose();client?.dispose();
     }
   })()`;
 }

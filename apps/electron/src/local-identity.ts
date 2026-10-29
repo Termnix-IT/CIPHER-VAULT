@@ -34,17 +34,29 @@ function material(publicPem: Buffer, privatePem: Buffer, role: LocalIdentityRole
   if (!privatePem.subarray(0, begin.length).equals(begin) || !privatePem.subarray(-end.length).equals(end) ||
       privatePem.subarray(begin.length, -end.length).some(value => !(value >= 65 && value <= 90) && !(value >= 97 && value <= 122) &&
         !(value >= 48 && value <= 57) && ![43, 47, 61, 10].includes(value))) throw new LocalIdentityError();
-  const parsed = parseLocalPublicCertificate(publicPem), certificate = parsed.leaf, issuer = parsed.issuer;
+  const parsed = localIdentityCertificate(publicPem, role), certificate = parsed.leaf;
   const key = createPrivateKey(privatePem), now = Date.now(), from = Date.parse(certificate.validFrom), until = Date.parse(certificate.validTo);
-  if (key.asymmetricKeyType !== "ec" || key.asymmetricKeyDetails?.namedCurve !== "prime256v1" || !certificate.checkPrivateKey(key) || certificate.ca ||
-      !issuer || !/^CN=cipher-vault-issuer-[0-9a-f-]{36}$/.test(issuer.subject) || issuer.publicKey.asymmetricKeyDetails?.namedCurve !== "prime256v1" ||
-      issuer.keyUsage?.join(",") !== (role === "host" ? "1.3.6.1.5.5.7.3.1" : "1.3.6.1.5.5.7.3.2") || !Number.isFinite(from) || !Number.isFinite(until) ||
-      from > now || (fresh && from < now - 5 * 60000) || until <= now || until - from > ((role === "host" ? 365 : 90) * 86400000 + 60000) ||
-      certificate.keyUsage?.join(",") !== (role === "host" ? "1.3.6.1.5.5.7.3.1" : "1.3.6.1.5.5.7.3.2") ||
-      (role === "host" ? certificate.subject !== "CN=cipher-vault.local" || certificate.subjectAltName !== "DNS:cipher-vault.local" :
-        certificate.subject !== "CN=cipher-vault-client" || certificate.subjectAltName !== undefined)) throw new LocalIdentityError();
+  if (key.asymmetricKeyType !== "ec" || key.asymmetricKeyDetails?.namedCurve !== "prime256v1" || !certificate.checkPrivateKey(key) ||
+      (fresh && from < now - 5 * 60000)) throw new LocalIdentityError();
   const privateKey = Buffer.from(privatePem);
   return Object.freeze({ certificate: parsed.certificate, privateKey, role, expiresAt: until, dispose() { privateKey.fill(0); } });
+}
+
+// Public-only validation shared by issuance, restoration and trusted pairing review.
+export function localIdentityCertificate(input: Buffer, role: LocalIdentityRole, now = Date.now()) {
+  try {
+    if (!["host", "client"].includes(role) || !Buffer.isBuffer(input) || input.length > 4096 || !Number.isSafeInteger(now) || now <= 0) throw new LocalIdentityError();
+    const parsed = parseLocalPublicCertificate(input), { leaf: certificate, issuer, from, until } = parsed;
+    const purpose = role === "host" ? "1.3.6.1.5.5.7.3.1" : "1.3.6.1.5.5.7.3.2";
+    if (!parsed.certificate.equals(input) || certificate.ca || certificate.publicKey.asymmetricKeyType !== "ec" ||
+        certificate.publicKey.asymmetricKeyDetails?.namedCurve !== "prime256v1" || !issuer ||
+        !/^CN=cipher-vault-issuer-[0-9a-f-]{36}$/.test(issuer.subject) || issuer.publicKey.asymmetricKeyDetails?.namedCurve !== "prime256v1" ||
+        issuer.keyUsage?.join(",") !== purpose || certificate.keyUsage?.join(",") !== purpose || from > now || until <= now ||
+        until - from > ((role === "host" ? 365 : 90) * 86400000 + 60000) ||
+        (role === "host" ? certificate.subject !== "CN=cipher-vault.local" || certificate.subjectAltName !== "DNS:cipher-vault.local" :
+          certificate.subject !== "CN=cipher-vault-client" || certificate.subjectAltName !== undefined)) throw new LocalIdentityError();
+    return parsed;
+  } catch { throw new LocalIdentityError(); }
 }
 
 // Validates an already issued credential without requiring it to have been issued in the last five minutes.
