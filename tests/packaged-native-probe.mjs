@@ -1,0 +1,46 @@
+import assert from "node:assert/strict";
+import { createLocalAuthFixture } from "./local-auth-fixture.mjs";
+
+// Runs through the copied application's real modules and resource path. All credentials are synthetic.
+export async function probePackagedNative(evaluate, electron, executable) {
+  const fixture = createLocalAuthFixture(executable);
+  try {
+    const host = fixture.identity("packaged-host"), client = fixture.identity("packaged-client");
+    const input = { endpoint: fixture.options.endpoint, executable,
+      host: { certificate: host.certificate.toString("base64"), privateKey: host.privateKey.toString("base64") },
+      client: { certificate: client.certificate.toString("base64"), privateKey: client.privateKey.toString("base64") } };
+    const result = await evaluate(`(async()=>{
+      const e=${electron},input=${JSON.stringify(input)},base=e.app.getAppPath();
+      const req=process.getBuiltinModule('module').createRequire(base+'/package.json');
+      const transport=req(base+'/apps/electron/dist/apps/electron/src/native-transport.js');
+      const authentication=req(base+'/apps/electron/dist/apps/electron/src/local-client-auth.js');
+      const executable=transport.nativeTransportExecutable({packaged:e.app.isPackaged,resourcesPath:process.resourcesPath,workspaceRoot:base});
+      if(!e.app.isPackaged || executable!==input.executable)throw new Error('Packaged helper path mismatch');
+      const identity=value=>({certificate:Buffer.from(value.certificate,'base64'),privateKey:Buffer.from(value.privateKey,'base64')});
+      const host=identity(input.host),client=identity(input.client),cancel=new AbortController();
+      let listener,serverNative,clientNative,server,remote;
+      try{
+        listener=await transport.listenNativeTransport({executable,endpoint:input.endpoint});
+        [serverNative,clientNative]=await Promise.all([listener.accepted,transport.connectNativeTransport({executable,endpoint:input.endpoint})]);
+        [server,remote]=await Promise.all([
+          authentication.authenticateLocalClient(serverNative,host,[{clientId:'packaged-client',certificate:client.certificate}],cancel.signal),
+          authentication.authenticateLocalHost(clientNative,client,host.certificate)
+        ]);
+        const expected=Buffer.from('synthetic-packaged-native-channel');
+        const received=new Promise((resolve,reject)=>{
+          const parts=[];let length=0;
+          server.socket.on('error',reject);server.socket.on('data',chunk=>{parts.push(chunk);length+=chunk.length;if(length>=expected.length)resolve(Buffer.concat(parts).equals(expected));});
+        });
+        remote.socket.write(expected);
+        if(!await received)throw new Error('Packaged TLS payload mismatch');
+        const verified=server.peerProcessId===clientNative.processId && remote.peerProcessId===serverNative.processId && server.clientId==='packaged-client' && server.socket.getProtocol()==='TLSv1.3';
+        cancel.abort();await Promise.all([serverNative.closed,clientNative.closed]);
+        return {verified,closed:server.socket.destroyed&&remote.socket.destroyed};
+      }finally{
+        cancel.abort();await remote?.close();await server?.close();await clientNative?.close();await serverNative?.close();await listener?.close();
+        host.privateKey.fill(0);client.privateKey.fill(0);
+      }
+    })()`);
+    assert.deepEqual(result, { verified: true, closed: true });
+  } finally { fixture.dispose(); }
+}

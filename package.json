@@ -33,9 +33,9 @@
     "build:electron": "npm run build:shared && npm --workspace apps/electron run build",
     "build": "npm run build:web && npm run build:api",
     "build:desktop": "npm run build && npm run build:electron",
-    "package:desktop": "npm run build:desktop && electron-builder --win nsis portable --publish never",
-    "package:desktop:linux": "node scripts/require-native-build.mjs linux && npm run build:desktop && electron-builder --linux --publish never --config.directories.output=dist-desktop/linux",
-    "package:desktop:mac": "node scripts/require-native-build.mjs mac && npm run build:desktop && electron-builder --mac --publish never --config.directories.output=dist-desktop/macos",
+    "package:desktop": "npm run build:desktop && npm run build:native-transport && electron-builder --win nsis portable --publish never",
+    "package:desktop:linux": "node scripts/require-native-build.mjs linux && npm run build:desktop && npm run build:native-transport && electron-builder --linux --publish never --config.directories.output=dist-desktop/linux",
+    "package:desktop:mac": "node scripts/require-native-build.mjs mac && npm run build:desktop && npm run build:native-transport && electron-builder --mac --publish never --config.directories.output=dist-desktop/macos",
     "test:desktop-package": "node scripts/test-packaged-desktop.mjs",
     "test:desktop-artifacts": "node scripts/test-desktop-artifacts.mjs",
     "test:packaging-contract": "node --test tests/desktop-packaging.test.mjs",
@@ -84,6 +84,7 @@
     "artifactName": "CIPHER-VAULT-${version}-${arch}.${ext}",
     "win": {
       "signAndEditExecutable": true,
+      "extraResources": [{ "from": "dist-desktop/native-transport/win32-${arch}", "to": "native-transport", "filter": ["cipher-vault-transport.exe", "native-transport.json", "LICENSE.TXT", "THIRD-PARTY-NOTICES.TXT"] }],
       "target": [
         "nsis",
         "portable"
@@ -103,6 +104,7 @@
       "artifactName": "CIPHER-VAULT-${version}-${arch}-portable.${ext}"
     },
     "linux": {
+      "extraResources": [{ "from": "dist-desktop/native-transport/linux-${arch}", "to": "native-transport", "filter": ["cipher-vault-transport", "native-transport.json", "LICENSE.TXT", "THIRD-PARTY-NOTICES.TXT"] }],
       "target": ["AppImage", "tar.gz"],
       "icon": "build/icon.png",
       "executableName": "cipher-vault",
@@ -116,6 +118,8 @@
       "appimage": "1.0.3"
     },
     "mac": {
+      "extraResources": [{ "from": "dist-desktop/native-transport/darwin-${arch}", "to": "native-transport", "filter": ["cipher-vault-transport", "native-transport.json", "LICENSE.TXT", "THIRD-PARTY-NOTICES.TXT"] }],
+      "binaries": ["Contents/Resources/native-transport/cipher-vault-transport"],
       "target": ["zip", "dmg"],
       "icon": "build/icon.png",
       "category": "public.app-category.utilities",

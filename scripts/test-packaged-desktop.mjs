@@ -7,6 +7,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { inspectDesktopPackage } from "./verify-desktop-package.mjs";
 import { connectInspector } from "../tests/inspector-client.mjs";
+import { probePackagedNative } from "../tests/packaged-native-probe.mjs";
 
 const appDir = process.argv[2] === "--appdir";
 assert.ok(appDir ? process.platform === "linux" && process.argv.length === 4 : process.argv.length === 2 || process.argv.length === 3, "Expected an optional unpacked application directory, or --appdir <directory> on Linux");
@@ -112,8 +113,10 @@ async function stop() {
 try {
   mkdirSync(profile);
   cpSync(source.root, application, { recursive: true, verbatimSymlinks: true });
-  inspectDesktopPackage(application); assert.ok(existsSync(executable));
+  const copied = inspectDesktopPackage(application); assert.ok(existsSync(executable));
   await launch(); assert.equal((await ipc("fetchVaultStatus")).isConfigured, false);
+  await probePackagedNative(evaluate, electron, copied.nativeHelper);
+  console.log("PASS packaged native helper, real peer identity, mutual TLS and revocation outside checkout");
   await unlock(master);
   await click('.sidebar-add'); await waitForRenderer("!!document.querySelector('.editor-fields')");
   await fill('.editor-fields .editor-field:nth-child(1) input', title);

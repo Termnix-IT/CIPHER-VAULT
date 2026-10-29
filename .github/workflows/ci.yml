@@ -109,7 +109,7 @@ jobs:
       matrix:
         include:
           - os: windows-2025
-            package: npm run build:desktop && node node_modules/electron-builder/cli.js --win --dir --publish never
+            package: npm run build:desktop && npm run build:native-transport && node node_modules/electron-builder/cli.js --win --dir --publish never
           # Keep normal Chromium sandboxing; newer Ubuntu userns policy needs a separate acceptance test.
           # Migrate this evaluation job before the runner's April 2027 retirement.
           - os: ubuntu-22.04
@@ -134,11 +134,14 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3 make libnspr4 libnss3 libasound2 xvfb xauth
+          sudo apt-get install -y --no-install-recommends python3 make libnspr4 libnss3 libasound2 xvfb xauth clang zlib1g-dev
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
       - name: Package inclusion and native target contracts
         run: npm run test:packaging-contract
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: native/local-transport/global.json
       - name: Build native evaluation packages without publishing
         run: ${{ matrix.package }}
       - name: Packaged sandbox, migration, restart and key cleanup (Linux)
