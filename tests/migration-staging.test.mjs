@@ -18,7 +18,7 @@ import { vaultSession } from "../apps/api/dist/apps/api/src/services/vault-sessi
 const require = createRequire(import.meta.url);
 const fixture = JSON.parse(fs.readFileSync(new URL("./fixtures/crypto-compatibility.json", import.meta.url), "utf8"));
 const legacy = fixture.legacy, schema = fs.readFileSync(new URL("../apps/api/src/db/schema.sql", import.meta.url), "utf8");
-const root = fs.mkdtempSync(path.join(tmpdir(), "cipher-vault-staging-")); let sequence = 0;
+const root = fs.mkdtempSync(path.join(fs.realpathSync(tmpdir()), "cipher-vault-staging-")); let sequence = 0;
 const credentials = () => ({ masterPassword: legacy.password, newMasterPassword: "synthetic-new-master-🔐-password",
   confirmNewMasterPassword: "synthetic-new-master-🔐-password", backupPassphrase: fixture.backupV1.passphrase });
 const hash = file => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
@@ -64,7 +64,7 @@ function unchanged(f, before) {
 }
 afterEach(() => { mock.restoreAll(); syncBuiltinESMExports(); vaultSession.lock(); storage.closeDatabase(); });
 after(() => {
-  assert.equal(path.dirname(root), path.resolve(tmpdir())); assert.ok(path.basename(root).startsWith("cipher-vault-staging-"));
+  assert.equal(path.dirname(root), fs.realpathSync(tmpdir())); assert.ok(path.basename(root).startsWith("cipher-vault-staging-"));
   fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 });
 

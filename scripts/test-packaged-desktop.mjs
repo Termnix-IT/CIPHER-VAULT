@@ -16,7 +16,7 @@ const defaultDirectory = process.platform === "darwin" ? `dist-desktop/macos/mac
   process.platform === "linux" ? `dist-desktop/linux/linux${process.arch === "x64" ? "" : `-${process.arch}`}-unpacked` : "dist-desktop/win-unpacked";
 const source = inspectDesktopPackage(process.argv[appDir ? 3 : 2] ?? defaultDirectory);
 const temporary = mkdtempSync(path.join(realpathSync(tmpdir()), "cipher-vault-packaged-"));
-const application = path.join(temporary, process.platform === "darwin" ? `${source.productName}.app` : "application");
+const application = path.join(temporary, process.platform === "darwin" ? `${source.productName}.app` : "application~fixture");
 const profile = path.join(temporary, "profile 日本語");
 const executable = path.join(application, appDir ? "AppRun" : process.platform === "darwin" ? `Contents/MacOS/${source.productName}` : process.platform === "win32" ? `${source.productName}.exe` : "cipher-vault");
 const marker = "CIPHER_PACKAGE_SHUTDOWN_OK";

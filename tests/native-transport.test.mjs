@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { once } from "node:events";
+import { spawn } from "node:child_process";
 import { listenNativeTransport, connectNativeTransport, nativeTransportExecutable, LocalTransportError } from "../apps/electron/dist/apps/electron/src/native-transport.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -49,6 +50,45 @@ test("duplicate native listeners fail closed while the first listener remains av
     listener = await listenNativeTransport(context.options);
     await assert.rejects(listenNativeTransport(context.options), error => error instanceof LocalTransportError && error.code === "LOCAL_TRANSPORT_UNAVAILABLE");
   } finally { await listener?.close(); context.dispose(); }
+});
+
+if (process.platform === "win32") test("native client rejects an explicitly broad pipe ACL before sending protocol bytes", { timeout: 20000 }, async () => {
+  const context = fixture(), name = context.options.endpoint.slice("\\\\.\\pipe\\".length);
+  const script = `
+    $ErrorActionPreference = 'Stop'
+    $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+    $everyone = [System.Security.Principal.SecurityIdentifier]::new('S-1-1-0')
+    $acl = [System.IO.Pipes.PipeSecurity]::new()
+    $acl.SetOwner($user)
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($sid in @($user, $everyone)) {
+      $acl.AddAccessRule([System.IO.Pipes.PipeAccessRule]::new($sid, [System.IO.Pipes.PipeAccessRights]::FullControl, [System.Security.AccessControl.AccessControlType]::Allow))
+    }
+    $pipe = [System.IO.Pipes.NamedPipeServerStreamAcl]::Create('${name}', [System.IO.Pipes.PipeDirection]::InOut, 1, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous, 4096, 4096, $acl)
+    try {
+      [Console]::Out.WriteLine('READY')
+      $pipe.WaitForConnection()
+      if ($pipe.ReadByte() -ne -1) { throw 'Unexpected protocol byte' }
+      [Console]::Out.WriteLine('EOF_WITHOUT_PROTOCOL')
+    } finally { $pipe.Dispose() }
+  `;
+  const child = spawn("pwsh", ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+  let output = "", errors = "";
+  const closed = once(child, "close"); closed.catch(() => {});
+  const ready = new Promise((resolve, reject) => {
+    child.stdout.on("data", bytes => { output += bytes; if (output.includes("READY\n") || output.includes("READY\r\n")) resolve(); });
+    child.stderr.on("data", bytes => { errors += bytes; });
+    child.once("error", reject);
+    child.once("close", () => reject(new Error("Synthetic pipe fixture exited: " + errors.slice(-1000))));
+  });
+  const timer = setTimeout(() => child.kill(), 15000);
+  try {
+    await ready;
+    await assert.rejects(connectNativeTransport(context.options), LocalTransportError);
+    const [code] = await closed;
+    assert.equal(code, 0, errors.slice(-1000));
+    assert.ok(output.includes("EOF_WITHOUT_PROTOCOL"));
+  } finally { clearTimeout(timer); if (child.exitCode === null && child.signalCode === null) { child.kill(); await closed.catch(() => {}); } context.dispose(); }
 });
 
 test("aborting a listener closes its helper and never yields an accepted connection", { timeout: 15000 }, async () => {

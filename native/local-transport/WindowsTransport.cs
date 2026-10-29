@@ -75,8 +75,11 @@ internal static class WindowsTransport
         }
         else
         {
+            // CurrentUserOnly compares the token owner rather than User on .NET 10
+            // (dotnet/runtime#123903). CheckAcl below verifies the exact user SID,
+            // protected one-user DACL and owner before exchanging any peer bytes.
             using NamedPipeClientStream client = new(".", endpoint[@"\\.\pipe\".Length..], PipeDirection.InOut,
-                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly, TokenImpersonationLevel.Identification);
+                PipeOptions.Asynchronous, TokenImpersonationLevel.Identification);
             await client.ConnectAsync(handshake.Token); CheckAcl(client.SafePipeHandle);
             if (!GetNamedPipeServerProcessId(client.SafePipeHandle, out uint pid) || pid == 0 || pid > int.MaxValue) throw new Win32Exception();
             await Program.Negotiate(client, false, handshake.Token);

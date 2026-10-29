@@ -17,7 +17,7 @@ import * as entries from "../apps/api/dist/apps/api/src/services/entry-service.j
 import {vaultSession} from "../apps/api/dist/apps/api/src/services/vault-session.js";
 import {router} from "../apps/api/dist/apps/api/src/routes/router.js";
 
-const root=fs.mkdtempSync(path.join(tmpdir(),"cipher-vault-maintenance-")),base=path.join(root,"base"),newPassword="synthetic-maintenance-new-password";
+const root=fs.mkdtempSync(path.join(fs.realpathSync(tmpdir()),"cipher-vault-maintenance-")),base=path.join(root,"base"),newPassword="synthetic-maintenance-new-password";
 let context,sequence=0;
 before(async()=>{context=await createMigratedFixture(base)});
 const fixture=()=>{const dir=path.join(root,`case-${++sequence}`);fs.cpSync(base,dir,{recursive:true});return dir};
@@ -29,7 +29,7 @@ const run=value=>maintenance.runVaultMaintenance(value,vault.getVaultStatus().se
 const sorted=items=>[...items].sort((a,b)=>a.id.localeCompare(b.id));
 async function open(dir=fixture()){maintenance.openApplicationVault({dataDirectory:dir});await vault.unlockVault({masterPassword:v2Password});return dir}
 afterEach(async()=>{mock.restoreAll();syncBuiltinESMExports();maintenance.closeApplicationVault();await maintenance.waitForVaultMaintenance();storage.closeVaultStorage()});
-after(()=>{assert.equal(path.dirname(root),path.resolve(tmpdir()));assert.ok(path.basename(root).startsWith("cipher-vault-maintenance-"));fs.rmSync(root,{recursive:true,force:true,maxRetries:5,retryDelay:200})});
+after(()=>{assert.equal(path.dirname(root),fs.realpathSync(tmpdir()));assert.ok(path.basename(root).startsWith("cipher-vault-maintenance-"));fs.rmSync(root,{recursive:true,force:true,maxRetries:5,retryDelay:200})});
 
 test("normal rekey closes the source, reopens the verified target locked, and reports no secrets or paths",async()=>{
   const dir=await open(),before=hash(source(dir)),states=[],unsubscribe=vault.onVaultState(state=>states.push(state)),key=vaultSession.requireKey(),generation=vaultSession.requireUnlocked();
@@ -85,7 +85,8 @@ test("interrupted replacement survives actual server restart, permits only authe
   await assert.rejects(vault.unlockVault({masterPassword:v2Password}),{statusCode:503});await assert.rejects(Promise.resolve().then(()=>vault.resetVault({confirmation:"RESET_ALL_DATA"})),{statusCode:503});
   maintenance.closeApplicationVault();const before=hash(source(dir)),probe=createServer();await new Promise(resolve=>probe.listen(0,"127.0.0.1",resolve));
   const port=probe.address().port;await new Promise(resolve=>probe.close(resolve));
-  const child=spawn(process.execPath,["apps/api/dist/apps/api/src/server.js"],{env:{...process.env,PASSWORD_MANAGER_DATA_DIR:dir,PASSWORD_MANAGER_API_HOST:"127.0.0.1",PASSWORD_MANAGER_API_PORT:String(port)},stdio:["ignore","pipe","pipe"],windowsHide:true});
+  const web=path.join(dir,"web-shell"),shellContent="synthetic recovery shell";fs.mkdirSync(web);fs.writeFileSync(path.join(web,"index.html"),shellContent);
+  const child=spawn(process.execPath,["apps/api/dist/apps/api/src/server.js"],{env:{...process.env,PASSWORD_MANAGER_DATA_DIR:dir,PASSWORD_MANAGER_WEB_DIST:web,PASSWORD_MANAGER_API_HOST:"127.0.0.1",PASSWORD_MANAGER_API_PORT:String(port)},stdio:["ignore","pipe","pipe"],windowsHide:true});
   let output="";child.stdout.on("data",bytes=>{output+=bytes});child.stderr.on("data",bytes=>{output+=bytes});
   try{
     const base=`http://127.0.0.1:${port}`;let initial;
@@ -95,7 +96,7 @@ test("interrupted replacement survives actual server restart, permits only authe
       await delay(50);
     }
     assert.ok(initial,"recovery server readiness");assert.equal(initial.maintenance.state,"recovery-required");assert.equal(initial.isUnlocked,false);
-    const shell=await fetch(base+"/");assert.equal(shell.status,200);await shell.text();
+    const shell=await fetch(base+"/");assert.equal(shell.status,200);assert.equal(await shell.text(),shellContent);
     const token=(await(await fetch(base+"/vault/csrf")).json()).token;
     const headers={"Content-Type":"application/json","X-Cipher-Vault-CSRF":token,"X-Cipher-Vault-Session":initial.sessionId};
     let response=await fetch(base+"/vault/unlock",{method:"POST",headers,body:JSON.stringify({masterPassword:v2Password})});assert.equal(response.status,503);await response.json();

@@ -22,7 +22,7 @@ import { vaultSession } from "../apps/api/dist/apps/api/src/services/vault-sessi
 import { router } from "../apps/api/dist/apps/api/src/routes/router.js";
 import { encodeBackupV1 } from "../apps/api/dist/apps/api/src/crypto/backup-v1.js";
 
-const root = fs.mkdtempSync(path.join(tmpdir(), "cipher-vault-v2-runtime-")), base = path.join(root, "base");
+const root = fs.mkdtempSync(path.join(fs.realpathSync(tmpdir()), "cipher-vault-v2-runtime-")), base = path.join(root, "base");
 const legacy = compatibility.legacy, passphrase = compatibility.backupV1.passphrase;
 let context, sequence = 0;
 const fixture = () => { const directory = path.join(root, `case-${++sequence}`); fs.cpSync(base, directory, { recursive: true }); return directory; };
@@ -38,7 +38,7 @@ function clear() { for (const entry of entries.listEntries().items) entries.dele
 before(async () => { context = await createMigratedFixture(base); });
 afterEach(() => { mock.restoreAll(); syncBuiltinESMExports(); storage.closeVaultStorage(); });
 after(() => {
-  assert.equal(path.dirname(root), path.resolve(tmpdir())); assert.ok(path.basename(root).startsWith("cipher-vault-v2-runtime-"));
+  assert.equal(path.dirname(root), fs.realpathSync(tmpdir())); assert.ok(path.basename(root).startsWith("cipher-vault-v2-runtime-"));
   fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 });
 

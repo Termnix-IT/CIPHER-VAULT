@@ -18,7 +18,7 @@ import * as vault from "../apps/api/dist/apps/api/src/services/vault-service.js"
 import * as entries from "../apps/api/dist/apps/api/src/services/entry-service.js";
 import { verifyBackupRecovery } from "../apps/api/dist/apps/api/src/migration/backup-recovery.js";
 
-const require = createRequire(import.meta.url), root = fs.mkdtempSync(path.join(tmpdir(), "cipher-vault-replacement-")), base = path.join(root, "base");
+const require = createRequire(import.meta.url), root = fs.mkdtempSync(path.join(fs.realpathSync(tmpdir()), "cipher-vault-replacement-")), base = path.join(root, "base");
 const passphrase = compatibility.backupV1.passphrase, newPassword = "synthetic-replacement-new-master-password", sessions = [];
 let context, sourceKey, sequence = 0;
 const input = (mode = "rekey") => ({ mode, masterPassword: v2Password, newMasterPassword: newPassword,
@@ -64,7 +64,7 @@ before(async () => {
 });
 afterEach(() => { restoreMocks(); storage.closeVaultStorage(); sessions.splice(0).forEach(session => session.lock()); });
 after(() => {
-  sourceKey?.fill(0); assert.equal(path.dirname(root), path.resolve(tmpdir())); assert.ok(path.basename(root).startsWith("cipher-vault-replacement-"));
+  sourceKey?.fill(0); assert.equal(path.dirname(root), fs.realpathSync(tmpdir())); assert.ok(path.basename(root).startsWith("cipher-vault-replacement-"));
   fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 });
 

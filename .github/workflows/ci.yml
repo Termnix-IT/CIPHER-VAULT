@@ -147,6 +147,9 @@ jobs:
         with:
           global-json-file: native/local-transport/global.json
       - name: Build native evaluation packages without publishing
+        env:
+          # Only ad-hoc signing is configured; this job has no signing certificate secrets.
+          CSC_FOR_PULL_REQUEST: ${{ runner.os == 'macOS' && 'true' || 'false' }}
         run: ${{ matrix.package }}
       - name: Packaged sandbox, migration, restart and key cleanup (Linux)
         if: runner.os == 'Linux'

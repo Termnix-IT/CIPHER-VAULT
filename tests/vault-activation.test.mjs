@@ -15,7 +15,7 @@ import { unwrapRootKey } from "../apps/api/dist/apps/api/src/crypto/v2-codec.js"
 
 const require = createRequire(import.meta.url), fixture = JSON.parse(fs.readFileSync(new URL("./fixtures/crypto-compatibility.json", import.meta.url), "utf8"));
 const legacy = fixture.legacy, schema = fs.readFileSync(new URL("../apps/api/src/db/schema.sql", import.meta.url), "utf8");
-const root = fs.mkdtempSync(path.join(tmpdir(), "cipher-vault-activation-")), base = path.join(root, "base");
+const root = fs.mkdtempSync(path.join(fs.realpathSync(tmpdir()), "cipher-vault-activation-")), base = path.join(root, "base");
 const input = () => ({ masterPassword: legacy.password, newMasterPassword: "synthetic-activation-new-password", backupPassphrase: fixture.backupV1.passphrase });
 let context, sequence = 0; const sessions = [];
 const hash = file => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
@@ -55,7 +55,7 @@ before(async () => {
 });
 afterEach(() => { mock.restoreAll(); syncBuiltinESMExports(); sessions.splice(0).forEach(session => session.lock()); });
 after(() => {
-  assert.equal(path.dirname(root), path.resolve(tmpdir())); assert.ok(path.basename(root).startsWith("cipher-vault-activation-"));
+  assert.equal(path.dirname(root), fs.realpathSync(tmpdir())); assert.ok(path.basename(root).startsWith("cipher-vault-activation-"));
   fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 });
 
