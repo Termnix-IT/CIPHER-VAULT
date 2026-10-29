@@ -23,6 +23,7 @@ internal static class Program
     }
     public static async Task<int> Main(string[] args)
     {
+        if (Path.GetFileNameWithoutExtension(Environment.ProcessPath) == "cipher-vault-native-host") return await NativeHostLauncher.Run(args);
         if (args.Length == 1 && args[0] == "--version") { await Control("version"); return 0; }
         if (args.Length != 2 || args[0] is not ("serve" or "connect" or "identity") ||
             (args[0] == "identity" && args[1] is not ("host" or "client"))) return 64;

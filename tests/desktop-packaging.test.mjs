@@ -29,6 +29,9 @@ test("package inspection detects missing shared runtime, packed native binaries 
     "apps/electron/dist/apps/electron/src/browser-message.js", "apps/electron/dist/apps/electron/src/browser-connection-info.js",
     "apps/electron/dist/apps/electron/src/browser-client.js", "apps/electron/dist/apps/electron/src/browser-client-store.js",
     "apps/electron/dist/apps/electron/src/local-public-files.js",
+    "apps/electron/dist/apps/electron/src/desktop-main.js", "apps/electron/dist/apps/electron/src/native-host-main.js",
+    "apps/electron/dist/apps/electron/src/browser-native-config.js", "node_modules/@password-manager/shared/dist/browser-integration.js",
+    "apps/electron/dist/apps/electron/src/browser-native-stdio.js",
     "apps/web/dist/fonts/NotoSansJP-Variable.ttf", "apps/web/dist/fonts/NotoSansJP-OFL.txt", native];
   async function fixture(name, { omit, extra, unpack = true, helper = {} } = {}) {
     const source = path.join(root, name, "source"), application = path.join(root, name, "application");
@@ -38,7 +41,7 @@ test("package inspection detects missing shared runtime, packed native binaries 
     }
     const resources = path.join(application, process.platform === "darwin" ? "Contents/Resources" : "resources"); mkdirSync(resources, { recursive: true });
     const helperDirectory = path.join(resources, "native-transport"); mkdirSync(helperDirectory);
-    for (const file of [process.platform === "win32" ? "cipher-vault-transport.exe" : "cipher-vault-transport", "LICENSE.TXT", "THIRD-PARTY-NOTICES.TXT"]) writeFileSync(path.join(helperDirectory, file), "synthetic native resource");
+    for (const file of [process.platform === "win32" ? "cipher-vault-transport.exe" : "cipher-vault-transport", process.platform === "win32" ? "cipher-vault-native-host.exe" : "cipher-vault-native-host", "LICENSE.TXT", "THIRD-PARTY-NOTICES.TXT"]) writeFileSync(path.join(helperDirectory, file), "synthetic native resource");
     writeFileSync(path.join(helperDirectory, "native-transport.json"), JSON.stringify({ protocol: 1, platform: process.platform, arch: process.arch, version: "0.0.0-fixture", runtimeVersion: "10.0.11", buildSha256: "0".repeat(64), ...helper }));
     await asar.createPackageWithOptions(source, path.join(resources, "app.asar"), unpack ? { unpack: "**/*.node" } : {});
     return application;

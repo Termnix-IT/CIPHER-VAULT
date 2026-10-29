@@ -36,5 +36,6 @@ const runtimeVersion = dependency.version.slice(1, dependency.version.indexOf(",
 const runtimePackage = path.join(env.NUGET_PACKAGES, dependency.name.toLowerCase(), runtimeVersion);
 for (const file of ["LICENSE.TXT", "THIRD-PARTY-NOTICES.TXT"]) copyFileSync(path.join(runtimePackage, file), path.join(output, file));
 const binary = process.platform === "win32" ? "cipher-vault-transport.exe" : "cipher-vault-transport";
+copyFileSync(path.join(output, binary), path.join(output, process.platform === "win32" ? "cipher-vault-native-host.exe" : "cipher-vault-native-host"));
 writeFileSync(path.join(output, "native-transport.json"), JSON.stringify({ protocol: 1, platform: process.platform, arch: process.arch, version, runtimeVersion,
   buildSha256: createHash("sha256").update(readFileSync(path.join(output, binary))).digest("hex") }) + "\n");

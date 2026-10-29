@@ -23,6 +23,9 @@ export function inspectDesktopPackage(directory, platform = process.platform, ar
     "apps/electron/dist/apps/electron/src/browser-message.js", "apps/electron/dist/apps/electron/src/browser-connection-info.js",
     "apps/electron/dist/apps/electron/src/browser-client.js", "apps/electron/dist/apps/electron/src/browser-client-store.js",
     "apps/electron/dist/apps/electron/src/local-public-files.js",
+    "apps/electron/dist/apps/electron/src/desktop-main.js", "apps/electron/dist/apps/electron/src/native-host-main.js",
+    "apps/electron/dist/apps/electron/src/browser-native-config.js", "node_modules/@password-manager/shared/dist/browser-integration.js",
+    "apps/electron/dist/apps/electron/src/browser-native-stdio.js",
     "apps/web/dist/fonts/NotoSansJP-Variable.ttf", "apps/web/dist/fonts/NotoSansJP-OFL.txt"];
   for (const file of required) assert.ok(files.includes(file), `Missing packaged runtime file: ${file}`);
   assert.ok(files.some(file => file.startsWith("apps/web/dist/fonts/") && file.endsWith(".ttf")), "Missing local fonts");
@@ -34,7 +37,7 @@ export function inspectDesktopPackage(directory, platform = process.platform, ar
   assert.equal(metadata.productName, "CIPHER VAULT", "Unexpected packaged product identity");
   const helperDirectory = path.join(resources, "native-transport"), binary = platform === "win32" ? "cipher-vault-transport.exe" : "cipher-vault-transport";
   assert.ok(lstatSync(helperDirectory).isDirectory() && !lstatSync(helperDirectory).isSymbolicLink(), "Native transport directory must not be a link");
-  assert.deepEqual(readdirSync(helperDirectory).sort(), [binary, "native-transport.json", "LICENSE.TXT", "THIRD-PARTY-NOTICES.TXT"].sort(), "Unexpected native transport package contents");
+  assert.deepEqual(readdirSync(helperDirectory).sort(), [binary, platform === "win32" ? "cipher-vault-native-host.exe" : "cipher-vault-native-host", "native-transport.json", "LICENSE.TXT", "THIRD-PARTY-NOTICES.TXT"].sort(), "Unexpected native transport package contents");
   for (const file of readdirSync(helperDirectory)) assert.ok(lstatSync(path.join(helperDirectory, file)).isFile(), "Native transport files must be regular files");
   const helper = JSON.parse(readFileSync(path.join(helperDirectory, "native-transport.json"), "utf8"));
   assert.deepEqual(Object.keys(helper).sort(), ["arch", "buildSha256", "platform", "protocol", "runtimeVersion", "version"]);
