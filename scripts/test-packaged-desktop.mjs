@@ -35,9 +35,15 @@ const renderer = expression => evaluate(`${electron}.BrowserWindow.getAllWindows
 async function waitFor(expression) {
   for (let attempt = 0; attempt < 200; attempt++) {
     if (child.exitCode !== null || child.signalCode !== null) throw new Error("Packaged app exited: " + diagnostics());
-    const failure = await evaluate("globalThis.__cipherPackageFailure ?? null");
-    if (failure) throw new Error("Packaged startup failed: " + String(failure).replaceAll(temporary, "<temporary>"));
-    if (await evaluate(expression)) return;
+    try {
+      const failure = await evaluate("globalThis.__cipherPackageFailure ?? null");
+      if (failure) throw new Error("Packaged startup failed: " + String(failure).replaceAll(temporary, "<temporary>"));
+      if (await evaluate(expression)) return;
+    } catch (error) {
+      // Only these read-only readiness polls may retry a startup context transition.
+      // Mutation/IPC/TLS probes still fail on their first error.
+      if (!(error instanceof Error) || !/^Inspector Runtime\.evaluate: (?:Cannot find context with specified id|Execution context was destroyed\.?)$/.test(error.message)) throw error;
+    }
     await delay(50);
   }
   throw new Error("Packaged condition timed out: " + expression + "\n" + diagnostics());

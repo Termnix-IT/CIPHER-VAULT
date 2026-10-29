@@ -1,0 +1,174 @@
+import Database from "better-sqlite3";
+import { randomUUID, X509Certificate } from "node:crypto";
+import { closeSync, lstatSync, openSync, realpathSync } from "node:fs";
+import path from "node:path";
+
+export const LOCAL_CLIENT_LIMITS = Object.freeze({ active: 16, retained: 256, certificateBytes: 16384 });
+type Code = "INVALID_INPUT" | "INVALID_STORE" | "UNAVAILABLE" | "CONFLICT" | "LIMIT" | "DENIED" | "CLOSED";
+export class LocalClientRegistryError extends Error {
+  constructor(readonly code: Code) { super("クライアント登録を利用できません"); this.name = "LocalClientRegistryError"; }
+}
+const fail = (code: Code): never => { throw new LocalClientRegistryError(code); };
+const applicationId = 0x43564c52;
+const tables = {
+  local_host: `CREATE TABLE local_host (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  fingerprint TEXT NOT NULL,
+  revision INTEGER NOT NULL CHECK (revision BETWEEN 0 AND 2147483647)
+) STRICT`,
+  local_clients: `CREATE TABLE local_clients (
+  client_id TEXT PRIMARY KEY NOT NULL,
+  display_name TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('agent', 'browser')),
+  certificate BLOB NOT NULL,
+  fingerprint TEXT NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  revoked_at INTEGER
+) STRICT`
+};
+export type LocalClientRegistration = Readonly<{
+  clientId: string; displayName: string; kind: "agent" | "browser"; fingerprint256: string;
+  createdAt: number; expiresAt: number; revokedAt: number | null;
+}>;
+export type ClientEnrollment = Readonly<{ displayName: string; kind: "agent" | "browser"; certificate: Buffer; expiresAt: number }>;
+type StoredClient = LocalClientRegistration & Readonly<{ certificate: Buffer }>;
+export type LocalClientSnapshot = Readonly<{ revision: number; clients: readonly StoredClient[] }>;
+export interface LocalClientStore {
+  readonly hostFingerprint: string;
+  read(): LocalClientSnapshot;
+  enroll(expectedRevision: number, input: ClientEnrollment, now: number): LocalClientRegistration;
+  revoke(expectedRevision: number, clientId: string | null, now: number): void;
+  close(): void;
+}
+function timestamp(value: unknown): value is number { return Number.isSafeInteger(value) && (value as number) > 0 && (value as number) <= 8640000000000000; }
+export function publicLocalCertificate(input: Buffer) {
+  try {
+    if (!Buffer.isBuffer(input) || input.length < 1 || input.length > LOCAL_CLIENT_LIMITS.certificateBytes) fail("INVALID_INPUT");
+    const certificate = new X509Certificate(input);
+    const from = Date.parse(certificate.validFrom), until = Date.parse(certificate.validTo);
+    if (!timestamp(from) || !timestamp(until) || from >= until) fail("INVALID_INPUT");
+    return { certificate: Buffer.from(certificate.toString()), der: Buffer.from(certificate.raw), fingerprint: certificate.fingerprint256, from, until };
+  } catch { return fail("INVALID_INPUT"); }
+}
+function enrollment(input: ClientEnrollment, now: number) {
+  if (!input || typeof input !== "object" || Object.keys(input).sort().join(",") !== "certificate,displayName,expiresAt,kind" ||
+      typeof input.displayName !== "string" || input.displayName.trim() !== input.displayName || input.displayName.length < 1 || input.displayName.length > 80 ||
+      /[\p{C}\p{Zl}\p{Zp}]/u.test(input.displayName) || !["agent", "browser"].includes(input.kind) || !timestamp(now) ||
+      !timestamp(input.expiresAt) || input.expiresAt <= now) fail("INVALID_INPUT");
+  const certificate = publicLocalCertificate(input.certificate);
+  if (now < certificate.from || now >= certificate.until || input.expiresAt > certificate.until) fail("INVALID_INPUT");
+  return certificate;
+}
+function location(input: string) {
+  if (typeof input !== "string" || !path.isAbsolute(input) || input.includes("\0") || path.resolve(input) !== input) fail("INVALID_INPUT");
+  if (realpathSync(path.dirname(input)) !== path.dirname(input)) fail("INVALID_INPUT");
+  return input;
+}
+function regularFile(file: string) {
+  const info = lstatSync(file);
+  if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || realpathSync(file) !== file) fail("INVALID_STORE");
+}
+function error(input: unknown): never { if (input instanceof LocalClientRegistryError) throw input; return fail("UNAVAILABLE"); }
+
+// Explicit paths only. No environment, vault schema changes, private keys or implicit creation on import/open.
+export function createLocalClientStore(file: string, hostCertificate: Buffer): LocalClientStore {
+  const host = publicLocalCertificate(hostCertificate);
+  try {
+    location(file); closeSync(openSync(file, "wx", 0o600));
+    return open(file, host.fingerprint, true);
+  } catch (cause) { return error(cause); }
+}
+export function openLocalClientStore(file: string, hostCertificate: Buffer): LocalClientStore {
+  const host = publicLocalCertificate(hostCertificate);
+  try { location(file); return open(file, host.fingerprint, false); }
+  catch (cause) { return error(cause); }
+}
+function open(file: string, fingerprint: string, create: boolean): LocalClientStore {
+  regularFile(file);
+  const database = new Database(file, { fileMustExist: true, timeout: 0 });
+  try {
+    database.pragma("trusted_schema = OFF");
+    database.pragma("synchronous = EXTRA"); database.pragma("secure_delete = ON");
+    database.pragma("locking_mode = EXCLUSIVE");
+    if (database.pragma("synchronous", { simple: true }) !== 3 || database.pragma("locking_mode", { simple: true }) !== "exclusive" ||
+        database.pragma("journal_mode", { simple: true }) !== "delete") fail("INVALID_STORE");
+    database.transaction(() => {
+      if (create) {
+        database.exec(Object.values(tables).join(";\n") + ";");
+        database.pragma(`application_id = ${applicationId}`); database.pragma("user_version = 1");
+        database.prepare("INSERT INTO local_host VALUES (1, ?, 0)").run(fingerprint);
+      }
+      inspect(database, fingerprint);
+    }).exclusive();
+    return adapter(database, fingerprint);
+  } catch (cause) { database.close(); return error(cause); }
+}
+function inspect(database: Database.Database, fingerprint: string): LocalClientSnapshot {
+  if (database.pragma("application_id", { simple: true }) !== applicationId || database.pragma("user_version", { simple: true }) !== 1) fail("INVALID_STORE");
+  const objects = database.prepare("SELECT type, name, sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' LIMIT 3").all() as { type: string; name: string; sql: string }[];
+  if (objects.length !== 2 || objects.some(row => row.type !== "table" || !Object.hasOwn(tables, row.name) || row.sql !== tables[row.name as keyof typeof tables])) fail("INVALID_STORE");
+  const headers = database.prepare("SELECT * FROM local_host LIMIT 2").all() as { singleton: number; fingerprint: string; revision: number }[];
+  if (headers.length !== 1 || headers[0].singleton !== 1 || headers[0].fingerprint !== fingerprint ||
+      !Number.isInteger(headers[0].revision) || headers[0].revision < 0 || headers[0].revision > 2147483647) fail("INVALID_STORE");
+  const rows = database.prepare("SELECT * FROM local_clients ORDER BY client_id LIMIT ?").all(LOCAL_CLIENT_LIMITS.retained + 1) as {
+    client_id: string; display_name: string; kind: "agent" | "browser"; certificate: Buffer; fingerprint: string; created_at: number; expires_at: number; revoked_at: number | null
+  }[];
+  if (rows.length > LOCAL_CLIENT_LIMITS.retained) fail("INVALID_STORE");
+  const clients = rows.map(row => {
+    try {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(row.client_id)) fail("INVALID_STORE");
+      const cert = enrollment({ displayName: row.display_name, kind: row.kind, certificate: row.certificate, expiresAt: row.expires_at }, row.created_at);
+      if (!cert.der.equals(row.certificate) || cert.fingerprint !== row.fingerprint || cert.fingerprint === fingerprint ||
+          (row.revoked_at !== null && (!timestamp(row.revoked_at) || row.revoked_at < row.created_at))) fail("INVALID_STORE");
+      return Object.freeze({ clientId: row.client_id, displayName: row.display_name, kind: row.kind, certificate: cert.certificate,
+        fingerprint256: cert.fingerprint, createdAt: row.created_at, expiresAt: row.expires_at, revokedAt: row.revoked_at });
+    } catch { return fail("INVALID_STORE"); }
+  });
+  return Object.freeze({ revision: headers[0].revision, clients: Object.freeze(clients) });
+}
+export function registrationSummary({ certificate: _certificate, ...summary }: StoredClient): LocalClientRegistration { return Object.freeze(summary); }
+function adapter(database: Database.Database, fingerprint: string): LocalClientStore {
+  let faulted = false;
+  function run<T>(action: () => T): T {
+    if (!database.open) fail("CLOSED"); if (faulted) fail("UNAVAILABLE");
+    try { return action(); }
+    catch (cause) {
+      if (!(cause instanceof LocalClientRegistryError) || ["INVALID_STORE", "UNAVAILABLE"].includes(cause.code)) faulted = true;
+      return error(cause);
+    }
+  }
+  function current(expected: number) {
+    const value = inspect(database, fingerprint);
+    if (!Number.isInteger(expected) || value.revision !== expected || expected >= 2147483647) fail("CONFLICT");
+    return value;
+  }
+  return Object.freeze<LocalClientStore>({ hostFingerprint: fingerprint,
+    read: () => run(() => inspect(database, fingerprint)),
+    enroll(expectedRevision, input, now) {
+      const cert = enrollment(input, now);
+      return run(() => database.transaction(() => {
+        const snapshot = current(expectedRevision);
+        if (cert.fingerprint === fingerprint || snapshot.clients.some(client => client.fingerprint256 === cert.fingerprint)) fail("CONFLICT");
+        if (snapshot.clients.length >= LOCAL_CLIENT_LIMITS.retained || snapshot.clients.filter(client => client.revokedAt === null && client.expiresAt > now).length >= LOCAL_CLIENT_LIMITS.active) fail("LIMIT");
+        const clientId = randomUUID();
+        database.prepare("INSERT INTO local_clients VALUES (?, ?, ?, ?, ?, ?, ?, NULL)")
+          .run(clientId, input.displayName, input.kind, cert.der, cert.fingerprint, now, input.expiresAt);
+        database.prepare("UPDATE local_host SET revision = revision + 1 WHERE singleton = 1").run();
+        return registrationSummary(inspect(database, fingerprint).clients.find(client => client.clientId === clientId)!);
+      }).immediate());
+    },
+    revoke(expectedRevision, clientId, now) {
+      if (!timestamp(now) || (clientId !== null && (typeof clientId !== "string" || clientId.length > 64))) fail("INVALID_INPUT");
+      run(() => database.transaction(() => {
+        const snapshot = current(expectedRevision);
+        if (clientId !== null && !snapshot.clients.some(client => client.clientId === clientId)) fail("CONFLICT");
+        if (snapshot.clients.some(client => client.createdAt > now)) fail("DENIED");
+        const result = clientId === null ? database.prepare("UPDATE local_clients SET revoked_at = ? WHERE revoked_at IS NULL").run(now) :
+          database.prepare("UPDATE local_clients SET revoked_at = ? WHERE client_id = ? AND revoked_at IS NULL").run(now, clientId);
+        if (result.changes) database.prepare("UPDATE local_host SET revision = revision + 1 WHERE singleton = 1").run();
+      }).immediate());
+    },
+    close() { try { if (database.open) database.close(); } catch { return fail("UNAVAILABLE"); } }
+  });
+}

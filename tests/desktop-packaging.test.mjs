@@ -20,7 +20,8 @@ test("package inspection detects missing shared runtime, packed native binaries 
   const required = ["apps/electron/dist/apps/electron/src/main.js", "apps/electron/dist/apps/electron/src/preload.cjs", "apps/api/dist/apps/api/src/services/vault-maintenance-service.js",
     "apps/api/dist/apps/api/src/db/sqlite-file-scope.js", "apps/web/dist/index.html", "apps/web/dist/fonts/test.ttf", "apps/web/dist/fonts/OFL.txt",
     "node_modules/@password-manager/shared/package.json", "node_modules/@password-manager/shared/dist/index.js", "node_modules/@password-manager/shared/dist/renderer-policy.js",
-    "apps/electron/dist/apps/electron/src/native-transport.js", "apps/electron/dist/apps/electron/src/local-client-auth.js", native];
+    "apps/electron/dist/apps/electron/src/native-transport.js", "apps/electron/dist/apps/electron/src/local-client-auth.js",
+    "apps/electron/dist/apps/electron/src/local-client-store.js", "apps/electron/dist/apps/electron/src/local-client-registry.js", native];
   async function fixture(name, { omit, extra, unpack = true, helper = {} } = {}) {
     const source = path.join(root, name, "source"), application = path.join(root, name, "application");
     for (const file of ["package.json", ...required.filter(file => file !== omit), ...(extra ? [extra] : [])]) {

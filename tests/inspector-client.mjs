@@ -15,7 +15,7 @@ export async function connectInspector(url) {
     if (message.id !== undefined) {
       const request = pending.get(message.id); if (!request) return;
       pending.delete(message.id); clearTimeout(request.timer);
-      if (message.error) request.reject(new Error(message.error.message)); else request.resolve(message.result);
+      if (message.error) request.reject(new Error(`Inspector ${request.method}: ${message.error.message}`)); else request.resolve(message.result);
     } else {
       const listeners = events.get(message.method); if (!listeners) return;
       events.delete(message.method); for (const listener of listeners) listener.resolve(message.params);
@@ -31,7 +31,7 @@ export async function connectInspector(url) {
       const id = ++sequence;
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => { pending.delete(id); reject(new Error(`Inspector request timed out: ${method}`)); }, 15000);
-        pending.set(id, { resolve, reject, timer }); socket.send(JSON.stringify({ id, method, params }));
+        pending.set(id, { resolve, reject, timer, method }); socket.send(JSON.stringify({ id, method, params }));
       });
     },
     event(method) {

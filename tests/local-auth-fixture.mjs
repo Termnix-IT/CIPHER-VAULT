@@ -39,6 +39,6 @@ export function createLocalAuthFixture(executable) {
     }
     const value = { certificate: readFileSync(certificate), privateKey: readFileSync(key) }; identities.push(value); sources.set(value, { key, certificate }); return value;
   }
-  return { options, identity, dispose() { for (const value of identities) value.privateKey.fill(0);
+  return { directory, options, identity, dispose() { for (const value of identities) value.privateKey.fill(0);
     assert.equal(path.dirname(directory), realpathSync(tmpdir())); assert.ok(path.basename(directory).startsWith("cv-auth-")); rmSync(directory, { recursive: true, force: true }); } };
 }
