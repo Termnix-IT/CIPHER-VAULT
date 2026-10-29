@@ -42,7 +42,9 @@ export function serveCandidateSearch(channel: AuthenticatedLocalChannel & { asse
       void search({ clientId: client.clientId, displayName: client.displayName, query, signal: controller.signal }).then(async items => {
         channel.assertCurrent(); if (controller.signal.aborted || channel.socket.destroyed) throw new BrowserConnectionError();
         const frame = encodeBrowserMessage({ version: 1, id: value.id, items: candidateResult(items) });
-        await new Promise<void>((resolve, reject) => channel.socket.write(frame, error => error ? reject(error) : resolve())); close();
+        await new Promise<void>((resolve, reject) => channel.socket.write(frame, error => error ? reject(error) : resolve()));
+        // The native relay may still buffer this response after the local write completes.
+        // Let the receiver close after receipt; the existing deadline and revocation still apply.
       }).catch(close);
     } catch { close(); }
     finally { chunk.fill(0); }

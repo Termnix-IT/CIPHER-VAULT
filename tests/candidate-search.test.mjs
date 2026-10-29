@@ -1,7 +1,35 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { Duplex } from "node:stream";
+import { once } from "node:events";
+import { randomUUID } from "node:crypto";
+import { setImmediate } from "node:timers/promises";
 import { approvedCandidateSearch } from "../apps/electron/dist/apps/electron/src/approved-candidate-search.js";
-import { candidateQuery, candidateResult, candidateOrigin } from "../apps/electron/dist/apps/electron/src/candidate-search.js";
+import { candidateQuery, candidateResult, candidateOrigin, serveCandidateSearch } from "../apps/electron/dist/apps/electron/src/candidate-search.js";
+import { BrowserMessageDecoder, encodeBrowserMessage } from "../apps/electron/dist/apps/electron/src/browser-message.js";
+
+test("candidate response survives relay buffering until receiver close; a second request still closes the channel", async () => {
+  for (const termination of ["receiver-close", "second-request"]) {
+    const frames = [], items = [{ id: "candidate", serviceName: "Synthetic", origin: null }];
+    let closes = 0, signal;
+    const socket = new Duplex({ read() {}, write(frame, _encoding, done) { frames.push(Buffer.from(frame)); done(); } });
+    const closed = once(socket, "close");
+    const channel = { socket, assertCurrent() {}, async close() { closes++; socket.destroy(); } };
+    const request = { version: 1, id: randomUUID(), operation: "search-candidates", query: "synthetic" };
+    try {
+      serveCandidateSearch(channel, { clientId: "client", displayName: "Codex", kind: "agent" }, async input => { signal = input.signal; return items; });
+      socket.push(encodeBrowserMessage(request)); await setImmediate();
+      assert.equal(closes, 0, "A local write callback does not acknowledge receipt through the native relay");
+      assert.equal(signal.aborted, false);
+      assert.deepEqual(new BrowserMessageDecoder().push(Buffer.concat(frames)), { version: 1, id: request.id, items });
+      if (termination === "receiver-close") socket.destroy();
+      else socket.push(encodeBrowserMessage({ ...request, id: randomUUID() }));
+      await closed;
+      assert.equal(signal.aborted, true);
+      assert.equal(closes, termination === "receiver-close" ? 0 : 1);
+    } finally { socket.destroy(); await closed; }
+  }
+});
 
 test("approved search returns only bounded candidate fields and origin, without credentials or URL query", async () => {
   let reads = 0; const signal = new AbortController().signal;
