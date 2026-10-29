@@ -23,16 +23,23 @@ export function nativeTransportExecutable(options: { packaged: boolean; resource
   return path.join(directory, process.platform === "win32" ? "cipher-vault-transport.exe" : "cipher-vault-transport");
 }
 
-function launch(mode: "serve" | "connect", options: NativeTransportOptions) {
-  if (options.signal?.aborted || !path.isAbsolute(options.executable) || !path.isAbsolute(path.dirname(options.endpoint))) throw new LocalTransportError();
+export function assertNativeHelperExecutable(executable: string) {
+  if (typeof executable !== "string" || !path.isAbsolute(executable)) throw new LocalTransportError();
   try {
-    const info = lstatSync(options.executable);
-    if (!info.isFile() || info.isSymbolicLink() || realpathSync(options.executable) !== options.executable) throw new LocalTransportError();
+    const info = lstatSync(executable);
+    if (!info.isFile() || info.isSymbolicLink() || realpathSync(executable) !== executable) throw new LocalTransportError();
   } catch { throw new LocalTransportError(); }
+}
+export function nativeHelperEnvironment() {
   const env = { ...process.env };
   for (const key of Object.keys(env)) if (/^(?:PASSWORD_MANAGER_|ELECTRON_RUN_AS_NODE$|NODE_OPTIONS$|NODE_PATH$|SSLKEYLOGFILE$)/i.test(key)) delete env[key];
+  return env;
+}
+function launch(mode: "serve" | "connect", options: NativeTransportOptions) {
+  if (options.signal?.aborted || !path.isAbsolute(path.dirname(options.endpoint))) throw new LocalTransportError();
+  assertNativeHelperExecutable(options.executable);
   const child: ChildProcessWithoutNullStreams = spawn(options.executable, [mode, options.endpoint], {
-    cwd: path.dirname(options.executable), env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"]
+    cwd: path.dirname(options.executable), env: nativeHelperEnvironment(), windowsHide: true, stdio: ["pipe", "pipe", "pipe"]
   });
   let stream: Duplex | undefined, stopped = false;
   const closed = new Promise<void>(resolve => {

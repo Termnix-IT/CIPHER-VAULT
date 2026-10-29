@@ -15,7 +15,8 @@ export function inspectDesktopPackage(directory, platform = process.platform, ar
     "apps/api/dist/apps/api/src/services/vault-maintenance-service.js", "apps/api/dist/apps/api/src/db/sqlite-file-scope.js", "apps/web/dist/index.html",
     "node_modules/@password-manager/shared/package.json", "node_modules/@password-manager/shared/dist/index.js", "node_modules/@password-manager/shared/dist/renderer-policy.js",
     "apps/electron/dist/apps/electron/src/native-transport.js", "apps/electron/dist/apps/electron/src/local-client-auth.js",
-    "apps/electron/dist/apps/electron/src/local-client-store.js", "apps/electron/dist/apps/electron/src/local-client-registry.js"];
+    "apps/electron/dist/apps/electron/src/local-client-store.js", "apps/electron/dist/apps/electron/src/local-client-registry.js",
+    "apps/electron/dist/apps/electron/src/local-identity.js", "apps/electron/dist/apps/electron/src/local-certificates.js"];
   for (const file of required) assert.ok(files.includes(file), `Missing packaged runtime file: ${file}`);
   assert.ok(files.some(file => file.startsWith("apps/web/dist/fonts/") && file.endsWith(".ttf")), "Missing local fonts");
   assert.ok(files.some(file => file.startsWith("apps/web/dist/fonts/") && /(?:OFL|LICENSE)/.test(file)), "Missing font license");

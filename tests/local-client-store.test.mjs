@@ -33,7 +33,7 @@ test("registration persists only canonical public certificates, immutable IDs an
     const bytes = readFileSync(context.file);
     assert.equal(bytes.includes(credential.privateKey), false); assert.equal(bytes.includes(Buffer.from("PRIVATE KEY")), false);
     const raw = new Database(context.file);
-    try { assert.equal(raw.pragma("application_id", { simple: true }), 0x43564c52); assert.equal(raw.pragma("user_version", { simple: true }), 1); }
+    try { assert.equal(raw.pragma("application_id", { simple: true }), 0x43564c52); assert.equal(raw.pragma("user_version", { simple: true }), 2); }
     finally { raw.close(); }
   } finally { store?.close(); context.dispose(); }
 });
@@ -50,7 +50,7 @@ test("open/create never replace existing data and reject wrong host, unsupported
     const wrong = context.createIdentity("wrong-host"); assert.throws(() => openLocalClientStore(context.file, wrong.certificate), code("INVALID_STORE"));
     linkSync(context.file, context.file + ".link"); assert.throws(() => openLocalClientStore(context.file, context.host.certificate), code("INVALID_STORE"));
     const other = context.file + ".schema"; store = createLocalClientStore(other, context.host.certificate); store.close();
-    const raw = new Database(other); raw.pragma("user_version = 2"); raw.close();
+    const raw = new Database(other); raw.pragma("user_version = 99"); raw.close();
     assert.throws(() => openLocalClientStore(other, context.host.certificate), code("INVALID_STORE"));
     assert.throws(() => createLocalClientStore("relative.sqlite", context.host.certificate), code("INVALID_INPUT"));
   } finally { store?.close(); context.dispose(); }

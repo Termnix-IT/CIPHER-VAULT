@@ -7,6 +7,7 @@ namespace CipherVault.Transport;
 
 internal sealed record Control(int Protocol, string Event, int ProcessId, int PeerProcessId, bool CurrentUser);
 [JsonSerializable(typeof(Control))]
+[JsonSerializable(typeof(IdentityFrame))]
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 internal partial class WireJson : JsonSerializerContext { }
 
@@ -23,13 +24,15 @@ internal static class Program
     public static async Task<int> Main(string[] args)
     {
         if (args.Length == 1 && args[0] == "--version") { await Control("version"); return 0; }
-        if (args.Length != 2 || args[0] is not ("serve" or "connect")) return 64;
+        if (args.Length != 2 || args[0] is not ("serve" or "connect" or "identity") ||
+            (args[0] == "identity" && args[1] is not ("host" or "client"))) return 64;
         using CancellationTokenSource lifetime = new();
         using PosixSignalRegistration? termination = OperatingSystem.IsWindows() ? null :
             PosixSignalRegistration.Create(PosixSignal.SIGTERM, context => { context.Cancel = true; lifetime.Cancel(); });
         try
         {
-            if (OperatingSystem.IsWindows()) await WindowsTransport.Run(args[0], args[1], lifetime.Token);
+            if (args[0] == "identity") await LocalIdentityIssuer.Write(args[1], lifetime.Token);
+            else if (OperatingSystem.IsWindows()) await WindowsTransport.Run(args[0], args[1], lifetime.Token);
             else if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()) await UnixTransport.Run(args[0], args[1], lifetime.Token);
             else throw new PlatformNotSupportedException();
             return 0;

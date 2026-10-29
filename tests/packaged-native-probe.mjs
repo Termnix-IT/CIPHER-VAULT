@@ -6,10 +6,7 @@ import { createLocalAuthFixture } from "./local-auth-fixture.mjs";
 export async function probePackagedNative(evaluate, electron, executable) {
   const fixture = createLocalAuthFixture(executable);
   try {
-    const host = fixture.identity("packaged-host"), client = fixture.identity("packaged-client");
-    const input = { endpoint: fixture.options.endpoint, executable, registryPath: path.join(fixture.directory, "packaged-clients.sqlite"),
-      host: { certificate: host.certificate.toString("base64"), privateKey: host.privateKey.toString("base64") },
-      client: { certificate: client.certificate.toString("base64"), privateKey: client.privateKey.toString("base64") } };
+    const input = { endpoint: fixture.options.endpoint, executable, registryPath: path.join(fixture.directory, "packaged-clients.sqlite") };
     const result = await evaluate(`(async()=>{
       const e=${electron},input=${JSON.stringify(input)},base=e.app.getAppPath();
       const req=process.getBuiltinModule('module').createRequire(base+'/package.json');
@@ -17,13 +14,15 @@ export async function probePackagedNative(evaluate, electron, executable) {
       const authentication=req(base+'/apps/electron/dist/apps/electron/src/local-client-auth.js');
       const {createLocalClientStore}=req(base+'/apps/electron/dist/apps/electron/src/local-client-store.js');
       const {LocalClientRegistry}=req(base+'/apps/electron/dist/apps/electron/src/local-client-registry.js');
+      const {generateLocalIdentity}=req(base+'/apps/electron/dist/apps/electron/src/local-identity.js');
       const {VaultSession}=req(base+'/apps/api/dist/apps/api/src/services/vault-session.js');
       const executable=transport.nativeTransportExecutable({packaged:e.app.isPackaged,resourcesPath:process.resourcesPath,workspaceRoot:base});
       if(!e.app.isPackaged || executable!==input.executable)throw new Error('Packaged helper path mismatch');
-      const identity=value=>({certificate:Buffer.from(value.certificate,'base64'),privateKey:Buffer.from(value.privateKey,'base64')});
-      const host=identity(input.host),client=identity(input.client),session=new VaultSession();
-      let listener,serverNative,clientNative,server,remote,registry;
+      const session=new VaultSession();
+      let listener,serverNative,clientNative,server,remote,registry,host,client;
       try{
+        host=await generateLocalIdentity({executable,role:'host'});
+        client=await generateLocalIdentity({executable,role:'client'});
         session.unlock(Buffer.alloc(32,9));const sessionId=session.getState().sessionId;
         registry=new LocalClientRegistry(createLocalClientStore(input.registryPath,host.certificate),session);
         const registration=registry.enroll(sessionId,0,{displayName:'Synthetic packaged client',kind:'agent',certificate:client.certificate,expiresAt:Date.now()+60000});
@@ -46,7 +45,7 @@ export async function probePackagedNative(evaluate, electron, executable) {
         return {verified,closed:server.socket.destroyed&&remote.socket.destroyed};
       }finally{
         registry?.close();session.lock();await remote?.close();await server?.close();await clientNative?.close();await serverNative?.close();await listener?.close();
-        host.privateKey.fill(0);client.privateKey.fill(0);
+        host?.dispose();client?.dispose();
       }
     })()`);
     assert.deepEqual(result, { verified: true, closed: true });

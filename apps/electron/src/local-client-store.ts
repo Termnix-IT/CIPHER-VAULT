@@ -1,7 +1,8 @@
 import Database from "better-sqlite3";
-import { randomUUID, X509Certificate } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { closeSync, lstatSync, openSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { parseLocalPublicCertificate } from "./local-certificates.js";
 
 export const LOCAL_CLIENT_LIMITS = Object.freeze({ active: 16, retained: 256, certificateBytes: 16384 });
 type Code = "INVALID_INPUT" | "INVALID_STORE" | "UNAVAILABLE" | "CONFLICT" | "LIMIT" | "DENIED" | "CLOSED";
@@ -45,10 +46,7 @@ function timestamp(value: unknown): value is number { return Number.isSafeIntege
 export function publicLocalCertificate(input: Buffer) {
   try {
     if (!Buffer.isBuffer(input) || input.length < 1 || input.length > LOCAL_CLIENT_LIMITS.certificateBytes) fail("INVALID_INPUT");
-    const certificate = new X509Certificate(input);
-    const from = Date.parse(certificate.validFrom), until = Date.parse(certificate.validTo);
-    if (!timestamp(from) || !timestamp(until) || from >= until) fail("INVALID_INPUT");
-    return { certificate: Buffer.from(certificate.toString()), der: Buffer.from(certificate.raw), fingerprint: certificate.fingerprint256, from, until };
+    return parseLocalPublicCertificate(input);
   } catch { return fail("INVALID_INPUT"); }
 }
 function enrollment(input: ClientEnrollment, now: number) {
@@ -96,7 +94,7 @@ function open(file: string, fingerprint: string, create: boolean): LocalClientSt
     database.transaction(() => {
       if (create) {
         database.exec(Object.values(tables).join(";\n") + ";");
-        database.pragma(`application_id = ${applicationId}`); database.pragma("user_version = 1");
+        database.pragma(`application_id = ${applicationId}`); database.pragma("user_version = 2");
         database.prepare("INSERT INTO local_host VALUES (1, ?, 0)").run(fingerprint);
       }
       inspect(database, fingerprint);
@@ -105,7 +103,8 @@ function open(file: string, fingerprint: string, create: boolean): LocalClientSt
   } catch (cause) { database.close(); return error(cause); }
 }
 function inspect(database: Database.Database, fingerprint: string): LocalClientSnapshot {
-  if (database.pragma("application_id", { simple: true }) !== applicationId || database.pragma("user_version", { simple: true }) !== 1) fail("INVALID_STORE");
+  const version = database.pragma("user_version", { simple: true });
+  if (database.pragma("application_id", { simple: true }) !== applicationId || ![1, 2].includes(version as number)) fail("INVALID_STORE");
   const objects = database.prepare("SELECT type, name, sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' LIMIT 3").all() as { type: string; name: string; sql: string }[];
   if (objects.length !== 2 || objects.some(row => row.type !== "table" || !Object.hasOwn(tables, row.name) || row.sql !== tables[row.name as keyof typeof tables])) fail("INVALID_STORE");
   const headers = database.prepare("SELECT * FROM local_host LIMIT 2").all() as { singleton: number; fingerprint: string; revision: number }[];
@@ -119,7 +118,7 @@ function inspect(database: Database.Database, fingerprint: string): LocalClientS
     try {
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(row.client_id)) fail("INVALID_STORE");
       const cert = enrollment({ displayName: row.display_name, kind: row.kind, certificate: row.certificate, expiresAt: row.expires_at }, row.created_at);
-      if (!cert.der.equals(row.certificate) || cert.fingerprint !== row.fingerprint || cert.fingerprint === fingerprint ||
+      if (!cert.stored.equals(row.certificate) || (version === 1 && cert.issuer) || cert.fingerprint !== row.fingerprint || cert.fingerprint === fingerprint ||
           (row.revoked_at !== null && (!timestamp(row.revoked_at) || row.revoked_at < row.created_at))) fail("INVALID_STORE");
       return Object.freeze({ clientId: row.client_id, displayName: row.display_name, kind: row.kind, certificate: cert.certificate,
         fingerprint256: cert.fingerprint, createdAt: row.created_at, expiresAt: row.expires_at, revokedAt: row.revoked_at });
@@ -153,7 +152,8 @@ function adapter(database: Database.Database, fingerprint: string): LocalClientS
         if (snapshot.clients.length >= LOCAL_CLIENT_LIMITS.retained || snapshot.clients.filter(client => client.revokedAt === null && client.expiresAt > now).length >= LOCAL_CLIENT_LIMITS.active) fail("LIMIT");
         const clientId = randomUUID();
         database.prepare("INSERT INTO local_clients VALUES (?, ?, ?, ?, ?, ?, ?, NULL)")
-          .run(clientId, input.displayName, input.kind, cert.der, cert.fingerprint, now, input.expiresAt);
+          .run(clientId, input.displayName, input.kind, cert.stored, cert.fingerprint, now, input.expiresAt);
+        if (cert.issuer) database.pragma("user_version = 2");
         database.prepare("UPDATE local_host SET revision = revision + 1 WHERE singleton = 1").run();
         return registrationSummary(inspect(database, fingerprint).clients.find(client => client.clientId === clientId)!);
       }).immediate());
