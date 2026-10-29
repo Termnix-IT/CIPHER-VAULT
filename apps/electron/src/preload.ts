@@ -9,6 +9,13 @@ import type {
 } from "@password-manager/shared/types";
 
 const passwordManagerApi: PasswordManagerDesktopApi = {
+  getLocalConnections: (id) => ipcRenderer.invoke("connections:state", id),
+  setLocalConnectionsEnabled: (enabled, revision, id) => ipcRenderer.invoke("connections:enabled", id, enabled, revision),
+  selectLocalPairingRequest: (id) => ipcRenderer.invoke("connections:select", id),
+  approveLocalPairing: (approval, id) => ipcRenderer.invoke("connections:approve", id, approval),
+  cancelLocalPairing: (pendingId, id) => ipcRenderer.invoke("connections:cancel", id, pendingId),
+  revokeLocalClient: (clientId, revision, id) => ipcRenderer.invoke("connections:revoke", id, clientId, revision),
+  saveLocalConnectionInfo: (clientId, id) => ipcRenderer.invoke("connections:save", id, clientId),
   runVaultMaintenance: (payload, sessionId) => ipcRenderer.invoke("vault:maintenance", sessionId, payload),
   exportBackup: (payload, sessionId) => ipcRenderer.invoke("backup:export", sessionId, payload),
   restoreBackup: (payload, sessionId) => ipcRenderer.invoke("backup:restore", sessionId, payload),

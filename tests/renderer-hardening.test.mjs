@@ -17,7 +17,8 @@ test("sandbox preload runs with only Electron require, exposes explicit methods 
       on: (...args) => events.on(...args), removeListener: (...args) => events.removeListener(...args) } };
   const source = readFileSync(new URL("../apps/electron/dist/apps/electron/src/preload.cjs", import.meta.url), "utf8");
   vm.runInNewContext(source, { require(name) { assert.equal(name, "electron"); return electron; } });
-  assert.deepEqual(Object.keys(api).sort(), ["auditVault", "checkForUpdates", "copyText", "createEntry", "deleteEntry", "downloadUpdate", "exportBackup", "fetchEntries", "fetchEntry", "fetchVaultStatus", "generatePassword", "getUpdateState", "installUpdate", "lockVault", "onUpdateState", "onVaultState", "openReleasePage", "recordVaultActivity", "resetVault", "restoreBackup", "runVaultMaintenance", "setupVault", "unlockVault", "updateEntry"].sort());
+  assert.deepEqual(Object.keys(api).sort(), ["auditVault", "checkForUpdates", "copyText", "createEntry", "deleteEntry", "downloadUpdate", "exportBackup", "fetchEntries", "fetchEntry", "fetchVaultStatus", "generatePassword", "getUpdateState", "installUpdate", "lockVault", "onUpdateState", "onVaultState", "openReleasePage", "recordVaultActivity", "resetVault", "restoreBackup", "runVaultMaintenance", "setupVault", "unlockVault", "updateEntry",
+    "getLocalConnections", "setLocalConnectionsEnabled", "selectLocalPairingRequest", "approveLocalPairing", "cancelLocalPairing", "revokeLocalClient", "saveLocalConnectionInfo"].sort());
   await api.setupVault({ masterPassword: "synthetic" }, "epoch");
   await api.updateEntry("entry", { serviceName: "synthetic" }, "epoch");
   await api.exportBackup({ passphrase: "synthetic" }, "epoch");
@@ -25,6 +26,12 @@ test("sandbox preload runs with only Electron require, exposes explicit methods 
   assert.deepEqual(calls.map((args) => args[0]), ["vault:setup", "entries:update", "backup:export", "vault:maintenance"]);
   assert.deepEqual(calls[3].slice(1), ["epoch", { operation: "recover" }]);
   assert.deepEqual(calls[1].slice(1), ["epoch", "entry", { serviceName: "synthetic" }]);
+  await api.getLocalConnections("epoch"); await api.setLocalConnectionsEnabled(false, 2, "epoch"); await api.selectLocalPairingRequest("epoch");
+  const approval = { pendingId: "synthetic-review", expectedRevision: 2, fingerprint256: "synthetic-public-pin", confirmation: "MATCHED_FINGERPRINT" };
+  await api.approveLocalPairing(approval, "epoch"); await api.cancelLocalPairing("review", "epoch");
+  await api.revokeLocalClient("client", 2, "epoch"); await api.saveLocalConnectionInfo("client", "epoch");
+  assert.deepEqual(calls.slice(4), [["connections:state", "epoch"], ["connections:enabled", "epoch", false, 2], ["connections:select", "epoch"],
+    ["connections:approve", "epoch", approval], ["connections:cancel", "epoch", "review"], ["connections:revoke", "epoch", "client", 2], ["connections:save", "epoch", "client"]]);
   for (const [method, channel] of [["onVaultState", "vault:state"], ["onUpdateState", "updates:state"]]) {
     let received;
     const unsubscribe = api[method]((...args) => { received = args; });

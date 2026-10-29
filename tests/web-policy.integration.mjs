@@ -49,6 +49,10 @@ async function run() {
     await fill('.cipher-form input[type=password]', "synthetic-web-policy-passphrase");
     await click('.cipher-form button[type=submit]');
     await waitFor("!!document.querySelector('.cipher-dashboard') && !document.querySelector('.sidebar-lock').disabled");
+    await evaluate("[...document.querySelectorAll('.app-menu-trigger')].find(button=>button.textContent==='ツール').click()");
+    await waitFor("[...document.querySelectorAll('.app-menu-item')].some(button=>button.textContent==='保管庫の管理'&&!button.disabled)");
+    assert.equal(await evaluate("[...document.querySelectorAll('.app-menu-item')].find(button=>button.textContent==='接続の管理').disabled"), true);
+    await evaluate("[...document.querySelectorAll('.app-menu-trigger')].find(button=>button.textContent==='ツール').click()");
     await click('.sidebar-add');
     await waitFor("!!document.querySelector('.editor-fields')");
     const maliciousTitle = '<img src=x onerror="window.__unsafeEntry=true">';
@@ -60,6 +64,7 @@ async function run() {
     assert.equal(await evaluate("document.querySelector('.inspector-title').textContent"), maliciousTitle);
     assert.equal(await evaluate("window.__unsafeEntry === undefined && document.querySelector('[onerror]') === null"), true);
     assert.equal(await evaluate("document.fonts.load('500 16px \"JetBrains Mono\"').then(fonts => fonts.length > 0 && fonts.every(x => x.status === 'loaded'))"), true);
+    assert.equal(await evaluate("document.fonts.load('500 14px \"Noto Sans JP\"','接続の管理').then(fonts=>fonts.length>0&&fonts.every(font=>font.status==='loaded'))"), true);
     await evaluate("window.__violations=[]; document.addEventListener('securitypolicyviolation',e=>window.__violations.push(e.effectiveDirective)); const script=document.createElement('script'); script.textContent='window.__inlineExecuted=true'; document.head.append(script); script.remove();");
     await delay(50);
     assert.equal(await evaluate("window.__inlineExecuted === undefined && window.__violations.includes('script-src-elem')"), true);

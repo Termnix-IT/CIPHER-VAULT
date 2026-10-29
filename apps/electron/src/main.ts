@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, powerMonitor, session } from "electron";
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, powerMonitor, safeStorage, session } from "electron";
 import { existsSync, readFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
@@ -13,6 +13,11 @@ import { createClipboardPort } from "./clipboard-port.js";
 import { installRendererSessionSecurity } from "./renderer-session.js";
 import { desktopPlatformCapabilities, desktopVaultDataDirectory } from "./desktop-platform.js";
 import { localDevelopmentUrl } from "@password-manager/shared";
+import { LocalConnections } from "./local-connections.js";
+import { nativeTransportExecutable } from "./native-transport.js";
+import { electronDeviceKeyProtector } from "./device-key-protector.js";
+import { readSelectedPairingRequest, writeSelectedConnectionInfo } from "./local-pairing-files.js";
+import { LocalPairingError } from "./local-pairing.js";
 import type {
   PasswordGenerationOptions,
   PasswordEntryUpsertPayload,
@@ -33,6 +38,7 @@ let appServices: AppServices | null = null;
 let powerGuard: VaultPowerGuard | null = null;
 let quitting = false;
 let quitReady = false;
+let localConnections: LocalConnections | undefined;
 const protectedClipboard = new ExpiringClipboard(createClipboardPort(clipboard, (values) => new ClipboardItem(values)));
 const assertTrustedSender = createSenderGuard(() => mainWindow, () => trustedRendererUrl);
 
@@ -76,7 +82,9 @@ type AppServices = {
   };
   session: {
     withVaultSession: <T>(sessionId: unknown, action: (sessionId: string) => T | Promise<T>) => Promise<T>;
-    vaultSession: { requireGeneration: (sessionId: unknown) => string; requireUnlocked: (sessionId?: string) => string };
+    vaultSession: { requireGeneration: (sessionId: unknown) => string; requireUnlocked: (sessionId?: string) => string;
+      getState: () => import("@password-manager/shared/types").VaultSessionState;
+      subscribe: (listener: (state: import("@password-manager/shared/types").VaultSessionState) => void) => () => void };
   };
   backup: {
     exportBackup: (payload: import("@password-manager/shared/types").BackupExportPayload) => Promise<import("@password-manager/shared/types").BackupFile>;
@@ -241,6 +249,39 @@ function registerIpcHandlers(services: AppServices) {
       return action(...args);
     });
   }
+  function connectionHandle(channel: string, count: number, action: (id: string, ...args: unknown[]) => unknown) {
+    handle(channel, count + 1, (id: unknown, ...args: unknown[]) => services.session.withVaultSession(id, async sessionId => {
+      assertAvailable(); if (!localConnections) throw new LocalPairingError();
+      const result = await action(sessionId, ...args); assertAvailable(); return result;
+    }));
+  }
+  const connections = () => { if (!localConnections) throw new LocalPairingError(); return localConnections; };
+  const clientId = (value: unknown) => {
+    if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)) throw new LocalPairingError(); return value;
+  };
+  const revision = (value: unknown) => { if (!Number.isInteger(value) || (value as number) < 0 || (value as number) >= 2147483647) throw new LocalPairingError(); return value as number; };
+  connectionHandle("connections:state", 0, id => connections().state(id));
+  connectionHandle("connections:enabled", 2, async (id, enabled, expected) => {
+    if (typeof enabled !== "boolean") throw new LocalPairingError(); await connections().setEnabled(id, revision(expected), enabled); return connections().state(id);
+  });
+  connectionHandle("connections:select", 0, async id => {
+    try {
+      const selected = await dialog.showOpenDialog(mainWindow!, { title: "接続リクエストを選択", filters: [{ name: "CIPHER VAULT 接続リクエスト", extensions: ["cvpair"] }], properties: ["openFile", "dontAddToRecent", "noResolveAliases"] });
+      services.session.vaultSession.requireUnlocked(id); assertAvailable();
+      if (!selected.canceled && selected.filePaths.length === 1) connections().stage(id, readSelectedPairingRequest(selected.filePaths[0]));
+      return connections().state(id);
+    } catch { throw new LocalPairingError(); }
+  });
+  connectionHandle("connections:approve", 1, async (id, approval) => { await connections().approve(id, approval as import("@password-manager/shared/types").LocalPairingApproval); return connections().state(id); });
+  connectionHandle("connections:cancel", 1, (id, pending) => { connections().cancel(id, clientId(pending)); return connections().state(id); });
+  connectionHandle("connections:revoke", 2, async (id, client, expected) => { await connections().revoke(id, revision(expected), clientId(client)); return connections().state(id); });
+  connectionHandle("connections:save", 1, async (id, client) => {
+    try {
+      const selectedId = clientId(client), selected = await dialog.showSaveDialog(mainWindow!, { title: "接続情報を保存", defaultPath: "cipher-vault.cvconnection", filters: [{ name: "CIPHER VAULT 接続情報", extensions: ["cvconnection"] }] });
+      services.session.vaultSession.requireUnlocked(id); assertAvailable(); if (selected.canceled || !selected.filePath) return false;
+      writeSelectedConnectionInfo(selected.filePath, connections().connectionInfo(id, selectedId)); return true;
+    } catch { throw new LocalPairingError(); }
+  });
   handleSession("backup:export", 1, services.backup.exportBackup);
   handleSession("backup:restore", 1, services.backup.restoreBackup);
   handleSession("vault:audit", 0, services.audit.auditVault);
@@ -357,6 +398,9 @@ async function bootstrap() {
   });
   const services = await loadAppServices(appRoot);
   appServices = services;
+  localConnections = new LocalConnections(app.getPath("userData"), nativeTransportExecutable({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, workspaceRoot: appRoot }),
+    electronDeviceKeyProtector(app, safeStorage), services.session.vaultSession);
+  app.on("will-quit", () => { void localConnections?.close(); });
   installRendererSessionSecurity(session.defaultSession, () => mainWindow?.webContents.id ?? null,
     () => trustedRendererUrl, getWebDistPath(appRoot));
   registerIpcHandlers(services);
@@ -381,7 +425,7 @@ async function bootstrap() {
     let timer: ReturnType<typeof setTimeout> | undefined;
     // Clipboard APIs can be unavailable; never hold application exit indefinitely.
     void Promise.race([
-      Promise.all([protectedClipboard.clearOwned(), services.maintenance.waitForVaultMaintenance()]),
+      Promise.all([protectedClipboard.clearOwned(), services.maintenance.waitForVaultMaintenance(), localConnections?.close()]),
       new Promise((resolve) => { timer = setTimeout(resolve, 1500); })
     ]).finally(() => { clearTimeout(timer); quitReady = true; app.quit(); });
   });

@@ -48,6 +48,7 @@
     "test:desktop-session": "npm run build:desktop && node scripts/run-desktop-tests.mjs",
     "test:desktop-v2": "npm run build:desktop && node scripts/run-desktop-tests.mjs --v2",
     "test:desktop-maintenance": "npm run build:desktop && node scripts/run-desktop-tests.mjs --maintenance",
+    "test:desktop-connections": "npm run build:desktop && node scripts/run-desktop-tests.mjs --connections",
     "test:desktop-platform": "npm run build:electron && node scripts/run-desktop-tests.mjs --platform",
     "test:desktop-dev": "npm run build:desktop && node scripts/run-desktop-tests.mjs --dev",
     "test:web-policy": "npm run build && node scripts/run-desktop-tests.mjs --web",

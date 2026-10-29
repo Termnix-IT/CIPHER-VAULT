@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 
 const mode = process.argv[2];
-assert.ok(mode === undefined || mode === "--dev" || mode === "--web" || mode === "--v2" || mode === "--maintenance" || mode === "--platform", "Unknown integration mode");
+assert.ok(mode === undefined || mode === "--dev" || mode === "--web" || mode === "--v2" || mode === "--maintenance" || mode === "--platform" || mode === "--connections", "Unknown integration mode");
 
 const temporaryRoot = mkdtempSync(path.join(tmpdir(), "cipher-vault-desktop-session-"));
 let developmentServer;
@@ -23,13 +23,19 @@ try {
   delete environment.ELECTRON_RUN_AS_NODE;
   if (developmentServer) environment.CIPHER_VAULT_TEST_RENDERER_URL = developmentServer.resolvedUrls.local[0];
   else delete environment.CIPHER_VAULT_TEST_RENDERER_URL;
-  const child = spawn(createRequire(import.meta.url)("electron"), [mode === "--web" ? "tests/web-policy.integration.mjs" : mode === "--v2" ? "tests/v2-desktop.integration.mjs" : mode === "--maintenance" ? "tests/maintenance-desktop.integration.mjs" : mode === "--platform" ? "tests/platform-desktop.integration.mjs" : "tests/desktop-session.integration.mjs"], {
-    stdio: "inherit", windowsHide: true,
-    env: environment
-  });
-  process.exitCode = await new Promise((resolve, reject) => {
-    child.once("error", reject); child.once("close", (code) => resolve(code ?? 1));
-  });
+  for (const phase of mode === "--connections" ? ["create", "restart", "paused"] : ["default"]) {
+    environment.CIPHER_VAULT_CONNECTIONS_PHASE = phase;
+    const args = [mode === "--connections" ? "tests/connections-desktop.integration.mjs" : mode === "--web" ? "tests/web-policy.integration.mjs" : mode === "--v2" ? "tests/v2-desktop.integration.mjs" : mode === "--maintenance" ? "tests/maintenance-desktop.integration.mjs" : mode === "--platform" ? "tests/platform-desktop.integration.mjs" : "tests/desktop-session.integration.mjs"];
+    if (mode === "--connections") args.push(`--user-data-dir=${path.join(temporaryRoot, "connections-profile")}`);
+    const child = spawn(createRequire(import.meta.url)("electron"), args, {
+      stdio: "inherit", windowsHide: true,
+      env: environment
+    });
+    process.exitCode = await new Promise((resolve, reject) => {
+      child.once("error", reject); child.once("close", (code) => resolve(code ?? 1));
+    });
+    if (process.exitCode !== 0) break;
+  }
 } finally {
   await developmentServer?.close();
   // Chromium can retain profile handles until AFTER app's quit event on Windows.

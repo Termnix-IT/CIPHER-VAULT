@@ -134,3 +134,15 @@ export function copyText(value: string) {
     await navigator.clipboard.writeText(value);
   });
 }
+
+export function supportsLocalConnections() { return Boolean(getDesktopApi()?.getLocalConnections); }
+function localConnectionCall<T>(action: (desktop: PasswordManagerDesktopApi, id: string) => Promise<T>) {
+  return run(id => { const desktop = getDesktopApi(); if (!desktop?.getLocalConnections) throw new Error("接続の管理はデスクトップ版で利用できます"); return action(desktop, id); });
+}
+export const getLocalConnections = () => localConnectionCall((desktop, id) => desktop.getLocalConnections(id));
+export const setLocalConnectionsEnabled = (enabled: boolean, revision: number) => localConnectionCall((desktop, id) => desktop.setLocalConnectionsEnabled(enabled, revision, id));
+export const selectLocalPairingRequest = () => localConnectionCall((desktop, id) => desktop.selectLocalPairingRequest(id));
+export const approveLocalPairing = (approval: import("@password-manager/shared/types").LocalPairingApproval) => localConnectionCall((desktop, id) => desktop.approveLocalPairing(approval, id));
+export const cancelLocalPairing = (pendingId: string) => localConnectionCall((desktop, id) => desktop.cancelLocalPairing(pendingId, id));
+export const revokeLocalClient = (clientId: string, revision: number) => localConnectionCall((desktop, id) => desktop.revokeLocalClient(clientId, revision, id));
+export const saveLocalConnectionInfo = (clientId: string) => localConnectionCall((desktop, id) => desktop.saveLocalConnectionInfo(clientId, id));

@@ -10,7 +10,7 @@ export function inspectDesktopPackage(directory, platform = process.platform, ar
   const root = realpathSync(directory), resources = path.join(root, platform === "darwin" ? "Contents/Resources" : "resources"), archive = path.join(resources, "app.asar");
   const files = archiveApi.listPackage(archive).map(file => file.replaceAll("\\", "/").replace(/^\/+/, ""));
   for (const file of files) assert.ok(!/^(?:tests|scripts|native|data|release|apps\/api\/data)(?:\/|$)/.test(file) &&
-    !/(?:^|\/)\.env(?:\.|$)|\.(?:db|sqlite)(?:-(?:wal|shm|journal))?$|\.(?:log|cvkey)$/i.test(file), "Unexpected private data or test tooling in package");
+    !/(?:^|\/)\.env(?:\.|$)|\.(?:db|sqlite)(?:-(?:wal|shm|journal))?$|\.(?:log|cvkey|cvpair|cvconnection)$/i.test(file), "Unexpected private data or test tooling in package");
   const required = ["package.json", "apps/electron/dist/apps/electron/src/main.js", "apps/electron/dist/apps/electron/src/preload.cjs",
     "apps/api/dist/apps/api/src/services/vault-maintenance-service.js", "apps/api/dist/apps/api/src/db/sqlite-file-scope.js", "apps/web/dist/index.html",
     "node_modules/@password-manager/shared/package.json", "node_modules/@password-manager/shared/dist/index.js", "node_modules/@password-manager/shared/dist/renderer-policy.js",
@@ -18,7 +18,9 @@ export function inspectDesktopPackage(directory, platform = process.platform, ar
     "apps/electron/dist/apps/electron/src/local-client-store.js", "apps/electron/dist/apps/electron/src/local-client-registry.js",
     "apps/electron/dist/apps/electron/src/local-identity.js", "apps/electron/dist/apps/electron/src/local-certificates.js",
     "apps/electron/dist/apps/electron/src/device-key-protector.js", "apps/electron/dist/apps/electron/src/protected-local-identity.js",
-    "apps/electron/dist/apps/electron/src/local-pairing.js"];
+    "apps/electron/dist/apps/electron/src/local-pairing.js", "apps/electron/dist/apps/electron/src/local-connections.js",
+    "apps/electron/dist/apps/electron/src/local-connection-server.js", "apps/electron/dist/apps/electron/src/local-pairing-files.js",
+    "apps/web/dist/fonts/NotoSansJP-Variable.ttf", "apps/web/dist/fonts/NotoSansJP-OFL.txt"];
   for (const file of required) assert.ok(files.includes(file), `Missing packaged runtime file: ${file}`);
   assert.ok(files.some(file => file.startsWith("apps/web/dist/fonts/") && file.endsWith(".ttf")), "Missing local fonts");
   assert.ok(files.some(file => file.startsWith("apps/web/dist/fonts/") && /(?:OFL|LICENSE)/.test(file)), "Missing font license");

@@ -3,16 +3,18 @@ import { CLIPBOARD_CLEAR_AFTER_MS } from "@password-manager/shared";
 import type { PasswordEntry, PasswordEntrySummary, PasswordEntryUpsertPayload, VaultStatus } from "@password-manager/shared/types";
 import {
   copyText, createEntry, deleteEntry, fetchEntries, fetchEntry, generatePassword,
-  lockVault, observeVaultStatus, recordVaultActivity, resetVault, setupVault, unlockVault, updateEntry
+  lockVault, observeVaultStatus, recordVaultActivity, resetVault, setupVault, unlockVault, updateEntry, supportsLocalConnections
 } from "./lib/api";
 import { LockScreen } from "./pages/LockScreen";
 import { VaultDashboard } from "./pages/VaultDashboard";
 import { AppMenu } from "./components/AppMenu";
 import { VaultSessionChangedError } from "./lib/vault-client-session";
 import { VaultMaintenance } from "./components/VaultMaintenance";
+import { LocalConnections } from "./components/LocalConnections";
 
 export function App() {
   const [maintenanceOpened, setMaintenanceOpened] = useState(false);
+  const [connectionsOpened, setConnectionsOpened] = useState(false);
   const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null);
   const [entries, setEntries] = useState<PasswordEntrySummary[]>([]);
   const [selectedEntry, setSelectedEntry] = useState<PasswordEntry | null>(null);
@@ -42,6 +44,7 @@ export function App() {
       viewEpoch.current++;
       setEntries([]); setSelectedEntry(null); setCopyMessage("");
       setIsFormOpen(false); setIsEditingEntry(false); setHasUnsavedChanges(false);
+      setConnectionsOpened(false);
       setIsLoadingEntries(false); setIsLoadingEntryDetail(false);
       setIsCreatingEntry(false); setIsUpdatingEntry(false); setIsDeletingEntry(false); setIsGeneratingPassword(false);
       setErrorMessage(state.lockReason === "idle" ? "5分間操作がなかったため保管庫をロックしました"
@@ -248,6 +251,8 @@ export function App() {
     onSelectEntry={handleSelectEntry}
     onCopy={handleCopyToClipboard}
     onMaintenance={() => setMaintenanceOpened(true)}
+    onConnections={() => setConnectionsOpened(true)}
+    connectionsAvailable={supportsLocalConnections()}
   />;
 
   if (vaultStatus === null) {
@@ -307,6 +312,7 @@ export function App() {
         />
       )}
       <VaultMaintenance status={vaultStatus} opened={maintenanceOpened || maintenanceRequired} onClose={() => setMaintenanceOpened(false)} />
+      <LocalConnections key={vaultStatus.sessionId} opened={connectionsOpened && vaultStatus.isUnlocked && !maintenanceRequired} onClose={() => setConnectionsOpened(false)} />
     </main>
   );
 }

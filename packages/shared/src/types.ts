@@ -92,6 +92,13 @@ export type VaultMetadataRecord = {
 };
 
 export type PasswordManagerDesktopApi = {
+  getLocalConnections: (sessionId: string) => Promise<LocalConnectionsState>;
+  setLocalConnectionsEnabled: (enabled: boolean, revision: number, sessionId: string) => Promise<LocalConnectionsState>;
+  selectLocalPairingRequest: (sessionId: string) => Promise<LocalConnectionsState>;
+  approveLocalPairing: (approval: LocalPairingApproval, sessionId: string) => Promise<LocalConnectionsState>;
+  cancelLocalPairing: (pendingId: string, sessionId: string) => Promise<LocalConnectionsState>;
+  revokeLocalClient: (clientId: string, revision: number, sessionId: string) => Promise<LocalConnectionsState>;
+  saveLocalConnectionInfo: (clientId: string, sessionId: string) => Promise<boolean>;
   runVaultMaintenance: (payload: VaultMaintenancePayload, sessionId: string) => Promise<VaultStatus>;
   exportBackup: (payload: BackupExportPayload, sessionId: string) => Promise<BackupFile>;
   restoreBackup: (payload: BackupRestorePayload, sessionId: string) => Promise<{ restoredCount: number }>;
@@ -117,6 +124,16 @@ export type PasswordManagerDesktopApi = {
   generatePassword: (options: PasswordGenerationOptions, sessionId: string) => Promise<PasswordGenerationResult>;
   copyText: (value: string, sessionId: string) => Promise<void>;
 };
+
+export type LocalPairingReview = Readonly<{ pendingId: string; displayName: string; kind: "agent" | "browser"; fingerprint256: string; expiresAt: number; registrationExpiresAt: number; revision: number }>;
+export type LocalPairingApproval = Readonly<{ pendingId: string; expectedRevision: number; fingerprint256: string; confirmation: "MATCHED_FINGERPRINT" }>;
+export type LocalConnectionsState = Readonly<{
+  status: "disabled" | "paused" | "locked" | "starting" | "ready" | "unavailable";
+  enabled: boolean;
+  revision: number;
+  clients: readonly Readonly<{ clientId: string; displayName: string; kind: "agent" | "browser"; fingerprint256: string; createdAt: number; expiresAt: number; revokedAt: number | null; state: "active" | "revoked" | "expired" }>[];
+  review: LocalPairingReview | null;
+}>;
 
 export type BackupExportPayload = { passphrase: string };
 export type BackupFile = { fileName: string; content: string };

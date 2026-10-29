@@ -24,7 +24,9 @@ test("package inspection detects missing shared runtime, packed native binaries 
     "apps/electron/dist/apps/electron/src/local-client-store.js", "apps/electron/dist/apps/electron/src/local-client-registry.js",
     "apps/electron/dist/apps/electron/src/local-identity.js", "apps/electron/dist/apps/electron/src/local-certificates.js",
     "apps/electron/dist/apps/electron/src/device-key-protector.js", "apps/electron/dist/apps/electron/src/protected-local-identity.js",
-    "apps/electron/dist/apps/electron/src/local-pairing.js", native];
+    "apps/electron/dist/apps/electron/src/local-pairing.js", "apps/electron/dist/apps/electron/src/local-connections.js",
+    "apps/electron/dist/apps/electron/src/local-connection-server.js", "apps/electron/dist/apps/electron/src/local-pairing-files.js",
+    "apps/web/dist/fonts/NotoSansJP-Variable.ttf", "apps/web/dist/fonts/NotoSansJP-OFL.txt", native];
   async function fixture(name, { omit, extra, unpack = true, helper = {} } = {}) {
     const source = path.join(root, name, "source"), application = path.join(root, name, "application");
     for (const file of ["package.json", ...required.filter(file => file !== omit), ...(extra ? [extra] : [])]) {
@@ -47,7 +49,7 @@ test("package inspection detects missing shared runtime, packed native binaries 
       const wrong = await fixture(`helper-${key}`, { helper: { [key]: value } });
       assert.throws(() => inspectDesktopPackage(wrong), /Wrong native helper/);
     }
-    for (const extra of ["apps/api/data/password-manager.db", "data/vault.sqlite", ".env", "private.log", "identity-synthetic.cvkey", "tests/fixture.mjs", "native/Transport.csproj"]) {
+    for (const extra of ["apps/api/data/password-manager.db", "data/vault.sqlite", ".env", "private.log", "identity-synthetic.cvkey", "synthetic.cvpair", "synthetic.cvconnection", "tests/fixture.mjs", "native/Transport.csproj"]) {
       const application = await fixture(`private-${extra.replaceAll(/[^a-z]/gi, "-")}`, { extra });
       assert.throws(() => inspectDesktopPackage(application), /Unexpected private data/);
     }

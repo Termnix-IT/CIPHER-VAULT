@@ -95,6 +95,7 @@ async function launch() {
   assert.ok((await evaluate(`${electron}.app.getAppPath()`)).startsWith(application + path.sep));
   assert.deepEqual(await evaluate(`(()=>{const p=${electron}.BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences();return {sandbox:p.sandbox,contextIsolation:p.contextIsolation,nodeIntegration:p.nodeIntegration}})()`), { sandbox: true, contextIsolation: true, nodeIntegration: false });
   assert.equal(await renderer("typeof require==='undefined' && typeof process==='undefined' && Object.isFrozen(window.passwordManager)"), true);
+  assert.equal(await renderer("document.fonts.load('500 14px \"Noto Sans JP\"','接続の管理').then(fonts=>fonts.length>0&&fonts.every(font=>font.status==='loaded'))"), true, "Packaged Japanese font must load from the copied application");
   assert.equal(await renderer("window.passwordManager.getUpdateState().then(state=>state.currentVersion)"), source.version);
 }
 

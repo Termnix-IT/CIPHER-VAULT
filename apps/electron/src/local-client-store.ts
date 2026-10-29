@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { closeSync, lstatSync, openSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { parseLocalPublicCertificate } from "./local-certificates.js";
+import { localIdentityCertificate } from "./local-identity.js";
+import type { LocalIdentityReference } from "./protected-local-identity.js";
 
 export const LOCAL_CLIENT_LIMITS = Object.freeze({ active: 16, retained: 256, certificateBytes: 16384 });
 type Code = "INVALID_INPUT" | "INVALID_STORE" | "UNAVAILABLE" | "CONFLICT" | "LIMIT" | "DENIED" | "CLOSED";
@@ -28,19 +30,30 @@ const tables = {
   revoked_at INTEGER
 ) STRICT`
 };
+const configurationTable = `CREATE TABLE local_connection_config (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  identity_id TEXT NOT NULL,
+  certificate BLOB NOT NULL,
+  enabled INTEGER NOT NULL CHECK (enabled IN (0, 1))
+) STRICT`;
+type HostConfiguration = Readonly<{ identityId: string; certificate: Buffer }>;
 export type LocalClientRegistration = Readonly<{
   clientId: string; displayName: string; kind: "agent" | "browser"; fingerprint256: string;
   createdAt: number; expiresAt: number; revokedAt: number | null;
 }>;
 export type ClientEnrollment = Readonly<{ displayName: string; kind: "agent" | "browser"; certificate: Buffer; expiresAt: number }>;
 type StoredClient = LocalClientRegistration & Readonly<{ certificate: Buffer }>;
-export type LocalClientSnapshot = Readonly<{ revision: number; clients: readonly StoredClient[] }>;
+export type LocalClientSnapshot = Readonly<{ revision: number; clients: readonly StoredClient[]; enabled?: boolean }>;
 export interface LocalClientStore {
   readonly hostFingerprint: string;
   read(): LocalClientSnapshot;
   enroll(expectedRevision: number, input: ClientEnrollment, now: number): LocalClientRegistration;
   revoke(expectedRevision: number, clientId: string | null, now: number): void;
   close(): void;
+}
+export interface ManagedLocalClientStore extends LocalClientStore {
+  configuration(): Readonly<{ reference: LocalIdentityReference; certificate: Buffer; enabled: boolean }>;
+  setEnabled(expectedRevision: number, enabled: boolean): void;
 }
 function timestamp(value: unknown): value is number { return Number.isSafeInteger(value) && (value as number) > 0 && (value as number) <= 8640000000000000; }
 export function publicLocalCertificate(input: Buffer) {
@@ -82,7 +95,28 @@ export function openLocalClientStore(file: string, hostCertificate: Buffer): Loc
   try { location(file); return open(file, host.fingerprint, false); }
   catch (cause) { return error(cause); }
 }
-function open(file: string, fingerprint: string, create: boolean): LocalClientStore {
+export function createManagedLocalClientStore(file: string, host: HostConfiguration): ManagedLocalClientStore {
+  try {
+    if (!host || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(host.identityId)) fail("INVALID_INPUT");
+    const certificate = localIdentityCertificate(host.certificate, "host");
+    location(file); closeSync(openSync(file, "wx", 0o600));
+    return open(file, certificate.fingerprint, true, { identityId: host.identityId, certificate: certificate.certificate }) as ManagedLocalClientStore;
+  } catch (cause) { return error(cause); }
+}
+export function openManagedLocalClientStore(file: string): ManagedLocalClientStore {
+  try { location(file); return open(file, null, false, true) as ManagedLocalClientStore; }
+  catch (cause) { return error(cause); }
+}
+function readConfiguration(database: Database.Database) {
+  const rows = database.prepare("SELECT singleton, identity_id, CASE WHEN length(certificate) <= 4096 THEN certificate END AS certificate, enabled FROM local_connection_config LIMIT 2").all() as { singleton: number; identity_id: string; certificate: Buffer; enabled: number }[];
+  if (rows.length !== 1 || rows[0].singleton !== 1 || ![0, 1].includes(rows[0].enabled) || typeof rows[0].identity_id !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(rows[0].identity_id)) fail("INVALID_STORE");
+  const certificate = publicLocalCertificate(rows[0].certificate);
+  // Expired public configuration remains readable for stopping/revoking. Private-key restoration still checks current time.
+  localIdentityCertificate(rows[0].certificate, "host", certificate.from);
+  return { identityId: rows[0].identity_id, certificate, enabled: rows[0].enabled === 1 };
+}
+function open(file: string, fingerprint: string | null, create: boolean, managed?: HostConfiguration | true): LocalClientStore {
   regularFile(file);
   const database = new Database(file, { fileMustExist: true, timeout: 0 });
   try {
@@ -96,17 +130,29 @@ function open(file: string, fingerprint: string, create: boolean): LocalClientSt
         database.exec(Object.values(tables).join(";\n") + ";");
         database.pragma(`application_id = ${applicationId}`); database.pragma("user_version = 2");
         database.prepare("INSERT INTO local_host VALUES (1, ?, 0)").run(fingerprint);
+        if (managed && managed !== true) {
+          database.exec(configurationTable);
+          database.prepare("INSERT INTO local_connection_config VALUES (1, ?, ?, 0)").run(managed.identityId, managed.certificate);
+          database.pragma("user_version = 3");
+        }
       }
-      inspect(database, fingerprint);
+      if (managed) { schema(database, true); fingerprint ??= readConfiguration(database).certificate.fingerprint; }
+      inspect(database, fingerprint!, Boolean(managed));
     }).exclusive();
-    return adapter(database, fingerprint);
+    return adapter(database, fingerprint!, Boolean(managed));
   } catch (cause) { database.close(); return error(cause); }
 }
-function inspect(database: Database.Database, fingerprint: string): LocalClientSnapshot {
+function schema(database: Database.Database, managed: boolean) {
   const version = database.pragma("user_version", { simple: true });
-  if (database.pragma("application_id", { simple: true }) !== applicationId || ![1, 2].includes(version as number)) fail("INVALID_STORE");
-  const objects = database.prepare("SELECT type, name, sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' LIMIT 3").all() as { type: string; name: string; sql: string }[];
-  if (objects.length !== 2 || objects.some(row => row.type !== "table" || !Object.hasOwn(tables, row.name) || row.sql !== tables[row.name as keyof typeof tables])) fail("INVALID_STORE");
+  if (database.pragma("application_id", { simple: true }) !== applicationId || !(managed ? version === 3 : [1, 2].includes(version as number))) fail("INVALID_STORE");
+  const objects = database.prepare("SELECT type, name, sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' LIMIT 4").all() as { type: string; name: string; sql: string }[];
+  if (objects.length !== (managed ? 3 : 2) || objects.some(row => row.type !== "table" || (managed && row.name === "local_connection_config" ? row.sql !== configurationTable :
+      !Object.hasOwn(tables, row.name) || row.sql !== tables[row.name as keyof typeof tables]))) fail("INVALID_STORE");
+  return version;
+}
+function inspect(database: Database.Database, fingerprint: string, managed = false): LocalClientSnapshot {
+  const version = schema(database, managed), configuration = managed ? readConfiguration(database) : undefined;
+  if (configuration && configuration.certificate.fingerprint !== fingerprint) fail("INVALID_STORE");
   const headers = database.prepare("SELECT * FROM local_host LIMIT 2").all() as { singleton: number; fingerprint: string; revision: number }[];
   if (headers.length !== 1 || headers[0].singleton !== 1 || headers[0].fingerprint !== fingerprint ||
       !Number.isInteger(headers[0].revision) || headers[0].revision < 0 || headers[0].revision > 2147483647) fail("INVALID_STORE");
@@ -124,10 +170,10 @@ function inspect(database: Database.Database, fingerprint: string): LocalClientS
         fingerprint256: cert.fingerprint, createdAt: row.created_at, expiresAt: row.expires_at, revokedAt: row.revoked_at });
     } catch { return fail("INVALID_STORE"); }
   });
-  return Object.freeze({ revision: headers[0].revision, clients: Object.freeze(clients) });
+  return Object.freeze({ revision: headers[0].revision, clients: Object.freeze(clients), ...(configuration ? { enabled: configuration.enabled } : {}) });
 }
 export function registrationSummary({ certificate: _certificate, ...summary }: StoredClient): LocalClientRegistration { return Object.freeze(summary); }
-function adapter(database: Database.Database, fingerprint: string): LocalClientStore {
+function adapter(database: Database.Database, fingerprint: string, managed = false): LocalClientStore {
   let faulted = false;
   function run<T>(action: () => T): T {
     if (!database.open) fail("CLOSED"); if (faulted) fail("UNAVAILABLE");
@@ -138,12 +184,12 @@ function adapter(database: Database.Database, fingerprint: string): LocalClientS
     }
   }
   function current(expected: number) {
-    const value = inspect(database, fingerprint);
+    const value = inspect(database, fingerprint, managed);
     if (!Number.isInteger(expected) || value.revision !== expected || expected >= 2147483647) fail("CONFLICT");
     return value;
   }
-  return Object.freeze<LocalClientStore>({ hostFingerprint: fingerprint,
-    read: () => run(() => inspect(database, fingerprint)),
+  const base: LocalClientStore = { hostFingerprint: fingerprint,
+    read: () => run(() => inspect(database, fingerprint, managed)),
     enroll(expectedRevision, input, now) {
       const cert = enrollment(input, now);
       return run(() => database.transaction(() => {
@@ -153,9 +199,9 @@ function adapter(database: Database.Database, fingerprint: string): LocalClientS
         const clientId = randomUUID();
         database.prepare("INSERT INTO local_clients VALUES (?, ?, ?, ?, ?, ?, ?, NULL)")
           .run(clientId, input.displayName, input.kind, cert.stored, cert.fingerprint, now, input.expiresAt);
-        if (cert.issuer) database.pragma("user_version = 2");
+        if (cert.issuer && !managed) database.pragma("user_version = 2");
         database.prepare("UPDATE local_host SET revision = revision + 1 WHERE singleton = 1").run();
-        return registrationSummary(inspect(database, fingerprint).clients.find(client => client.clientId === clientId)!);
+        return registrationSummary(inspect(database, fingerprint, managed).clients.find(client => client.clientId === clientId)!);
       }).immediate());
     },
     revoke(expectedRevision, clientId, now) {
@@ -170,5 +216,22 @@ function adapter(database: Database.Database, fingerprint: string): LocalClientS
       }).immediate());
     },
     close() { try { if (database.open) database.close(); } catch { return fail("UNAVAILABLE"); } }
+  };
+  if (!managed) return Object.freeze(base);
+  return Object.freeze<ManagedLocalClientStore>({ ...base,
+    configuration: () => run(() => {
+      inspect(database, fingerprint, true); const value = readConfiguration(database);
+      return Object.freeze({ reference: Object.freeze({ identityId: value.identityId, role: "host" as const, fingerprint256: fingerprint }),
+        certificate: Buffer.from(value.certificate.certificate), enabled: value.enabled });
+    }),
+    setEnabled(expectedRevision, enabled) {
+      if (typeof enabled !== "boolean") fail("INVALID_INPUT");
+      run(() => database.transaction(() => {
+        current(expectedRevision);
+        if (database.prepare("UPDATE local_connection_config SET enabled = ? WHERE singleton = 1 AND enabled <> ?").run(Number(enabled), Number(enabled)).changes)
+          database.prepare("UPDATE local_host SET revision = revision + 1 WHERE singleton = 1").run();
+        inspect(database, fingerprint, true);
+      }).immediate());
+    }
   });
 }

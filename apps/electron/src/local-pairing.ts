@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
-import type { VaultSessionState } from "@password-manager/shared/types";
+import type { VaultSessionState, LocalPairingReview, LocalPairingApproval } from "@password-manager/shared/types";
 import { localIdentityCertificate } from "./local-identity.js";
 import type { LocalClientRegistry } from "./local-client-registry.js";
 
@@ -13,8 +13,8 @@ type ClientKind = "agent" | "browser";
 type Request = { version: 1; requestId: string; displayName: string; kind: ClientKind; certificate: string; createdAt: number; expiresAt: number };
 type Session = { requireUnlocked(sessionId?: string): string; requireGeneration(sessionId: unknown): string; subscribe(listener: (state: VaultSessionState) => void): () => void };
 type Clock = () => { wall: number; monotonic: number };
-export type PairingReview = Readonly<{ pendingId: string; displayName: string; kind: ClientKind; fingerprint256: string; expiresAt: number; registrationExpiresAt: number; revision: number }>;
-export type PairingApproval = Readonly<{ pendingId: string; expectedRevision: number; fingerprint256: string; confirmation: "MATCHED_FINGERPRINT" }>;
+export type PairingReview = LocalPairingReview;
+export type PairingApproval = LocalPairingApproval;
 function fail(): never { throw new LocalPairingError(); }
 const uuid = (value: unknown): value is string => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
 const timestamp = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) > 0 && (value as number) <= 8640000000000000;

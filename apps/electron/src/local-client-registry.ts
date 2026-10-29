@@ -67,7 +67,8 @@ export class LocalClientRegistry {
       const initial = this.run(() => {
         this.unlocked(sessionId); const now = this.now(), hostCert = publicLocalCertificate(host.certificate);
         if (signal?.aborted || this.connections.size >= 16 || hostCert.fingerprint !== this.store.hostFingerprint || now < hostCert.from || now >= hostCert.until) throw new LocalClientRegistryError("DENIED");
-        return { snapshot: this.store.read(), hostUntil: hostCert.until, now };
+        const snapshot = this.store.read(); if (snapshot.enabled === false) throw new LocalClientRegistryError("DENIED");
+        return { snapshot, hostUntil: hostCert.until, now };
       });
       connection = { controller: new AbortController(), sessionId }; this.connections.add(connection);
       const active = connection, abort = () => active.controller.abort();
@@ -81,7 +82,7 @@ export class LocalClientRegistry {
         try {
           this.unlocked(sessionId); const now = this.now(), current = this.store.read();
           const client = current.clients.find(value => value.clientId === channel.clientId);
-          if (active.controller.signal.aborted || !selected || !client || client.revokedAt !== null || client.expiresAt <= now || initial.hostUntil <= now ||
+          if (active.controller.signal.aborted || current.enabled === false || !selected || !client || client.revokedAt !== null || client.expiresAt <= now || initial.hostUntil <= now ||
               client.fingerprint256 !== selected.fingerprint256 || (!active.clientId && current.revision !== initial.snapshot.revision)) throw new LocalClientRegistryError("DENIED");
         } catch (cause) { abort(); throw cause; }
       });
