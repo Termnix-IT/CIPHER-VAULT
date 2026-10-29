@@ -1,0 +1,183 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  regression:
+    name: Windows regression
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: native/local-transport/global.json
+      - name: Renderer boundaries and desktop build
+        run: npm run test:security
+      - name: API, storage and Web packaging
+        run: npm run test:api
+      - name: Session, KDF, input and clipboard contracts
+        run: npm run test:sessions
+      - name: Manual updater
+        run: npm run test:updates
+      - name: Desktop platform capability probe
+        run: npm run test:desktop-platform
+      - name: Native local endpoint permissions and peer probe
+        run: npm run test:local-endpoint
+      - name: Native helper and mutual client authentication
+        run: npm run test:native-transport
+      - name: Candidate search and MCP tool contracts
+        run: node --test tests/candidate-search.test.mjs tests/mcp-server.test.mjs
+      - name: MCP search through the desktop with synthetic credentials
+        run: node scripts/run-mcp-tests.mjs
+      - name: Built desktop integration
+        run: npm run test:desktop-session
+      - name: Migrated v2 desktop integration
+        run: npm run test:desktop-v2
+      - name: Interrupted vault recovery integration
+        run: npm run test:desktop-maintenance
+      - name: Vite desktop integration and HMR
+        run: npm run test:desktop-dev
+      - name: Production HTTP policy integration
+        run: npm run test:web-policy
+
+  core:
+    name: Core (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Linux runtime prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3 make libnspr4 libnss3 libasound2t64 clang zlib1g-dev
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: native/local-transport/global.json
+      - name: Core contracts in Node and Electron Node mode
+        run: npm run test:core
+      - name: Session, KDF, input and platform contracts
+        run: npm run test:sessions
+      - name: Native local endpoint permissions and peer probe
+        run: npm run test:local-endpoint
+      - name: Native helper and mutual client authentication
+        run: npm run test:native-transport
+
+  desktop-packages:
+    name: Desktop package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            package: npm run build:desktop && npm run build:native-transport && node node_modules/electron-builder/cli.js --win --dir --publish never
+          # Keep normal Chromium sandboxing; newer Ubuntu userns policy needs a separate acceptance test.
+          # Migrate this evaluation job before the runner's April 2027 retirement.
+          - os: ubuntu-22.04
+            package: npm run package:desktop:linux
+          - os: macos-15
+            package: npm run package:desktop:mac
+    defaults:
+      run:
+        shell: bash
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Linux package runtime and display prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3 make libnspr4 libnss3 libasound2 xvfb xauth clang zlib1g-dev
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Package inclusion and native target contracts
+        run: npm run test:packaging-contract
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: native/local-transport/global.json
+      - name: Build native evaluation packages without publishing
+        env:
+          # Only ad-hoc signing is configured; this job has no signing certificate secrets.
+          CSC_FOR_PULL_REQUEST: ${{ runner.os == 'macOS' && 'true' || 'false' }}
+        run: ${{ matrix.package }}
+      - name: Packaged sandbox, migration, restart and key cleanup (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:desktop-package
+      - name: Packaged sandbox, migration, restart and key cleanup
+        if: runner.os != 'Linux'
+        run: npm run test:desktop-package
+      - name: Extracted Linux artifacts
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:desktop-artifacts
+      - name: Signed macOS zip and read-only dmg
+        if: runner.os == 'macOS'
+        run: npm run test:desktop-artifacts
+
+  dependencies:
+    name: Dependency audit
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      # Audit the lockfile without running dependency install scripts.
+      - name: Reject high or critical production findings
+        run: npm audit --package-lock-only --omit=dev --audit-level=high
+      - name: Reject all dependency findings
+        run: npm audit --package-lock-only --audit-level=low

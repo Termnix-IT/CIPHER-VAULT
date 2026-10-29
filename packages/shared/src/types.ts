@@ -37,9 +37,37 @@ export type PasswordGenerationResult = {
   password: string;
 };
 
-export type VaultStatus = {
-  isConfigured: boolean;
+export type VaultLockReason = "manual" | "idle" | "clock-change" | "reset" | "window-closed" | "renderer-gone" | "update"
+  | "screen-lock" | "screen-unlock" | "suspend" | "resume";
+
+export type VaultSessionState = {
+  sessionId: string;
   isUnlocked: boolean;
+  idleTimeoutMs: number;
+  lockReason?: VaultLockReason;
+};
+
+export type VaultStatus = VaultSessionState & {
+  isConfigured: boolean;
+  maintenance?: VaultMaintenanceState;
+};
+
+export type VaultMaintenanceOperation = "migrate" | "rekey" | "reset" | "recover";
+export type VaultMaintenanceState = {
+  state: "ready" | "running" | "recovery-required";
+  format: "legacy" | "v2" | "unknown";
+  operation?: VaultMaintenanceOperation;
+  recoveryOperation?: "migrate" | "rekey" | "reset";
+  sourceSessionId?: string;
+};
+export type VaultMaintenancePayload = {
+  operation: VaultMaintenanceOperation;
+  masterPassword: string;
+  newMasterPassword: string;
+  confirmNewMasterPassword: string;
+  backupPassphrase: string;
+  confirmBackupPassphrase?: string;
+  confirmation?: "RESET_ALL_DATA";
 };
 
 export type VaultSetupPayload = {
@@ -64,9 +92,17 @@ export type VaultMetadataRecord = {
 };
 
 export type PasswordManagerDesktopApi = {
-  exportBackup: (payload: BackupExportPayload) => Promise<BackupFile>;
-  restoreBackup: (payload: BackupRestorePayload) => Promise<{ restoredCount: number }>;
-  auditVault: () => Promise<SecurityAudit>;
+  getLocalConnections: (sessionId: string) => Promise<LocalConnectionsState>;
+  setLocalConnectionsEnabled: (enabled: boolean, revision: number, sessionId: string) => Promise<LocalConnectionsState>;
+  selectLocalPairingRequest: (sessionId: string) => Promise<LocalConnectionsState>;
+  approveLocalPairing: (approval: LocalPairingApproval, sessionId: string) => Promise<LocalConnectionsState>;
+  cancelLocalPairing: (pendingId: string, sessionId: string) => Promise<LocalConnectionsState>;
+  revokeLocalClient: (clientId: string, revision: number, sessionId: string) => Promise<LocalConnectionsState>;
+  saveLocalConnectionInfo: (clientId: string, sessionId: string) => Promise<boolean>;
+  runVaultMaintenance: (payload: VaultMaintenancePayload, sessionId: string) => Promise<VaultStatus>;
+  exportBackup: (payload: BackupExportPayload, sessionId: string) => Promise<BackupFile>;
+  restoreBackup: (payload: BackupRestorePayload, sessionId: string) => Promise<{ restoredCount: number }>;
+  auditVault: (sessionId: string) => Promise<SecurityAudit>;
   getUpdateState: () => Promise<AppUpdateState>;
   checkForUpdates: () => Promise<void>;
   downloadUpdate: () => Promise<void>;
@@ -74,18 +110,30 @@ export type PasswordManagerDesktopApi = {
   openReleasePage: () => Promise<void>;
   onUpdateState: (listener: (state: AppUpdateState) => void) => () => void;
   fetchVaultStatus: () => Promise<VaultStatus>;
-  setupVault: (payload: VaultSetupPayload) => Promise<VaultStatus>;
-  unlockVault: (payload: VaultUnlockPayload) => Promise<{ isUnlocked: boolean }>;
-  lockVault: () => Promise<{ isUnlocked: boolean }>;
-  resetVault: (payload: VaultResetPayload) => Promise<VaultStatus>;
-  fetchEntries: () => Promise<{ items: PasswordEntrySummary[] }>;
-  fetchEntry: (id: string) => Promise<PasswordEntry>;
-  createEntry: (payload: PasswordEntryUpsertPayload) => Promise<PasswordEntry>;
-  updateEntry: (id: string, payload: PasswordEntryUpsertPayload) => Promise<PasswordEntry>;
-  deleteEntry: (id: string) => Promise<{ success: boolean }>;
-  generatePassword: (options?: PasswordGenerationOptions) => Promise<PasswordGenerationResult>;
-  copyText: (value: string) => Promise<void>;
+  onVaultState: (listener: (state: VaultStatus) => void) => () => void;
+  recordVaultActivity: (sessionId: string) => Promise<VaultStatus>;
+  setupVault: (payload: VaultSetupPayload, sessionId: string) => Promise<VaultStatus>;
+  unlockVault: (payload: VaultUnlockPayload, sessionId: string) => Promise<VaultStatus>;
+  lockVault: (sessionId: string) => Promise<VaultStatus>;
+  resetVault: (payload: VaultResetPayload, sessionId: string) => Promise<VaultStatus>;
+  fetchEntries: (sessionId: string) => Promise<{ items: PasswordEntrySummary[] }>;
+  fetchEntry: (id: string, sessionId: string) => Promise<PasswordEntry>;
+  createEntry: (payload: PasswordEntryUpsertPayload, sessionId: string) => Promise<PasswordEntry>;
+  updateEntry: (id: string, payload: PasswordEntryUpsertPayload, sessionId: string) => Promise<PasswordEntry>;
+  deleteEntry: (id: string, sessionId: string) => Promise<{ success: boolean }>;
+  generatePassword: (options: PasswordGenerationOptions, sessionId: string) => Promise<PasswordGenerationResult>;
+  copyText: (value: string, sessionId: string) => Promise<void>;
 };
+
+export type LocalPairingReview = Readonly<{ pendingId: string; displayName: string; kind: "agent" | "browser"; fingerprint256: string; expiresAt: number; registrationExpiresAt: number; revision: number }>;
+export type LocalPairingApproval = Readonly<{ pendingId: string; expectedRevision: number; fingerprint256: string; confirmation: "MATCHED_FINGERPRINT" }>;
+export type LocalConnectionsState = Readonly<{
+  status: "disabled" | "paused" | "locked" | "starting" | "ready" | "unavailable";
+  enabled: boolean;
+  revision: number;
+  clients: readonly Readonly<{ clientId: string; displayName: string; kind: "agent" | "browser"; fingerprint256: string; createdAt: number; expiresAt: number; revokedAt: number | null; state: "active" | "revoked" | "expired" }>[];
+  review: LocalPairingReview | null;
+}>;
 
 export type BackupExportPayload = { passphrase: string };
 export type BackupFile = { fileName: string; content: string };

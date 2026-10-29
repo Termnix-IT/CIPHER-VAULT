@@ -6,6 +6,7 @@ import { useGlitchDecode } from "../lib/useGlitchDecode";
 type LockScreenProps = {
   onDirtyChange: (dirty: boolean) => void;
   isConfigured: boolean;
+  allowReset?: boolean;
   isSubmitting: boolean;
   errorMessage: string;
   onSubmit: (masterPassword: string) => Promise<void>;
@@ -27,6 +28,7 @@ function createResetConfirmationCode() {
 export function LockScreen({
   onDirtyChange,
   isConfigured,
+  allowReset = true,
   isSubmitting,
   errorMessage,
   onSubmit,
@@ -158,7 +160,7 @@ export function LockScreen({
                   }
                   value={masterPassword}
                   onChange={(e) => setMasterPassword(e.target.value)}
-                  minLength={12}
+                  minLength={isConfigured ? undefined : 12}
                   autoComplete={isConfigured ? "current-password" : "new-password"}
                   autoFocus
                 />
@@ -181,11 +183,11 @@ export function LockScreen({
               </button>
             </form>
 
-            {isConfigured ? (
+            {isConfigured && allowReset ? (
               <button className="reset-entry-link" type="button" onClick={openResetWarning}>
                 マスターキーを忘れた場合
               </button>
-            ) : (
+            ) : isConfigured ? <p className="lock-hint">初期化には現在のマスターキーが必要です。解除後に「ツール」から保管庫の管理を開いてください。</p> : (
               <p className="lock-hint">
                 新しい保管庫を作成します。マスターキーは復元できません。
               </p>

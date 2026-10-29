@@ -17,6 +17,17 @@ test("renderer trust requires the exact loaded document, allowing only fragment 
   assert.equal(isTrustedRendererUrl("file:///C:/app/web/other.html", "file:///C:/app/web/index.html"), false);
 });
 
+test("file renderer trust canonicalizes path encoding without accepting a different document", () => {
+  const expected = "file:///C:/Users/RUNNER%7E1/app%20folder/index.html";
+  assert.equal(isTrustedRendererUrl("file:///C:/Users/RUNNER~1/app%20folder/index.html", expected), true);
+  assert.equal(isTrustedRendererUrl("file:///C:/Users/RUNNER%7e1/app%20folder/index.html#section", expected), true);
+  for (const candidate of [expected + "?changed=1", expected + "?", expected.replace("index.html", "other.html"),
+    expected.replace("RUNNER%7E1", "OTHER~1"), expected.replace("folder/", "folder%2F"),
+    expected.replace("folder/", "folder%5C"), expected.replace("file:///C:", "file://remote.invalid/share")]) {
+    assert.equal(isTrustedRendererUrl(candidate, expected), false);
+  }
+});
+
 test("IPC guard rejects other windows, subframes, destroyed windows and a navigated main window", () => {
   const url = "file:///C:/app/web/index.html";
   const frame = { url };

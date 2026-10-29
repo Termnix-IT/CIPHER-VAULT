@@ -1,0 +1,127 @@
+{
+  "testOnly": true,
+  "provenance": {
+    "generator": "Python hashlib.scrypt, hmac, cryptography AESGCM/HKDF",
+    "cryptographyVersion": "46.0.6",
+    "purpose": "Synthetic compatibility and draft-v2 byte contract; never production keys or nonces"
+  },
+  "legacy": {
+    "password": "fixture-互換🔐é-password",
+    "salt": "AAECAwQFBgcICQoLDA0ODw==",
+    "keyHex": "5eb1c45334a22dc84b619f319a9f7cd07b07438bdfddc69fe1ee0fffda6bd09a",
+    "verifier": "izzwsDRSTmp8RvQYUkf85UpMpp7C8ujRzK+91Ey5WUI=",
+    "nfcKeyHex": "92474147e35846840510a5182ff5f418ce4822d6fcc1f715c7f2ebddd24394de",
+    "decodedSaltKeyHex": "fc3323b659fcf41b689880732cbd9d4315a93781b40e4563f1165bfbd8118363",
+    "metadata": {
+      "id": 1,
+      "passwordSalt": "AAECAwQFBgcICQoLDA0ODw==",
+      "passwordVerifier": "XrHEUzSiLchLYZ8xmp980HsHQ4vf3caf4e4P/9pr0Jo=",
+      "kdfParams": "{\"algorithm\":\"scrypt\",\"keyLength\":32}",
+      "createdAt": "2025-01-01T00:00:00.000Z",
+      "updatedAt": "2025-01-01T00:00:00.000Z"
+    },
+    "rows": [
+      {
+        "id": "11111111-1111-4111-8111-111111111111",
+        "service_name": "  合成サービス🔐  ",
+        "login_id": " fixture-user ",
+        "encrypted_password": "EBESExQVFhcYGRob7xAo9sfp1oLIeulFNgnFFlv34uNRG5Fne3gvvtXGd44e",
+        "encrypted_notes": "ICEiIyQlJicoKSorVVEamD5JWPg8epTAJmwr7wMDgD5MvPCgPMibfYaNNDypWbMImwGHi16b",
+        "url": "https://fixture.example.test/login",
+        "tags": "[\"合成\",\"é\",\"合成\"]",
+        "group_name": null,
+        "created_at": "2025-01-01T00:00:00.000Z",
+        "updated_at": "2025-01-02T03:04:05.000Z",
+        "password_changed_at": null
+      },
+      {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "service_name": "Second fixture",
+        "login_id": "second-fixture",
+        "encrypted_password": "MDEyMzQ1Njc4OTo7tidX+fh72qTPy/45OS7QwnKYElJjYQgvfN4VhVIBc1o7Y4KbBA==",
+        "encrypted_notes": null,
+        "url": null,
+        "tags": "[]",
+        "group_name": "",
+        "created_at": "2025-02-01T00:00:00.000Z",
+        "updated_at": "2025-02-01T00:00:00.000Z",
+        "password_changed_at": "2025-02-01T00:00:00.000Z"
+      }
+    ],
+    "entries": [
+      {
+        "id": "11111111-1111-4111-8111-111111111111",
+        "serviceName": "  合成サービス🔐  ",
+        "loginId": " fixture-user ",
+        "password": "fixture-秘密é",
+        "notes": "一行目\n二行目\u0000終端",
+        "url": "https://fixture.example.test/login",
+        "tags": [
+          "合成",
+          "é",
+          "合成"
+        ],
+        "group": null,
+        "createdAt": "2025-01-01T00:00:00.000Z",
+        "updatedAt": "2025-01-02T03:04:05.000Z",
+        "passwordChangedAt": null
+      },
+      {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "serviceName": "Second fixture",
+        "loginId": "second-fixture",
+        "password": "second-fixture-secret",
+        "notes": "",
+        "url": "",
+        "tags": [],
+        "group": "",
+        "createdAt": "2025-02-01T00:00:00.000Z",
+        "updatedAt": "2025-02-01T00:00:00.000Z",
+        "passwordChangedAt": "2025-02-01T00:00:00.000Z"
+      }
+    ],
+    "emptyCiphertext": "cHFyc3R1dnd4eXp7HZ9CBtBNxiOrgakeF/d7lg=="
+  },
+  "backupV1": {
+    "passphrase": "fixture-backup-互換é-passphrase",
+    "keyHex": "1012066294e6940bf957b8097a87641cc747457a36d49b10d693571058c0b2cb",
+    "aadHex": "4349504845522d5641554c543a313a7363727970742d4e3133313037322d72382d70313a6165732d3235362d67636d",
+    "plaintext": "{\"version\":1,\"entries\":[{\"id\":\"11111111-1111-4111-8111-111111111111\",\"serviceName\":\"  合成サービス🔐  \",\"loginId\":\" fixture-user \",\"password\":\"fixture-秘密é\",\"notes\":\"一行目\\n二行目\\u0000終端\",\"url\":\"https://fixture.example.test/login\",\"tags\":[\"合成\",\"é\",\"合成\"],\"group\":null,\"createdAt\":\"2025-01-01T00:00:00.000Z\",\"updatedAt\":\"2025-01-02T03:04:05.000Z\",\"passwordChangedAt\":null},{\"id\":\"22222222-2222-4222-8222-222222222222\",\"serviceName\":\"Second fixture\",\"loginId\":\"second-fixture\",\"password\":\"second-fixture-secret\",\"notes\":\"\",\"url\":\"\",\"tags\":[],\"group\":\"\",\"createdAt\":\"2025-02-01T00:00:00.000Z\",\"updatedAt\":\"2025-02-01T00:00:00.000Z\",\"passwordChangedAt\":\"2025-02-01T00:00:00.000Z\"}]}",
+    "envelope": {
+      "format": "CIPHER-VAULT",
+      "version": 1,
+      "kdf": "scrypt-N131072-r8-p1",
+      "cipher": "aes-256-gcm",
+      "salt": "QEFCQ0RFRkdISUpLTE1OTw==",
+      "iv": "UFFSU1RVVldYWVpb",
+      "tag": "us+aAVJ/5lQoRmmuCj87dA==",
+      "data": "XZ0ANq3eS0eUFyzpvfCuegeP6cmbLwP5OBXwwSqnXH1WKOpxQ2UNrY954iQ16ED2w7DrUfsnc+Ds7LovMgeAYIUclIYm3i74TGwg8oUI7NUH76GkeMlXCsuwf23GP8bcJpaQx5YS7d4SiZaL7Ov7mfOp80Rad71YnVblduiC4YrdTGBJ7XrJPL+oiWkxE64EPEp4W+AF1YsARaKtoJaiIt2VQhyinRvjrC1E9QRVCtKKyqCrew/7OYpW+WFElBPDi0i6TLr+yUKguWpo90AlLs2DyhRedCrwv1brojoAeE3bEg1jUP7JvrvExiXgoFjLns7Qs9juTAzp5K8l0ZJyVCI5aTacuTWmjugsmj5UnkquyQxJNXdh3xboaVGv6+NAjJxNV0M5/e4LJNo9b6YJA0rl5Y0jwTqOftT0bJdiZjAjDNkGTQOVmSyG6uNd0hjyibe7OH43Io2Ey/W6d82L9wp1LoVi49SYGS1gyzlEaunf8gBWGdWgnkyQIhf6vSvqO+4rMt/ZIP46fxxzzhvYm7Zmip6hK0IG8PGNr46KCjHLUrGv8To4IyzPWLo4jRyN3QLOR06wsJpXHy3MYDHRfs5Bq2wkEmcCFxeM7kIKWa/IWcoMbVHH0tGjfC4fbH/8crYg86ZnjXv/JdYW1GVn6000lhmW7CuUeR1PiBLaAOZwEcO5R5M2FPtL2aGum2z/ugLs5Avrv6lIZvDC7FzXOk0jJOQPsIvf9tt2BUSf7xnoHAQoiVT/eYoVkxlvDeqqFHwykwtb+GtxYeP79/Abkndx/T6S6sXmTbzLPaIY1GOySI4yLE8O+O4JYdr9H34yzphLTOCLNfP2szKKLpLUhoT7R6Gm4hW4qq1VsrTkrKJe1DV+xQ13AkKWlXH7pMR4pnAjeBMSp/p20liTVf5ecIvyY1Y2GSevr2SccSFdkL8F1KyX+8OdaQ=="
+    }
+  },
+  "draftV2": {
+    "status": "codec-contract-1-storage-not-integrated",
+    "masterPassword": "fixture-v2-互換🔐é-master",
+    "vaultId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "keyId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    "profile": "scrypt-n17-r8-p1-k32",
+    "salt": "/////////////////////w==",
+    "kdfKeyHex": "afe6f694c42c5bed36a48afd28200df4431b13367d7cc6bd8de550fd8bdc35a1",
+    "rootKeyHex": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
+    "wrapInfo": "CIPHER-VAULT/v2/password-wrap",
+    "wrapKeyHex": "b267ab6eafdad7baa5e2581df8b13333f44f174fcf3ad86caa19da2bcd793655",
+    "entryInfo": "CIPHER-VAULT/v2/entry",
+    "entryKeyHex": "cdd8e41b44565cba85a95f4c0556252eab1a32593adec1bdedbf28c4ad5e7aaa",
+    "slotRevision": 1,
+    "wrapAadHex": "5b224349504845522d5641554c54222c322c2270617373776f72642d736c6f74222c2261616161616161612d616161612d346161612d386161612d616161616161616161616161222c2262626262626262622d626262622d346262622d386262622d626262626262626262626262222c2270617373776f7264222c312c227363727970742d6e31372d72382d70312d6b3332222c222f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f773d3d225d",
+    "wrapIv": "oKGio6Slpqeoqaqr",
+    "wrappedRoot": "EIBHdBuawhcKmKC028k16uy20yRq9iV/oxQOj/at31U=",
+    "wrapTag": "bAbvhL5apQvQoTJNX+Xv3g==",
+    "entryId": "11111111-1111-4111-8111-111111111111",
+    "revision": 1,
+    "entryAadHex": "5b224349504845522d5641554c54222c322c22656e747279222c2261616161616161612d616161612d346161612d386161612d616161616161616161616161222c2262626262626262622d626262622d346262622d386262622d626262626262626262626262222c22333133313331333133313331333133313264333133313331333132643334333133313331326433383331333133313264333133313331333133313331333133313331333133313331222c315d",
+    "entryIv": "sLGys7S1tre4ubq7",
+    "entryPlaintext": "{\"id\":\"11111111-1111-4111-8111-111111111111\",\"serviceName\":\"  合成サービス🔐  \",\"loginId\":\" fixture-user \",\"password\":\"fixture-秘密é\",\"notes\":\"一行目\\n二行目\\u0000終端\",\"url\":\"https://fixture.example.test/login\",\"tags\":[\"合成\",\"é\",\"合成\"],\"group\":null,\"createdAt\":\"2025-01-01T00:00:00.000Z\",\"updatedAt\":\"2025-01-02T03:04:05.000Z\",\"passwordChangedAt\":null}",
+    "entryData": "aA29ZrGUquezRoVrKzx0ruWgBq+krX4AAoziJv9MiRddDvDR/RZDA4hE3dVDvXhMphRh5bep84wiR1qi6fEL75UMNLjpi+z73d1yy3wiSSl9fAYpXwNxSWvj7p710Q4guUuTAkJXkqbKAQhu8py2Pq0/H2S+1ysgjP/5JQvum70Ibs57q1o14EkyC0pCwtmdIykMpkTz9uM7dseb8UCOiE3QkBocajH25o+D8RWQqvHDAdF7Q+PHGsQ5jU5iRqXh3ZQlr4g3BLhCtP2tjwgWFRmPKQU2zcoBc6NeR8DQCCUwsnex4XccGuBNsz9m2GSqqXk7ae6mqVjf1OnzzmDA4+e5DafK3KBAsiSt/vWmXhkgzHOjUCjgAMl3Q/J2UsS3TOWAU+7ER/EMXJ0gWSOhUD17jVNAV616raY3Kdof0HO4/SzPlPDPTXVmcxjgJdmFSGe1ObdR4gb7T2QcNxuhH/AJ+Ql9n7f4nzmoItEvgmxEf11FpgywzdPecsQc",
+    "entryTag": "qWNeBGrCU7i7rd77LXjDZg=="
+  }
+}

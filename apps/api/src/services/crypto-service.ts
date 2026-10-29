@@ -1,85 +1,46 @@
-import { createCipheriv, createDecipheriv, createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { vaultSession } from "./vault-session.js";
+import { decryptLegacySecret, encryptLegacySecret } from "../crypto/legacy-codec.js";
+import { assertVaultStorage, isV2Vault } from "../db/vault-context.js";
+import { HttpError } from "../lib/errors.js";
+export { deriveVaultKey, deriveVerifier, verifyVaultKey } from "../crypto/legacy-codec.js";
 
-const KEY_LENGTH = 32;
-const IV_LENGTH = 12;
-
-let activeVaultKey: Buffer | null = null;
-let vaultSession = 0;
-
-export function getVaultSession() { return vaultSession; }
+export function getVaultSession() { return vaultSession.getState().sessionId; }
 
 export function createPasswordSalt() {
   return randomBytes(16).toString("base64");
 }
 
-export function deriveVaultKey(masterPassword: string, salt: string) {
-  return scryptSync(masterPassword, salt, KEY_LENGTH);
-}
-
-export function deriveVerifier(masterPassword: string, salt: string) {
-  const key = deriveVaultKey(masterPassword, salt);
-  try {
-    return createHmac("sha256", key).update("CIPHER VAULT password verifier v1").digest("base64");
-  } finally {
-    key.fill(0);
-  }
-}
-
-export function verifyMasterPassword(
-  masterPassword: string,
-  salt: string,
-  expectedVerifier: string,
-  legacy = false
-) {
-  const actual = legacy ? deriveVaultKey(masterPassword, salt) : Buffer.from(deriveVerifier(masterPassword, salt), "base64");
-  const expected = Buffer.from(expectedVerifier, "base64");
-  try {
-    return actual.length === expected.length && timingSafeEqual(actual, expected);
-  } finally {
-    actual.fill(0);
-    expected.fill(0);
-  }
-}
-
 export function setActiveVaultKey(key: Buffer) {
-  clearActiveVaultKey();
-  activeVaultKey = Buffer.from(key);
+  vaultSession.unlock(key);
 }
 
 export function clearActiveVaultKey() {
-  vaultSession += 1;
-  activeVaultKey?.fill(0);
-  activeVaultKey = null;
+  vaultSession.lock();
 }
 
 export function hasActiveVaultKey() {
-  return activeVaultKey !== null;
+  return vaultSession.getState().isUnlocked;
 }
 
 function requireActiveVaultKey() {
-  if (activeVaultKey === null) {
-    throw new Error("保管庫の鍵が利用できません");
-  }
-
-  return activeVaultKey;
+  return vaultSession.requireKey();
 }
 
 export function encryptSecret(plainText: string) {
-  const iv = randomBytes(IV_LENGTH);
-  const cipher = createCipheriv("aes-256-gcm", requireActiveVaultKey(), iv);
-  const encrypted = Buffer.concat([cipher.update(plainText, "utf-8"), cipher.final()]);
-  const authTag = cipher.getAuthTag();
-
-  return Buffer.concat([iv, authTag, encrypted]).toString("base64");
+  assertVaultStorage();
+  if (isV2Vault()) throw new HttpError(409, "保管庫の形式に対応した操作を使用してください");
+  const session = vaultSession.requireUnlocked();
+  const payload = encryptLegacySecret(requireActiveVaultKey(), plainText);
+  vaultSession.requireUnlocked(session);
+  return payload;
 }
 
 export function decryptSecret(payload: string) {
-  const buffer = Buffer.from(payload, "base64");
-  const iv = buffer.subarray(0, IV_LENGTH);
-  const authTag = buffer.subarray(IV_LENGTH, IV_LENGTH + 16);
-  const encrypted = buffer.subarray(IV_LENGTH + 16);
-  const decipher = createDecipheriv("aes-256-gcm", requireActiveVaultKey(), iv);
-  decipher.setAuthTag(authTag);
-
-  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf-8");
+  assertVaultStorage();
+  if (isV2Vault()) throw new HttpError(409, "保管庫の形式に対応した操作を使用してください");
+  const session = vaultSession.requireUnlocked();
+  const plaintext = decryptLegacySecret(requireActiveVaultKey(), payload);
+  try { vaultSession.requireUnlocked(session); return plaintext.toString("utf8"); }
+  finally { plaintext.fill(0); }
 }

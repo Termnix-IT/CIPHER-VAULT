@@ -17,14 +17,16 @@ flowchart TD
     update --> lockCheck
     remove --> lockCheck
 
-    lockCheck{保管庫鍵が<br/>メモリに存在するか}
+    lockCheck{現在の世代の鍵が存在し<br/>無操作期限内か}
     lockCheck -- いいえ --> locked[423<br/>保管庫はロックされています]
     lockCheck -- はい --> dispatch{操作を続行}
 
-    dispatch -->|Create| validateCreate[必須項目を検証]
-    validateCreate --> validCreate{serviceName・loginId・<br/>passwordが有効か}
-    validCreate -- いいえ --> badRequest[400 入力エラー]
-    validCreate -- はい --> encryptCreate[passwordとnotesを<br/>AES-256-GCMで暗号化]
+    dispatch -->|Create| validateCreate[共通schemaで項目・型・容量を検証]
+    validateCreate --> validCreate{入力が有効か}
+    validCreate -- いいえ --> badRequest[400 入力不正 / 413 上限超過]
+    validCreate -- はい --> capacity{新規登録件数に空きがあるか}
+    capacity -- いいえ --> badRequest
+    capacity -- はい --> encryptCreate[passwordとnotesを<br/>AES-256-GCMで暗号化]
     encryptCreate --> insert[(暗号化済みデータをINSERT)]
     insert --> readCreated[作成した行を再取得]
     readCreated --> decryptCreated[passwordとnotesを復号]
@@ -40,8 +42,10 @@ flowchart TD
     foundDetail -- はい --> decryptDetail[passwordとnotesを<br/>AES-256-GCMで復号]
     decryptDetail --> detailResponse[完全なエントリを返す]
 
-    dispatch -->|Update| validateUpdate[必須項目を検証]
-    validateUpdate --> existsUpdate{対象が存在するか}
+    dispatch -->|Update| validateUpdate[共通schemaで項目・型・容量を検証]
+    validateUpdate --> validUpdate{入力が有効か}
+    validUpdate -- いいえ --> badRequest
+    validUpdate -- はい --> existsUpdate{対象が存在するか}
     existsUpdate -- いいえ --> notFound
     existsUpdate -- はい --> encryptUpdate[passwordとnotesを<br/>新しいIVで再暗号化]
     encryptUpdate --> updateRow[(対象行をUPDATE)]
@@ -54,6 +58,8 @@ flowchart TD
     deleted -- いいえ --> notFound
     deleted -- はい --> deleteResponse[success: trueを返す]
 ```
+
+入力契約と数値上限は[設計](../設計.md#入力の検証と上限)にまとめています。編集上限を超える既存値も閲覧でき、拒否された更新で元の値を切り詰めることはありません。
 
 ## 保存データの暗号化範囲
 
@@ -87,7 +93,7 @@ flowchart LR
 
 ## セキュリティ境界
 
-- すべてのCRUD操作は最初に、メモリ上に保管庫鍵が存在することを確認します。
+- すべてのCRUD操作は最初に、現在の世代の鍵が存在し、無操作期限内であることを確認します。暗号処理後や結果返却前も検査し、HTTP/IPCの古い世代の要求は拒否します。
 - passwordとnotesだけが暗号化対象です。サービス名、ログインID、URL、タグ、グループ、日時は平文で保存されます。
 - 暗号化のたびに12 byteのランダムIVを生成し、16 byteの認証タグと暗号文を連結してBase64化します。
 - 一覧取得では暗号化済みpassword・notesを読み出しても復号・返却しません。

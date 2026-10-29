@@ -1,12 +1,16 @@
 import { randomUUID } from "node:crypto";
 import type {
   PasswordEntry,
-  PasswordEntrySummary,
-  PasswordEntryUpsertPayload
+  PasswordEntrySummary
 } from "@password-manager/shared/types";
-import { database } from "../db/database.js";
+import { getDatabase } from "../db/database.js";
 import { HttpError } from "../lib/errors.js";
-import { decryptSecret, encryptSecret, hasActiveVaultKey } from "./crypto-service.js";
+import { decryptSecret, encryptSecret } from "./crypto-service.js";
+import { vaultSession } from "./vault-session.js";
+import { INPUT_LIMITS, parseEntryId, parseEntryPayload } from "../lib/input-validation.js";
+import { restoreLegacyEntries } from "../db/legacy-entry-writer.js";
+import { assertVaultStorage, isV2Vault } from "../db/vault-context.js";
+import { createV2Entry, deleteV2Entry, getV2Entry, listV2Entries, restoreV2Entries, updateV2Entry } from "./v2-vault-service.js";
 
 type PasswordEntryRow = {
   id: string;
@@ -22,19 +26,19 @@ type PasswordEntryRow = {
   password_changed_at: string | null;
 };
 
-const listEntriesStatement = database.prepare(
+const listEntriesStatement = () => getDatabase().prepare(
   `SELECT id, service_name, login_id, encrypted_password, encrypted_notes, url, tags, group_name, created_at, updated_at, password_changed_at
    FROM password_entries
    ORDER BY updated_at DESC`
 );
 
-const getEntryStatement = database.prepare(
+const getEntryStatement = () => getDatabase().prepare(
   `SELECT id, service_name, login_id, encrypted_password, encrypted_notes, url, tags, group_name, created_at, updated_at, password_changed_at
    FROM password_entries
    WHERE id = ?`
 );
 
-const insertEntryStatement = database.prepare(
+const insertEntryStatement = () => getDatabase().prepare(
   `INSERT INTO password_entries (
     id, service_name, login_id, encrypted_password, encrypted_notes, url, tags, group_name, created_at, updated_at, password_changed_at
    ) VALUES (
@@ -42,7 +46,7 @@ const insertEntryStatement = database.prepare(
    )`
 );
 
-const updateEntryStatement = database.prepare(
+const updateEntryStatement = () => getDatabase().prepare(
   `UPDATE password_entries
    SET service_name = @service_name,
        login_id = @login_id,
@@ -56,12 +60,12 @@ const updateEntryStatement = database.prepare(
    WHERE id = @id`
 );
 
-const deleteEntryStatement = database.prepare("DELETE FROM password_entries WHERE id = ?");
+const deleteEntryStatement = () => getDatabase().prepare("DELETE FROM password_entries WHERE id = ?");
+const countEntriesStatement = () => getDatabase().prepare("SELECT COUNT(*) AS count FROM password_entries");
 
-export function requireUnlockedVault() {
-  if (!hasActiveVaultKey()) {
-    throw new HttpError(423, "保管庫はロックされています");
-  }
+export function requireUnlockedVault(expectedSessionId?: string) {
+  const session = vaultSession.requireUnlocked(expectedSessionId);
+  assertVaultStorage(); return session;
 }
 
 function parseTags(tags: string) {
@@ -95,56 +99,42 @@ function mapRowToEntry(row: PasswordEntryRow): PasswordEntry {
   };
 }
 
-export function validatePayload(payload: PasswordEntryUpsertPayload) {
-  if (typeof payload?.serviceName !== "string" || !payload.serviceName.trim()) {
-    throw new HttpError(400, "サービス名は必須です");
-  }
-
-  if (typeof payload.loginId !== "string" || !payload.loginId.trim()) {
-    throw new HttpError(400, "ログインIDは必須です");
-  }
-
-  if (typeof payload.password !== "string" || !payload.password) {
-    throw new HttpError(400, "パスワードは必須です");
-  }
-  for (const field of ["notes", "url", "group"] as const) {
-    if (payload[field] != null && typeof payload[field] !== "string") {
-      throw new HttpError(400, `${field}は文字列で指定してください`);
-    }
-  }
-  if (payload.tags != null && (!Array.isArray(payload.tags) || payload.tags.some((tag) => typeof tag !== "string"))) {
-    throw new HttpError(400, "タグは文字列の配列で指定してください");
-  }
-}
-
 export function listEntries() {
-  requireUnlockedVault();
-  const rows = listEntriesStatement.all() as PasswordEntryRow[];
-
-  return {
-    items: rows.map(mapRowToSummary)
-  };
+  if (isV2Vault()) return listV2Entries();
+  const session = requireUnlockedVault();
+  const rows = listEntriesStatement().all() as PasswordEntryRow[];
+  const items = rows.map(mapRowToSummary);
+  requireUnlockedVault(session);
+  return { items };
 }
 
-export function getEntryById(id: string) {
-  requireUnlockedVault();
-  const row = getEntryStatement.get(id) as PasswordEntryRow | undefined;
+export function getEntryById(inputId: unknown) {
+  if (isV2Vault()) return getV2Entry(inputId);
+  const session = requireUnlockedVault();
+  const id = parseEntryId(inputId);
+  const row = getEntryStatement().get(id) as PasswordEntryRow | undefined;
 
   if (!row) {
     throw new HttpError(404, "エントリが見つかりません");
   }
 
-  return mapRowToEntry(row);
+  const entry = mapRowToEntry(row);
+  requireUnlockedVault(session);
+  return entry;
 }
 
-export function createEntry(payload: PasswordEntryUpsertPayload) {
+export function createEntry(input: unknown) {
+  if (isV2Vault()) return createV2Entry(input);
   requireUnlockedVault();
-  validatePayload(payload);
+  const payload = parseEntryPayload(input);
+  if ((countEntriesStatement().get() as { count: number }).count >= INPUT_LIMITS.entries) {
+    throw new HttpError(413, "保管庫への新規登録は10000件まで対応しています");
+  }
 
   const now = new Date().toISOString();
   const id = randomUUID();
 
-  insertEntryStatement.run({
+  insertEntryStatement().run({
     id,
     service_name: payload.serviceName.trim(),
     login_id: payload.loginId.trim(),
@@ -161,18 +151,20 @@ export function createEntry(payload: PasswordEntryUpsertPayload) {
   return getEntryById(id);
 }
 
-export function updateEntry(id: string, payload: PasswordEntryUpsertPayload) {
+export function updateEntry(inputId: unknown, input: unknown) {
+  if (isV2Vault()) return updateV2Entry(inputId, input);
   requireUnlockedVault();
-  validatePayload(payload);
+  const id = parseEntryId(inputId);
+  const payload = parseEntryPayload(input);
 
-  const existing = getEntryStatement.get(id) as PasswordEntryRow | undefined;
+  const existing = getEntryStatement().get(id) as PasswordEntryRow | undefined;
 
   if (!existing) {
     throw new HttpError(404, "エントリが見つかりません");
   }
 
   const now = new Date().toISOString();
-  updateEntryStatement.run({
+  updateEntryStatement().run({
     id,
     service_name: payload.serviceName.trim(),
     login_id: payload.loginId.trim(),
@@ -189,9 +181,11 @@ export function updateEntry(id: string, payload: PasswordEntryUpsertPayload) {
   return getEntryById(id);
 }
 
-export function deleteEntry(id: string) {
+export function deleteEntry(inputId: unknown) {
+  if (isV2Vault()) return deleteV2Entry(inputId);
   requireUnlockedVault();
-  const result = deleteEntryStatement.run(id);
+  const id = parseEntryId(inputId);
+  const result = deleteEntryStatement().run(id);
 
   if (result.changes === 0) {
     throw new HttpError(404, "エントリが見つかりません");
@@ -203,19 +197,7 @@ export function deleteEntry(id: string) {
 }
 
 export function restoreEntriesIntoEmptyVault(entries: PasswordEntry[]) {
-  return database.transaction(() => {
-    requireUnlockedVault();
-    if (listEntriesStatement.get()) throw new HttpError(409, "復元できるのは空の保管庫のみです");
-    for (const entry of entries) {
-      insertEntryStatement.run({
-        id: entry.id, service_name: entry.serviceName, login_id: entry.loginId,
-        encrypted_password: encryptSecret(entry.password),
-        encrypted_notes: encryptSecret(entry.notes), url: entry.url,
-        tags: JSON.stringify(entry.tags), group_name: entry.group,
-        created_at: entry.createdAt, updated_at: entry.updatedAt,
-        password_changed_at: entry.passwordChangedAt
-      });
-    }
-    return { restoredCount: entries.length };
-  })();
+  if (isV2Vault()) return restoreV2Entries(entries);
+  const session = requireUnlockedVault();
+  return restoreLegacyEntries(getDatabase(), entries, encryptSecret, () => { requireUnlockedVault(session); });
 }

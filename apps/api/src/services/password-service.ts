@@ -1,36 +1,21 @@
 import { randomInt } from "node:crypto";
-import type { PasswordGenerationOptions, PasswordGenerationResult } from "@password-manager/shared/types";
-import { HttpError } from "../lib/errors.js";
+import type { PasswordGenerationResult } from "@password-manager/shared/types";
+import { parseGenerationOptions } from "../lib/input-validation.js";
 
 const UPPERCASE = "ABCDEFGHJKLMNPQRSTUVWXYZ";
 const LOWERCASE = "abcdefghijkmnopqrstuvwxyz";
 const NUMBERS = "23456789";
 const SYMBOLS = "!@#$%^&*()-_=+[]{}?";
 
-export function generatePassword(options: PasswordGenerationOptions = {}): PasswordGenerationResult {
-  if (!options || typeof options !== "object" || Array.isArray(options)) {
-    throw new HttpError(400, "生成条件はオブジェクトで指定してください");
-  }
-  for (const field of ["includeUppercase", "includeLowercase", "includeNumbers", "includeSymbols"] as const) {
-    if (options[field] !== undefined && typeof options[field] !== "boolean") {
-      throw new HttpError(400, "文字種の指定は真偽値で指定してください");
-    }
-  }
-  const length = options.length ?? 20;
+export function generatePassword(input: unknown = {}): PasswordGenerationResult {
+  const options = parseGenerationOptions(input);
+  const length = options.length;
   const groups = [
     options.includeUppercase !== false ? UPPERCASE : "",
     options.includeLowercase !== false ? LOWERCASE : "",
     options.includeNumbers !== false ? NUMBERS : "",
     options.includeSymbols !== false ? SYMBOLS : ""
   ].filter(Boolean);
-
-  if (!Number.isInteger(length) || length < 12 || length > 64) {
-    throw new HttpError(400, "パスワードの長さは12文字以上64文字以下で指定してください");
-  }
-
-  if (groups.length === 0) {
-    throw new HttpError(400, "少なくとも1つの文字種を有効にしてください");
-  }
 
   const requiredChars = groups.map((group) => group[randomInt(group.length)]);
   const combined = groups.join("");
