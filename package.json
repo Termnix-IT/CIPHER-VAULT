@@ -40,6 +40,8 @@
     "test:desktop-artifacts": "node scripts/test-desktop-artifacts.mjs",
     "test:packaging-contract": "node --test tests/desktop-packaging.test.mjs",
     "test:local-endpoint": "node scripts/run-local-endpoint-tests.mjs",
+    "build:native-transport": "node scripts/build-native-transport.mjs",
+    "test:native-transport": "npm run build:native-transport && npm run build:electron && node scripts/run-local-endpoint-tests.mjs --native",
     "test:updates": "npm run build:electron && node --test tests/manual-updater.test.mjs",
     "test:security": "npm run build:desktop && node --test tests/renderer-security.test.mjs tests/renderer-hardening.test.mjs",
     "test:sessions": "npm run build:api && npm run build:electron && node --import tsx --test tests/vault-session.test.mjs tests/web-session.test.mjs tests/vault-lifecycle.test.mjs tests/vault-kdf.test.mjs tests/input-validation.test.mjs tests/expiring-clipboard.test.mjs tests/desktop-platform.test.mjs",

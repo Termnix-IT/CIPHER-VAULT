@@ -33,6 +33,9 @@ jobs:
           cache-dependency-path: package-lock.json
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: native/local-transport/global.json
       - name: Renderer boundaries and desktop build
         run: npm run test:security
       - name: API, storage and Web packaging
@@ -45,6 +48,8 @@ jobs:
         run: npm run test:desktop-platform
       - name: Native local endpoint permissions and peer probe
         run: npm run test:local-endpoint
+      - name: Native helper and mutual client authentication
+        run: npm run test:native-transport
       - name: Built desktop integration
         run: npm run test:desktop-session
       - name: Migrated v2 desktop integration
@@ -80,15 +85,20 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3 make libnspr4 libnss3 libasound2t64
+          sudo apt-get install -y --no-install-recommends python3 make libnspr4 libnss3 libasound2t64 clang zlib1g-dev
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: native/local-transport/global.json
       - name: Core contracts in Node and Electron Node mode
         run: npm run test:core
       - name: Session, KDF, input and platform contracts
         run: npm run test:sessions
       - name: Native local endpoint permissions and peer probe
         run: npm run test:local-endpoint
+      - name: Native helper and mutual client authentication
+        run: npm run test:native-transport
 
   desktop-packages:
     name: Desktop package (${{ matrix.os }})

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>cipher-vault-transport</AssemblyName>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <DebugType>none</DebugType>
+    <StripSymbols>true</StripSymbols>
+    <IlcGenerateStackTraceData>false</IlcGenerateStackTraceData>
+    <PathMap>$(MSBuildProjectDirectory)=/src/local-transport</PathMap>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(NativeOsLibrary)' != ''">
+    <DirectPInvoke Include="transportos" />
+    <NativeLibrary Include="$(NativeOsLibrary)" />
+  </ItemGroup>
+</Project>
