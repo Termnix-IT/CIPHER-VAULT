@@ -50,6 +50,10 @@ jobs:
         run: npm run test:local-endpoint
       - name: Native helper and mutual client authentication
         run: npm run test:native-transport
+      - name: Candidate search and MCP tool contracts
+        run: node --test tests/candidate-search.test.mjs tests/mcp-server.test.mjs
+      - name: MCP search through the desktop with synthetic credentials
+        run: node scripts/run-mcp-tests.mjs
       - name: Built desktop integration
         run: npm run test:desktop-session
       - name: Migrated v2 desktop integration
