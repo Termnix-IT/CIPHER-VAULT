@@ -50,6 +50,7 @@
     "test:desktop-maintenance": "npm run build:desktop && node scripts/run-desktop-tests.mjs --maintenance",
     "test:desktop-connections": "npm run build:desktop && node scripts/run-desktop-tests.mjs --connections",
     "test:browser-host": "npm run build:native-transport && npm run build:desktop && node --test tests/browser-native-config.test.mjs tests/browser-launcher.test.mjs tests/browser-host.integration.mjs",
+    "test:mcp": "npm run build:desktop && node --test tests/candidate-search.test.mjs tests/mcp-server.test.mjs && node scripts/run-mcp-tests.mjs",
     "test:desktop-platform": "npm run build:electron && node scripts/run-desktop-tests.mjs --platform",
     "test:desktop-dev": "npm run build:desktop && node scripts/run-desktop-tests.mjs --dev",
     "test:web-policy": "npm run build && node scripts/run-desktop-tests.mjs --web",

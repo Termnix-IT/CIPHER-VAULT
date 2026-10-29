@@ -5,8 +5,9 @@ import { BROWSER_NATIVE_SWITCH } from "@password-manager/shared/browser-integrat
 // client invocation must fail in that role, never fall back to the Vault window or its database.
 const nativeHost = app.commandLine.hasSwitch(BROWSER_NATIVE_SWITCH) ||
   process.argv.some(value => value === `--${BROWSER_NATIVE_SWITCH}` || value.startsWith(`--${BROWSER_NATIVE_SWITCH}=`));
+const agent = app.commandLine.hasSwitch("cipher-vault-agent") || process.argv.some(value => value === "--cipher-vault-agent" || value.startsWith("--cipher-vault-agent="));
 // Do not top-level-await app.whenReady indirectly: Electron's default loader waits for this module.
-void import(nativeHost ? "./native-host-main.js" : "./desktop-main.js").catch(() => {
-  if (nativeHost) app.exit(1);
+void import(agent ? "./agent-main.js" : nativeHost ? "./native-host-main.js" : "./desktop-main.js").catch(() => {
+  if (nativeHost || agent) app.exit(1);
   else void app.whenReady().then(() => { dialog.showErrorBox("CIPHER VAULT", "アプリを起動できませんでした"); app.exit(1); });
 });

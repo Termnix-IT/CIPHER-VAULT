@@ -1,0 +1,11 @@
+import { app, dialog } from "electron";
+import assert from "node:assert/strict";
+import path from "node:path";
+import { tmpdir } from "node:os";
+const root = process.env.CIPHER_VAULT_TEST_ROOT;
+const relative = path.relative(tmpdir(), root ?? ""); assert.ok(relative.startsWith("cv-mcp-desktop-") && !relative.includes(path.sep));
+dialog.showSaveDialog = async () => ({ canceled: false, filePath: path.join(root, "synthetic.cvpair") });
+dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path.join(root, "synthetic.cvconnection")] });
+dialog.showErrorBox = () => app.exit(1);
+app.on("browser-window-created", () => app.exit(1));
+void import("../apps/electron/dist/apps/electron/src/main.js");
