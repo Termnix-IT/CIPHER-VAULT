@@ -7,6 +7,7 @@ import { listenNativeTransport, type NativeConnection } from "./native-transport
 import type { IssuedLocalIdentity } from "./local-identity.js";
 import type { LocalClientRegistry } from "./local-client-registry.js";
 import type { AuthenticatedLocalChannel } from "./local-client-auth.js";
+import { serveCandidateSearch, type CandidateSearch } from "./candidate-search.js";
 
 type Job = { controller: AbortController; done: Promise<void>; endpoint?: string };
 
@@ -18,7 +19,7 @@ export class LocalConnectionServer {
   private readonly jobs = new Map<string, Job>();
   private stopped = false;
   constructor(private readonly executable: string, private readonly discoveryFile: string, private readonly registry: LocalClientRegistry,
-    private readonly identity: IssuedLocalIdentity, private readonly sessionId: string, private readonly fault: () => void) {
+    private readonly identity: IssuedLocalIdentity, private readonly sessionId: string, private readonly fault: () => void, private readonly search?: CandidateSearch) {
     if (this.directory) chmodSync(this.directory, 0o700);
   }
   private publish() {
@@ -57,7 +58,7 @@ export class LocalConnectionServer {
     try {
       while (!this.stopped && !signal.aborted) {
         const endpoint = this.directory ? path.join(this.directory, `${randomUUID()}.sock`) : `\\\\.\\pipe\\cipher-vault-${randomUUID()}`;
-        let listener: Awaited<ReturnType<typeof listenNativeTransport>> | undefined, native: NativeConnection | undefined, channel: AuthenticatedLocalChannel | undefined;
+        let listener: Awaited<ReturnType<typeof listenNativeTransport>> | undefined, native: NativeConnection | undefined, channel: (AuthenticatedLocalChannel & { assertCurrent(): void }) | undefined;
         let rotate: ReturnType<typeof setTimeout> | undefined;
         try {
           listener = await listenNativeTransport({ executable: this.executable, endpoint, signal });
@@ -71,7 +72,9 @@ export class LocalConnectionServer {
           try {
             channel = await this.registry.authenticate(native, this.identity, this.sessionId, signal);
             if (channel.clientId !== clientId) { await channel.close(); await delay(250, undefined, { signal }).catch(() => {}); continue; }
-            channel.socket.on("data", (chunk: Buffer) => { chunk.fill(0); void channel?.close(); });
+            const client = this.registry.list(this.sessionId).clients.find(value => value.clientId === clientId);
+            if (this.search && client?.kind === "agent") serveCandidateSearch(channel, client, this.search);
+            else channel.socket.on("data", (chunk: Buffer) => { chunk.fill(0); void channel?.close(); });
             await native.closed;
           } catch { if (signal.aborted || this.stopped) break; }
         } finally {

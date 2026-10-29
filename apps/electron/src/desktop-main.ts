@@ -18,6 +18,7 @@ import { nativeTransportExecutable } from "./native-transport.js";
 import { electronDeviceKeyProtector } from "./device-key-protector.js";
 import { readSelectedPairingRequest, writeSelectedConnectionInfo } from "./local-pairing-files.js";
 import { LocalPairingError } from "./local-pairing.js";
+import { approvedCandidateSearch } from "./approved-candidate-search.js";
 import type {
   PasswordGenerationOptions,
   PasswordEntryUpsertPayload,
@@ -399,7 +400,18 @@ async function bootstrap() {
   const services = await loadAppServices(appRoot);
   appServices = services;
   localConnections = new LocalConnections(app.getPath("userData"), nativeTransportExecutable({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, workspaceRoot: appRoot }),
-    electronDeviceKeyProtector(app, safeStorage), services.session.vaultSession);
+    electronDeviceKeyProtector(app, safeStorage), services.session.vaultSession, approvedCandidateSearch({
+      requireUnlocked: expected => services.session.vaultSession.requireUnlocked(expected),
+      list: () => services.entries.listEntries(), detail: id => services.entries.getEntryById(id),
+      async confirm(input) {
+        if (!mainWindow || mainWindow.isDestroyed()) return false;
+        mainWindow.show(); mainWindow.focus();
+        const result = await dialog.showMessageBox(mainWindow, { type: "question", title: "MCPの候補検索", message: `${input.displayName} が保管庫の候補検索を要求しています`,
+          detail: `検索語: ${input.query}\n\n一致した候補を最大20件返します。返す情報は候補ID・サービス名・サイトのoriginだけです。パスワード、メモ、ログインIDは返しません。今回の検索だけを許可します。`,
+          buttons: ["拒否", "今回だけ検索を許可"], defaultId: 0, cancelId: 0, noLink: true });
+        return result.response === 1;
+      }
+    }));
   app.on("will-quit", () => { void localConnections?.close(); });
   installRendererSessionSecurity(session.defaultSession, () => mainWindow?.webContents.id ?? null,
     () => trustedRendererUrl, getWebDistPath(appRoot));

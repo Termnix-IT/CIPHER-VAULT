@@ -11,6 +11,7 @@ import { encodeLocalPairingRequest } from "./local-pairing.js";
 import { connectNativeTransport } from "./native-transport.js";
 import { authenticateLocalHost } from "./local-client-auth.js";
 import { readLocalPublicFile, writeNewLocalPublicFile } from "./local-public-files.js";
+import { queryCandidateSearch } from "./candidate-search.js";
 
 export type BrowserClientState = Readonly<{ state: "unpaired" | "request-ready" | "configured"; displayName: string | null; fingerprint256: string | null }>;
 
@@ -23,8 +24,8 @@ export class BrowserClient {
   private busy = false;
   private closed = false;
   private readonly controller = new AbortController();
-  constructor(directory: string, private readonly executable: string, protector: DeviceKeyProtector, private readonly browser: "chrome" | "edge") {
-    if (!["chrome", "edge"].includes(browser)) throw new BrowserConnectionError();
+  constructor(directory: string, private readonly executable: string, protector: DeviceKeyProtector, private readonly browser: "chrome" | "edge" | "codex") {
+    if (!["chrome", "edge", "codex"].includes(browser)) throw new BrowserConnectionError();
     this.root = path.join(realpathSync(directory), "data"); this.keys = new ProtectedLocalIdentityStore(protector);
     if (existsSync(this.root)) {
       this.directory();
@@ -41,7 +42,7 @@ export class BrowserClient {
     if (files.length > 35 || files.some(file => !["client.sqlite", "client.sqlite-journal"].includes(file) && !/^identity-[0-9a-f-]{36}\.cvkey$/.test(file))) throw new BrowserConnectionError();
   }
   private active(signal?: AbortSignal) { if (this.closed || this.controller.signal.aborted || signal?.aborted) throw new BrowserConnectionError(); }
-  private name(fingerprint: string) { return `${this.browser === "chrome" ? "Chrome" : "Edge"} ブラウザ連携 · ${fingerprint.replaceAll(":", "").slice(0, 8)}`; }
+  private name(fingerprint: string) { return `${this.browser === "codex" ? "Codex MCP" : this.browser === "chrome" ? "Chrome ブラウザ連携" : "Edge ブラウザ連携"} · ${fingerprint.replaceAll(":", "").slice(0, 8)}`; }
   state(): BrowserClientState {
     this.active(); const value = this.store?.read().credential;
     return Object.freeze({ state: value ? value.receipt ? "configured" : "request-ready" : "unpaired",
@@ -77,7 +78,7 @@ export class BrowserClient {
     return this.run(signal, async (active, combined) => {
       if (!this.store?.read().credential) await this.replace(active, combined);
       active(); const value = this.store!.read().credential!;
-      const content = encodeLocalPairingRequest({ displayName: this.name(value.reference.fingerprint256), kind: "browser", certificate: value.certificate });
+      const content = encodeLocalPairingRequest({ displayName: this.name(value.reference.fingerprint256), kind: this.browser === "codex" ? "agent" : "browser", certificate: value.certificate });
       active(); writeNewLocalPublicFile(selectedFile, content, ".cvpair"); return this.state();
     });
   }
@@ -90,6 +91,13 @@ export class BrowserClient {
     });
   }
   async checkConnection(signal?: AbortSignal) {
+    return this.connection(signal, async () => Object.freeze({ ...this.state(), checked: true as const }));
+  }
+  async searchCandidates(query: string, signal?: AbortSignal) {
+    if (this.browser !== "codex") throw new BrowserConnectionError();
+    return this.connection(signal, (channel, combined) => queryCandidateSearch(channel, query, combined));
+  }
+  private async connection<T>(signal: AbortSignal | undefined, action: (channel: Awaited<ReturnType<typeof authenticateLocalHost>>, signal: AbortSignal) => Promise<T>) {
     return this.run(signal, async (active, combined) => {
       active(); const value = this.store?.read().credential; if (!value?.receipt) throw new BrowserConnectionError();
       const receipt = parseBrowserConnectionInfo(Buffer.from(JSON.stringify(value.receipt)), value.certificate);
@@ -102,7 +110,7 @@ export class BrowserClient {
         identity = loaded.identity; active(); if (loaded.shouldReEncrypt) throw new BrowserConnectionError();
         native = await connectNativeTransport({ executable: this.executable, endpoint, signal: combined }); active();
         channel = await authenticateLocalHost(native, identity, Buffer.from(receipt.hostCertificate, "base64"), combined); active();
-        return Object.freeze({ ...this.state(), checked: true as const });
+        return await action(channel, combined);
       } finally {
         try { await channel?.close(); }
         finally { try { await native?.close(); } finally { identity?.dispose(); } }

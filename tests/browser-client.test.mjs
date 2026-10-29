@@ -30,15 +30,15 @@ function protector() {
     dispose() { secret.fill(0); }
   };
 }
-async function fixture() {
+async function fixture(options = {}) {
   const context = createLocalAuthFixture(executable), protectedKeys = protector(), session = new VaultSession();
   const profile = path.join(context.directory, "browser-profile"); fs.mkdirSync(profile, { mode: 0o700 });
-  let browser = new BrowserClient(profile, executable, protectedKeys, "chrome");
-  const desktop = new LocalConnections(context.directory, executable, protectedKeys, session);
+  let browser = new BrowserClient(profile, executable, protectedKeys, options.clientKind ?? "chrome");
+  const desktop = new LocalConnections(context.directory, executable, protectedKeys, session, options.search);
   session.unlock(Buffer.alloc(32, 9)); const id = session.getState().sessionId;
   return { ...context, profile, protectedKeys, session, desktop, id,
     get browser() { return browser; },
-    reopen() { browser.close(); browser = new BrowserClient(profile, executable, protectedKeys, "chrome"); },
+    reopen() { browser.close(); browser = new BrowserClient(profile, executable, protectedKeys, options.clientKind ?? "chrome"); },
     async dispose() { browser.close(); await desktop.close(); session.lock(); protectedKeys.dispose(); context.dispose(); }
   };
 }
@@ -66,6 +66,21 @@ test("Native Messaging framing is bounded, split-safe, strict UTF-8 and single-u
   assert.throws(() => new BrowserMessageDecoder().push(Buffer.from([2, 0, 0, 0, 0xff, 0xff])));
   assert.throws(() => new BrowserMessageDecoder().push(Buffer.concat([bytes, bytes])));
   for (const patch of [{ operation: "get_password" }, { path: "synthetic-path" }, { id: "old" }, { version: 2 }]) assert.throws(() => browserRequest({ ...value, ...patch }));
+});
+
+test("Codex client sends bounded candidate search over real mutual TLS; revoke and browser clients cannot search", { timeout: 25000 }, async () => {
+  let calls = 0;
+  const context = await fixture({ clientKind: "codex", search: async input => { calls++; assert.equal(input.query, "synthetic"); return [{ id: "candidate", serviceName: "Synthetic service", origin: "https://example.test" }]; } });
+  try {
+    const result = await pairing(context); assert.equal(JSON.parse(fs.readFileSync(result.file)).kind, "agent");
+    assert.equal(context.browser.state().displayName.startsWith("Codex MCP"), true);
+    const items = await context.browser.searchCandidates("synthetic"); assert.equal(items[0].id, "candidate"); assert.equal(calls, 1);
+    await context.desktop.revoke(context.id, context.desktop.state(context.id).revision, result.client.clientId);
+    await assert.rejects(context.browser.searchCandidates("synthetic")); assert.equal(calls, 1);
+  } finally { await context.dispose(); }
+  const browser = await fixture({ search: async () => { assert.fail("Browser registration must not gain search"); } });
+  try { await pairing(browser); await assert.rejects(browser.browser.searchCandidates("synthetic")); }
+  finally { await browser.dispose(); }
 });
 
 test("Native Messaging cancels EOF/duplicate/deadline and never reflects arbitrary errors", async () => {

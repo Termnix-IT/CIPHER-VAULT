@@ -10,6 +10,7 @@ import { createManagedLocalClientStore, openManagedLocalClientStore, type Manage
 import { LocalClientRegistry } from "./local-client-registry.js";
 import { LocalPairingCoordinator, LocalPairingError } from "./local-pairing.js";
 import { LocalConnectionServer } from "./local-connection-server.js";
+import type { CandidateSearch } from "./candidate-search.js";
 
 type Session = { getState(): VaultSessionState; requireUnlocked(sessionId?: string): string; requireGeneration(id: unknown): string; subscribe(listener: (state: VaultSessionState) => void): () => void };
 const unavailable = () => new LocalPairingError();
@@ -28,7 +29,7 @@ export class LocalConnections {
   private faulted = false;
   private closed = false;
   private readonly unsubscribe: () => void;
-  constructor(directory: string, private readonly executable: string, protector: DeviceKeyProtector, private readonly session: Session) {
+  constructor(directory: string, private readonly executable: string, protector: DeviceKeyProtector, private readonly session: Session, private readonly search?: CandidateSearch) {
     this.root = path.join(realpathSync(directory), "local-connections"); this.keys = new ProtectedLocalIdentityStore(protector);
     try {
       if (existsSync(this.root)) {
@@ -112,7 +113,7 @@ export class LocalConnections {
         if (persist) this.store!.setEnabled(expectedRevision, true);
         if (!this.store!.configuration().enabled) throw unavailable();
         this.pairing = new LocalPairingCoordinator(this.registry!, this.session);
-        this.server = new LocalConnectionServer(this.executable, this.discoveryFile(), this.registry!, this.identity!, sessionId, () => this.fail());
+        this.server = new LocalConnectionServer(this.executable, this.discoveryFile(), this.registry!, this.identity!, sessionId, () => this.fail(), this.search);
         await this.server.sync(); active();
       } catch { if (!controller.signal.aborted) this.faulted = true; this.halt(); throw unavailable(); }
     };
