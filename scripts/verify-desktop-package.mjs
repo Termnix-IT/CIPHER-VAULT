@@ -20,6 +20,9 @@ export function inspectDesktopPackage(directory, platform = process.platform, ar
     "apps/electron/dist/apps/electron/src/device-key-protector.js", "apps/electron/dist/apps/electron/src/protected-local-identity.js",
     "apps/electron/dist/apps/electron/src/local-pairing.js", "apps/electron/dist/apps/electron/src/local-connections.js",
     "apps/electron/dist/apps/electron/src/local-connection-server.js", "apps/electron/dist/apps/electron/src/local-pairing-files.js",
+    "apps/electron/dist/apps/electron/src/browser-message.js", "apps/electron/dist/apps/electron/src/browser-connection-info.js",
+    "apps/electron/dist/apps/electron/src/browser-client.js", "apps/electron/dist/apps/electron/src/browser-client-store.js",
+    "apps/electron/dist/apps/electron/src/local-public-files.js",
     "apps/web/dist/fonts/NotoSansJP-Variable.ttf", "apps/web/dist/fonts/NotoSansJP-OFL.txt"];
   for (const file of required) assert.ok(files.includes(file), `Missing packaged runtime file: ${file}`);
   assert.ok(files.some(file => file.startsWith("apps/web/dist/fonts/") && file.endsWith(".ttf")), "Missing local fonts");

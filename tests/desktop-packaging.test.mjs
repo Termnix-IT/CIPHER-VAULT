@@ -26,6 +26,9 @@ test("package inspection detects missing shared runtime, packed native binaries 
     "apps/electron/dist/apps/electron/src/device-key-protector.js", "apps/electron/dist/apps/electron/src/protected-local-identity.js",
     "apps/electron/dist/apps/electron/src/local-pairing.js", "apps/electron/dist/apps/electron/src/local-connections.js",
     "apps/electron/dist/apps/electron/src/local-connection-server.js", "apps/electron/dist/apps/electron/src/local-pairing-files.js",
+    "apps/electron/dist/apps/electron/src/browser-message.js", "apps/electron/dist/apps/electron/src/browser-connection-info.js",
+    "apps/electron/dist/apps/electron/src/browser-client.js", "apps/electron/dist/apps/electron/src/browser-client-store.js",
+    "apps/electron/dist/apps/electron/src/local-public-files.js",
     "apps/web/dist/fonts/NotoSansJP-Variable.ttf", "apps/web/dist/fonts/NotoSansJP-OFL.txt", native];
   async function fixture(name, { omit, extra, unpack = true, helper = {} } = {}) {
     const source = path.join(root, name, "source"), application = path.join(root, name, "application");
