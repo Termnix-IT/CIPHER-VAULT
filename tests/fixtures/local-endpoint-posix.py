@@ -1,5 +1,6 @@
 """Development-only native socket probe; never opens a vault or handles secrets."""
 import ctypes
+import errno
 import json
 import os
 import socket
@@ -73,7 +74,13 @@ def serve(endpoint, expected, count):
                 connection, _ = server.accept()
                 with connection:
                     connection.settimeout(5)
-                    pid, uid = peer(connection)
+                    try:
+                        pid, uid = peer(connection)
+                    except OSError as error:
+                        # The inspection-only client may close before accept/query on Darwin.
+                        if error.errno not in (errno.ENOTCONN, errno.ECONNRESET, errno.EPIPE):
+                            raise
+                        continue
                     request = b""
                     while len(request) < 4:
                         chunk = connection.recv(4 - len(request))

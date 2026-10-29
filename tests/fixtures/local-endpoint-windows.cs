@@ -102,9 +102,9 @@ public static class LocalEndpointProbe
             {
                 using (CancellationTokenSource deadline = new CancellationTokenSource(10000))
                 {
-                    pipe.WaitForConnectionAsync(deadline.Token).GetAwaiter().GetResult();
                     try
                     {
+                        pipe.WaitForConnectionAsync(deadline.Token).GetAwaiter().GetResult();
                         uint peer; if (!GetNamedPipeClientProcessId(pipe.SafePipeHandle, out peer)) throw new Win32Exception();
                         byte[] request = new byte[4]; int offset = 0;
                         while (offset < 4) { int read = pipe.ReadAsync(request, offset, 4 - offset, deadline.Token).GetAwaiter().GetResult(); if (read == 0) throw new EndOfStreamException(); offset += read; }
@@ -119,7 +119,15 @@ public static class LocalEndpointProbe
                     }
                     catch (EndOfStreamException) { /* A disconnected client has no operation to run. */ }
                     catch (IOException) { /* A reset client has no operation to run. */ }
-                    finally { if (pipe.IsConnected) pipe.Disconnect(); }
+                    catch (Win32Exception error) when (error.NativeErrorCode == 109 || error.NativeErrorCode == 232 || error.NativeErrorCode == 233) { /* Peer closed before identity query. */ }
+                    finally
+                    {
+                        if (pipe.IsConnected)
+                        {
+                            try { pipe.Disconnect(); }
+                            catch (IOException) { /* The peer may already have disconnected. */ }
+                        }
+                    }
                 }
             }
         }
