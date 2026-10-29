@@ -25,21 +25,34 @@ function parse(payload: Buffer, processId: number, role: LocalIdentityRole): Iss
       !Number.isInteger(frame.certificateBytes) || frame.certificateBytes < 128 || frame.certificateBytes > 4096 ||
       !Number.isInteger(frame.privateKeyBytes) || frame.privateKeyBytes < 128 || frame.privateKeyBytes > 2048 ||
       payload.length !== 4 + size + frame.certificateBytes + frame.privateKeyBytes) throw new LocalIdentityError();
-  const parsed = parseLocalPublicCertificate(payload.subarray(4 + size, 4 + size + frame.certificateBytes)), certificate = parsed.leaf, issuer = parsed.issuer;
+  const parsed = parseLocalPublicCertificate(payload.subarray(4 + size, 4 + size + frame.certificateBytes));
   const privatePem = payload.subarray(4 + size + frame.certificateBytes);
+  return material(parsed.certificate, privatePem, role, true);
+}
+function material(publicPem: Buffer, privatePem: Buffer, role: LocalIdentityRole, fresh: boolean): IssuedLocalIdentity {
+  if (!Buffer.isBuffer(publicPem) || publicPem.length > 4096 || !Buffer.isBuffer(privatePem) || privatePem.length < 128 || privatePem.length > 2048) throw new LocalIdentityError();
   if (!privatePem.subarray(0, begin.length).equals(begin) || !privatePem.subarray(-end.length).equals(end) ||
       privatePem.subarray(begin.length, -end.length).some(value => !(value >= 65 && value <= 90) && !(value >= 97 && value <= 122) &&
         !(value >= 48 && value <= 57) && ![43, 47, 61, 10].includes(value))) throw new LocalIdentityError();
+  const parsed = parseLocalPublicCertificate(publicPem), certificate = parsed.leaf, issuer = parsed.issuer;
   const key = createPrivateKey(privatePem), now = Date.now(), from = Date.parse(certificate.validFrom), until = Date.parse(certificate.validTo);
   if (key.asymmetricKeyType !== "ec" || key.asymmetricKeyDetails?.namedCurve !== "prime256v1" || !certificate.checkPrivateKey(key) || certificate.ca ||
       !issuer || !/^CN=cipher-vault-issuer-[0-9a-f-]{36}$/.test(issuer.subject) || issuer.publicKey.asymmetricKeyDetails?.namedCurve !== "prime256v1" ||
       issuer.keyUsage?.join(",") !== (role === "host" ? "1.3.6.1.5.5.7.3.1" : "1.3.6.1.5.5.7.3.2") || !Number.isFinite(from) || !Number.isFinite(until) ||
-      from > now || from < now - 5 * 60000 || until <= now || until > now + (role === "host" ? 366 : 91) * 86400000 ||
+      from > now || (fresh && from < now - 5 * 60000) || until <= now || until - from > ((role === "host" ? 365 : 90) * 86400000 + 60000) ||
       certificate.keyUsage?.join(",") !== (role === "host" ? "1.3.6.1.5.5.7.3.1" : "1.3.6.1.5.5.7.3.2") ||
       (role === "host" ? certificate.subject !== "CN=cipher-vault.local" || certificate.subjectAltName !== "DNS:cipher-vault.local" :
         certificate.subject !== "CN=cipher-vault-client" || certificate.subjectAltName !== undefined)) throw new LocalIdentityError();
   const privateKey = Buffer.from(privatePem);
   return Object.freeze({ certificate: parsed.certificate, privateKey, role, expiresAt: until, dispose() { privateKey.fill(0); } });
+}
+
+// Validates an already issued credential without requiring it to have been issued in the last five minutes.
+export function importLocalIdentity(certificate: Buffer, privateKey: Buffer, role: LocalIdentityRole): IssuedLocalIdentity {
+  try {
+    if (!["host", "client"].includes(role) || !Buffer.isBuffer(privateKey) || privateKey.length < 128 || privateKey.length > 2048) throw new LocalIdentityError();
+    return material(certificate, privateKey, role, false);
+  } catch { throw new LocalIdentityError(); }
 }
 
 // Main-process capability, not a renderer/HTTP entrypoint. Does not enroll or persist credentials.

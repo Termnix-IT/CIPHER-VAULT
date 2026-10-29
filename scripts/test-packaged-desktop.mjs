@@ -23,7 +23,7 @@ const marker = "CIPHER_PACKAGE_SHUTDOWN_OK";
 const electron = "globalThis.__cipherPackageElectron";
 const master = "synthetic-packaged-legacy-master", next = "synthetic-packaged-v2-master", backup = "synthetic-packaged-backup-passphrase";
 const title = "Packaged synthetic fixture", password = "synthetic-packaged-entry-password";
-let child, inspector, closed, output = "";
+let child, inspector, closed, nativeProbe, output = "";
 const diagnostics = () => output.replaceAll(temporary, "<temporary>").replaceAll(source.root, "<package>").slice(-3000);
 
 async function evaluate(expression) {
@@ -59,7 +59,7 @@ async function launch() {
   for (const key of Object.keys(environment)) if (["electron_run_as_node", "node_options", "node_path"].includes(key.toLowerCase())) delete environment[key];
   // Linux's native initialization is isolated even before the early debugger hook.
   if (process.platform === "linux") { environment.XDG_CONFIG_HOME = path.join(profile, "config"); environment.XDG_CACHE_HOME = path.join(profile, "cache"); }
-  child = spawn(executable, ["--inspect-brk=127.0.0.1:0"], { cwd: temporary, env: environment, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, detached: process.platform !== "win32" });
+  child = spawn(executable, ["--inspect-brk=127.0.0.1:0", `--user-data-dir=${profile}`], { cwd: temporary, env: environment, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, detached: process.platform !== "win32" });
   closed = once(child, "close"); closed.catch(() => {});
   child.stdout.on("data", data => { output += data; }); child.stderr.on("data", data => { output += data; });
   let endpoint;
@@ -76,6 +76,7 @@ async function launch() {
     const e=process.getBuiltinModule('module').createRequire(process.execPath)('electron');
     if(e.app.isReady())throw new Error('Profile must be isolated before readiness');
     e.app.setPath('userData',${JSON.stringify(profile)});
+    e.app.setPath('sessionData',${JSON.stringify(profile)});
     if(e.app.getPath('userData')!==${JSON.stringify(profile)})throw new Error('Unexpected profile');
     globalThis.__cipherPackageElectron=e;
     e.dialog.showErrorBox=(_title,message)=>{globalThis.__cipherPackageFailure=message;};
@@ -90,6 +91,7 @@ async function launch() {
   assert.equal(await evaluate(`${electron}.app.isPackaged`), true);
   assert.equal(await evaluate(`${electron}.app.commandLine.hasSwitch('no-sandbox') || ${electron}.app.commandLine.hasSwitch('disable-setuid-sandbox')`), false, "Package must keep Chromium sandboxing enabled");
   assert.equal(await evaluate(`${electron}.app.getPath('userData')`), profile);
+  assert.equal(await evaluate(`${electron}.app.getPath('sessionData')`), profile);
   assert.ok((await evaluate(`${electron}.app.getAppPath()`)).startsWith(application + path.sep));
   assert.deepEqual(await evaluate(`(()=>{const p=${electron}.BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences();return {sandbox:p.sandbox,contextIsolation:p.contextIsolation,nodeIntegration:p.nodeIntegration}})()`), { sandbox: true, contextIsolation: true, nodeIntegration: false });
   assert.equal(await renderer("typeof require==='undefined' && typeof process==='undefined' && Object.isFrozen(window.passwordManager)"), true);
@@ -121,8 +123,9 @@ try {
   cpSync(source.root, application, { recursive: true, verbatimSymlinks: true });
   const copied = inspectDesktopPackage(application); assert.ok(existsSync(executable));
   await launch(); assert.equal((await ipc("fetchVaultStatus")).isConfigured, false);
-  await probePackagedNative(evaluate, electron, copied.nativeHelper);
-  console.log("PASS packaged native helper, real peer identity, mutual TLS and revocation outside checkout");
+  nativeProbe = await probePackagedNative(evaluate, electron, copied.nativeHelper);
+  console.log("PASS packaged native issuance, real peer identity, mutual TLS and lock outside checkout");
+  console.log(nativeProbe.protectedKeys ? "PASS real OS provider protects private credentials before persistence" : "PASS unavailable OS protection refuses credential persistence without plaintext fallback");
   await unlock(master);
   await click('.sidebar-add'); await waitForRenderer("!!document.querySelector('.editor-fields')");
   await fill('.editor-fields .editor-field:nth-child(1) input', title);
@@ -144,6 +147,8 @@ try {
   assert.ok(existsSync(path.join(profile, "data/vault-current.json")));
   await stop(); console.log("PASS isolated packaged sandbox, SQLite, entry creation, v2 migration, backup and key cleanup");
   await launch(); const restarted = await ipc("fetchVaultStatus"); assert.equal(restarted.isUnlocked, false); assert.equal(restarted.maintenance.format, "v2");
+  await nativeProbe.afterRestart();
+  if (nativeProbe.protectedKeys) console.log("PASS credentials restored after actual application restart authenticate the same registration and revoke");
   await unlock(next); assert.equal((await ipc("fetchEntry", entry.id)).password, password);
   await stop(); console.log("PASS packaged restart opens the same v2 vault locked and unlocks retained data");
 } finally {
@@ -153,6 +158,7 @@ try {
     else { try { process.kill(-child.pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; } }
     await closed.catch(() => {});
   }
+  nativeProbe?.dispose();
   assert.equal(path.dirname(temporary), realpathSync(tmpdir())); assert.ok(path.basename(temporary).startsWith("cipher-vault-packaged-"));
   rmSync(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }

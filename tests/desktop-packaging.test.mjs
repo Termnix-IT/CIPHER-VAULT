@@ -22,7 +22,8 @@ test("package inspection detects missing shared runtime, packed native binaries 
     "node_modules/@password-manager/shared/package.json", "node_modules/@password-manager/shared/dist/index.js", "node_modules/@password-manager/shared/dist/renderer-policy.js",
     "apps/electron/dist/apps/electron/src/native-transport.js", "apps/electron/dist/apps/electron/src/local-client-auth.js",
     "apps/electron/dist/apps/electron/src/local-client-store.js", "apps/electron/dist/apps/electron/src/local-client-registry.js",
-    "apps/electron/dist/apps/electron/src/local-identity.js", "apps/electron/dist/apps/electron/src/local-certificates.js", native];
+    "apps/electron/dist/apps/electron/src/local-identity.js", "apps/electron/dist/apps/electron/src/local-certificates.js",
+    "apps/electron/dist/apps/electron/src/device-key-protector.js", "apps/electron/dist/apps/electron/src/protected-local-identity.js", native];
   async function fixture(name, { omit, extra, unpack = true, helper = {} } = {}) {
     const source = path.join(root, name, "source"), application = path.join(root, name, "application");
     for (const file of ["package.json", ...required.filter(file => file !== omit), ...(extra ? [extra] : [])]) {
@@ -45,7 +46,7 @@ test("package inspection detects missing shared runtime, packed native binaries 
       const wrong = await fixture(`helper-${key}`, { helper: { [key]: value } });
       assert.throws(() => inspectDesktopPackage(wrong), /Wrong native helper/);
     }
-    for (const extra of ["apps/api/data/password-manager.db", "data/vault.sqlite", ".env", "private.log", "tests/fixture.mjs", "native/Transport.csproj"]) {
+    for (const extra of ["apps/api/data/password-manager.db", "data/vault.sqlite", ".env", "private.log", "identity-synthetic.cvkey", "tests/fixture.mjs", "native/Transport.csproj"]) {
       const application = await fixture(`private-${extra.replaceAll(/[^a-z]/gi, "-")}`, { extra });
       assert.throws(() => inspectDesktopPackage(application), /Unexpected private data/);
     }
