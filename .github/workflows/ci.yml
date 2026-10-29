@@ -43,6 +43,8 @@ jobs:
         run: npm run test:updates
       - name: Desktop platform capability probe
         run: npm run test:desktop-platform
+      - name: Native local endpoint permissions and peer probe
+        run: npm run test:local-endpoint
       - name: Built desktop integration
         run: npm run test:desktop-session
       - name: Migrated v2 desktop integration
@@ -85,6 +87,8 @@ jobs:
         run: npm run test:core
       - name: Session, KDF, input and platform contracts
         run: npm run test:sessions
+      - name: Native local endpoint permissions and peer probe
+        run: npm run test:local-endpoint
 
   desktop-packages:
     name: Desktop package (${{ matrix.os }})

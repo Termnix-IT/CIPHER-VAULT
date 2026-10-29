@@ -139,6 +139,7 @@ npm run dev:desktop
 | `npm run test:api` | 一時DBでサービス・HTTP・暗号互換・Web配布の生成・固定導入を確認 |
 | `npm run test:security` | Electronの画面URL・IPC送信元・sandbox preload・CSP・権限の境界を確認 |
 | `npm run test:sessions` | 共通入力検証・KDF互換性・試行制御・OS連動・コピー期限を確認 |
+| `npm run test:local-endpoint` | 合成データ専用のpipe/socketでOS権限・peer資格情報・PID偽装拒否を検証 |
 | `npm run test:desktop-session` | 専用の一時保管庫でElectronの画面・IPC・失効を自動確認 |
 | `npm run test:desktop-dev` | 一時ViteサーバーでElectron開発画面とHMR接続も確認 |
 | `npm run test:web-policy` | 一時HTTPサーバーでWeb版のCSP・画面・API通信を確認 |
