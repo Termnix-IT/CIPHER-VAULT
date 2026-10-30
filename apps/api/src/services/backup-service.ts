@@ -3,7 +3,8 @@ import { HttpError } from "../lib/errors.js";
 import { getVaultSession } from "./crypto-service.js";
 import { getEntryById, listEntries, requireUnlockedVault, restoreEntriesIntoEmptyVault } from "./entry-service.js";
 import { INPUT_LIMITS, parseBackupPayload } from "../lib/input-validation.js";
-import { decodeBackupV1, deriveBackupKey, encodeBackupV1, parseBackupV1 } from "../crypto/backup-v1.js";
+import { deriveBackupKey } from "../crypto/backup-v1.js";
+import { decodeVaultBackup, encodeVaultBackup, parseVaultBackup } from "../crypto/vault-backup.js";
 
 let busy = false;
 async function withBackupKey<T>(passphrase: string, salt: Buffer, action: (key: Buffer) => T | Promise<T>): Promise<T> {
@@ -32,7 +33,7 @@ export async function exportBackup(input: unknown) {
     const entries = summaries.map(entry => getEntryById(entry.id));
     return {
       fileName: `CIPHER-VAULT-${new Date().toISOString().replace(/[:.]/g, "-")}.cvault`,
-      content: encodeBackupV1(entries, key, salt)
+      content: encodeVaultBackup(entries, key, salt)
     };
   });
 }
@@ -41,6 +42,6 @@ export async function restoreBackup(input: unknown) {
   requireUnlockedVault();
   const payload = parseBackupPayload(input, true);
   if (listEntries().items.length !== 0) throw new HttpError(409, "復元できるのは空の保管庫のみです");
-  const envelope = parseBackupV1(payload.content);
-  return withBackupKey(payload.passphrase, envelope.salt, key => restoreEntriesIntoEmptyVault(decodeBackupV1(envelope, key)));
+  const envelope = parseVaultBackup(payload.content);
+  return withBackupKey(payload.passphrase, envelope.salt, key => restoreEntriesIntoEmptyVault(decodeVaultBackup(envelope, key)));
 }

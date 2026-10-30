@@ -5,7 +5,7 @@ import { setImmediate } from "node:timers/promises";
 import { sealEntry, VaultCodecError } from "../crypto/v2-codec.js";
 import type { CodecOptions, EntryContext, EntryEnvelope, PasswordSlotContext, PasswordSlotEnvelope } from "../crypto/v2-codec.js";
 import { copyPlaintext, parseEntryContext, parseEntryEnvelope, parsePasswordSlotContext, parsePasswordSlotEnvelope, record, validateEntryPlaintext, V2_LIMITS } from "../crypto/v2-format.js";
-import { inspectV2Database, invalidStore, readHeader, V2_APPLICATION_ID, V2_SCHEMA_SQL, V2_SCHEMA_VERSION, V2_STORE_LIMITS, V2StoreError } from "./v2-schema.js";
+import { inspectV2Database, invalidStore, readHeader, V2_APPLICATION_ID, V2_SCHEMA_SQL, V2_SCHEMA_VERSION, V2_ITEM_SCHEMA_VERSION, V2_STORE_LIMITS, V2StoreError } from "./v2-schema.js";
 export { V2_APPLICATION_ID, V2_SCHEMA_VERSION, V2_STORE_LIMITS, V2StoreError } from "./v2-schema.js";
 export type StoreWriteOptions = CodecOptions & { assertCurrent?: () => void };
 
@@ -176,8 +176,11 @@ function adapter(database: Database.Database, expected: PasswordSlotContext, wri
       run(() => { canWrite(value); if (readHeader(database, expected).encryptionCount >= V2_STORE_LIMITS.encryptions) throw new V2StoreError("KEY_LIMIT"); });
       busy = true;
       let reservationError: unknown;
+      let snapshot: Buffer | undefined;
       try {
-        const sealed = await sealEntry(root, plaintext, value, (_keyId, iv) => {
+        snapshot = copyPlaintext(plaintext); validateEntryPlaintext(snapshot, value.entryId);
+        const typed = JSON.parse(snapshot.toString("utf8")).type !== undefined;
+        const sealed = await sealEntry(root, snapshot, value, (_keyId, iv) => {
           try { return reserve(value, iv); }
           catch (error) { reservationError = error; throw error; }
         }, { signal });
@@ -192,10 +195,12 @@ function adapter(database: Database.Database, expected: PasswordSlotContext, wri
           database.prepare(`INSERT INTO vault_entries (entry_id, revision, envelope) VALUES (?, ?, ?)
             ON CONFLICT(entry_id) DO UPDATE SET revision = excluded.revision, envelope = excluded.envelope`)
             .run(value.entryId, value.revision, JSON.stringify(sealed));
+          // Commit the compatibility marker with the first typed record, never before authorization.
+          if (typed) database.pragma(`user_version = ${V2_ITEM_SCHEMA_VERSION}`);
           return sealed;
         }).immediate());
       } catch (error) { return ioError(reservationError ?? error); }
-      finally { busy = false; }
+      finally { snapshot?.fill(0); busy = false; }
     },
     async restoreEntries(root, input, options = {}) {
       available(true);
@@ -236,6 +241,7 @@ function adapter(database: Database.Database, expected: PasswordSlotContext, wri
               .get(envelope.keyId, Buffer.from(envelope.iv, "base64"), envelope.entryId, envelope.revision)) invalidStore();
             insert.run(envelope.entryId, envelope.revision, JSON.stringify(envelope));
           }
+          if (snapshots.some(snapshot => JSON.parse(snapshot.plaintext.toString("utf8")).type !== undefined)) database.pragma(`user_version = ${V2_ITEM_SCHEMA_VERSION}`);
           active(); return { restoredCount: sealed.length };
         }).immediate());
       } catch (error) { return ioError(reservationError ?? error); }

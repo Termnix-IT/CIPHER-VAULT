@@ -1,4 +1,5 @@
 export type PasswordEntrySummary = {
+  type?: "login";
   id: string;
   serviceName: string;
   loginId: string;
@@ -24,6 +25,27 @@ export type PasswordEntryUpsertPayload = {
   tags?: string[];
   group?: string;
 };
+
+export type VaultEntryType = "login" | "apiKey" | "creditCard";
+type AdditionalEntrySummary = Omit<PasswordEntrySummary, "type" | "loginId"> & { loginId?: never };
+type AdditionalEntry = Omit<PasswordEntry, "type" | "loginId" | "password" | "passwordChangedAt"> & {
+  loginId?: never; password?: never; passwordChangedAt?: never;
+};
+type AdditionalEntryPayload = Omit<PasswordEntryUpsertPayload, "loginId" | "password">;
+export type ApiKeyEntry = AdditionalEntry & {
+  type: "apiKey";
+  apiKey: { key: string; keyId: string; expiresOn: string | null };
+};
+export type CreditCardEntry = AdditionalEntry & {
+  type: "creditCard";
+  card: { number: string; cardholder: string; expiryMonth: string | null; securityCode: string };
+};
+export type VaultEntry = PasswordEntry | ApiKeyEntry | CreditCardEntry;
+export type VaultEntrySummary = PasswordEntrySummary | (AdditionalEntrySummary & { type: "apiKey" }) |
+  (AdditionalEntrySummary & { type: "creditCard"; cardLast4: string });
+export type VaultEntryUpsertPayload = PasswordEntryUpsertPayload |
+  (AdditionalEntryPayload & { type: "apiKey"; apiKey: { key: string; keyId?: string; expiresOn?: string } }) |
+  (AdditionalEntryPayload & { type: "creditCard"; card: { number: string; cardholder?: string; expiryMonth?: string; securityCode?: string } });
 
 export type PasswordGenerationOptions = {
   length?: number;
@@ -116,10 +138,10 @@ export type PasswordManagerDesktopApi = {
   unlockVault: (payload: VaultUnlockPayload, sessionId: string) => Promise<VaultStatus>;
   lockVault: (sessionId: string) => Promise<VaultStatus>;
   resetVault: (payload: VaultResetPayload, sessionId: string) => Promise<VaultStatus>;
-  fetchEntries: (sessionId: string) => Promise<{ items: PasswordEntrySummary[] }>;
-  fetchEntry: (id: string, sessionId: string) => Promise<PasswordEntry>;
-  createEntry: (payload: PasswordEntryUpsertPayload, sessionId: string) => Promise<PasswordEntry>;
-  updateEntry: (id: string, payload: PasswordEntryUpsertPayload, sessionId: string) => Promise<PasswordEntry>;
+  fetchEntries: (sessionId: string) => Promise<{ items: VaultEntrySummary[] }>;
+  fetchEntry: (id: string, sessionId: string) => Promise<VaultEntry>;
+  createEntry: (payload: VaultEntryUpsertPayload, sessionId: string) => Promise<VaultEntry>;
+  updateEntry: (id: string, payload: VaultEntryUpsertPayload, sessionId: string) => Promise<VaultEntry>;
   deleteEntry: (id: string, sessionId: string) => Promise<{ success: boolean }>;
   generatePassword: (options: PasswordGenerationOptions, sessionId: string) => Promise<PasswordGenerationResult>;
   copyText: (value: string, sessionId: string) => Promise<void>;

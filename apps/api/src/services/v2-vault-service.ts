@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
-import type { PasswordEntry, PasswordEntrySummary, PasswordEntryUpsertPayload } from "@password-manager/shared/types";
+import type { PasswordEntry, VaultEntry, VaultEntrySummary, VaultEntryUpsertPayload } from "@password-manager/shared/types";
 import { openEntry, unwrapRootKey, VaultCodecError } from "../crypto/v2-codec.js";
 import { validateEntryPlaintext } from "../crypto/v2-format.js";
 import { failVaultContext, getV2Vault } from "../db/vault-context.js";
@@ -9,6 +9,7 @@ import { HttpError } from "../lib/errors.js";
 import { INPUT_LIMITS, parseEntryId, parseEntryPayload, parseMasterPassword } from "../lib/input-validation.js";
 import { vaultSession } from "./vault-session.js";
 import { vaultUnlockGuard } from "./vault-unlock-guard.js";
+import { parseVaultEntryPayload } from "../lib/vault-entry-validation.js";
 
 type Context = NonNullable<ReturnType<typeof getV2Vault>>;
 function runtime() { const value = getV2Vault(); if (!value) throw new HttpError(409, "保管庫の状態が変わりました"); return value; }
@@ -26,11 +27,11 @@ function translate(error: unknown): never {
   if (error instanceof VaultCodecError && error.code === "CANCELLED") throw new HttpError(409, "保管庫の状態が変わりました。もう一度操作してください");
   return failVaultContext();
 }
-function read(context: Context, root: Buffer, id: string): PasswordEntry {
+function read(context: Context, root: Buffer, id: string): VaultEntry {
   const envelope = context.store.readEntry(id);
   if (!envelope) throw new HttpError(404, "エントリが見つかりません");
   const plaintext = openEntry(root, envelope, entryContext(context, id, envelope.revision));
-  try { return JSON.parse(plaintext.toString("utf8")) as PasswordEntry; } finally { plaintext.fill(0); }
+  try { return JSON.parse(plaintext.toString("utf8")) as VaultEntry; } finally { plaintext.fill(0); }
 }
 function readOperation<T>(action: (context: Context, root: Buffer, active: () => void) => T) {
   const session = vaultSession.requireUnlocked(), context = runtime();
@@ -70,44 +71,57 @@ export async function unlockV2Vault(input: unknown) {
 }
 export function listV2Entries() {
   return readOperation((context, root, active) => {
-    const items: PasswordEntrySummary[] = [];
+    const items: VaultEntrySummary[] = [];
     for (const entryContext of context.store.listEntryContexts()) {
-      active(); const { id, serviceName, loginId, tags, group, updatedAt } = read(context, root, entryContext.entryId);
-      items.push({ id, serviceName, loginId, tags, group, updatedAt });
+      active(); const entry = read(context, root, entryContext.entryId);
+      const { id, serviceName, tags, group, updatedAt } = entry;
+      const base = { id, serviceName, tags, group, updatedAt };
+      if (entry.type === "apiKey") items.push({ ...base, type: "apiKey" });
+      else if (entry.type === "creditCard") items.push({ ...base, type: "creditCard", cardLast4: entry.card.number.slice(-4) });
+      else items.push({ ...base, loginId: entry.loginId });
     }
     items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
     return { items };
   });
 }
 export function getV2Entry(input: unknown) { return readOperation((context, root) => read(context, root, parseEntryId(input))); }
-function fields(payload: PasswordEntryUpsertPayload) {
-  return { serviceName: payload.serviceName.trim(), loginId: payload.loginId.trim(), password: payload.password,
-    notes: payload.notes ?? "", url: payload.url?.trim() || "", tags: payload.tags ?? [], group: payload.group?.trim() || null };
+function fields(payload: VaultEntryUpsertPayload) {
+  const base = { serviceName: payload.serviceName.trim(), notes: payload.notes ?? "", url: payload.url?.trim() || "", tags: payload.tags ?? [], group: payload.group?.trim() || null };
+  if ("type" in payload && payload.type === "apiKey") return { ...base, type: "apiKey" as const,
+    apiKey: { key: payload.apiKey.key, keyId: payload.apiKey.keyId ?? "", expiresOn: payload.apiKey.expiresOn || null } };
+  if ("type" in payload && payload.type === "creditCard") return { ...base, type: "creditCard" as const,
+    card: { number: payload.card.number, cardholder: payload.card.cardholder ?? "", expiryMonth: payload.card.expiryMonth || null, securityCode: payload.card.securityCode ?? "" } };
+  const login = payload as import("@password-manager/shared/types").PasswordEntryUpsertPayload;
+  return { ...base, loginId: login.loginId.trim(), password: login.password };
 }
-function serialize(entry: PasswordEntry) {
+function serialize(entry: VaultEntry) {
   const plaintext = Buffer.from(JSON.stringify(entry));
   try { validateEntryPlaintext(plaintext, entry.id); return plaintext; }
   catch { plaintext.fill(0); throw new HttpError(400, "エントリの形式が正しくありません"); }
 }
 export function createV2Entry(input: unknown) {
-  vaultSession.requireUnlocked(); const payload = parseEntryPayload(input);
+  vaultSession.requireUnlocked(); const payload = parseVaultEntryPayload(input);
   return mutation(async (context, root, options) => {
     if (context.store.listEntryContexts().length >= INPUT_LIMITS.entries) throw new HttpError(413, "保管庫への新規登録は10000件まで対応しています");
     const now = new Date().toISOString(), id = randomUUID();
-    const entry: PasswordEntry = { id, ...fields(payload), createdAt: now, updatedAt: now, passwordChangedAt: now };
+    const data = fields(payload);
+    const entry: VaultEntry = "type" in data ? { id, ...data, createdAt: now, updatedAt: now } : { id, ...data, createdAt: now, updatedAt: now, passwordChangedAt: now };
     const plaintext = serialize(entry);
     try { await context.store.writeEntry(root, plaintext, entryContext(context, id, 1), options); return entry; }
     finally { plaintext.fill(0); }
   });
 }
 export function updateV2Entry(inputId: unknown, input: unknown) {
-  vaultSession.requireUnlocked(); const id = parseEntryId(inputId), payload = parseEntryPayload(input);
+  vaultSession.requireUnlocked(); const id = parseEntryId(inputId), payload = parseVaultEntryPayload(input);
   return mutation(async (context, root, options) => {
     const envelope = context.store.readEntry(id);
     if (!envelope) throw new HttpError(404, "エントリが見つかりません");
     const existing = read(context, root, id), now = new Date(Math.max(Date.now(), Date.parse(existing.updatedAt))).toISOString();
-    const entry: PasswordEntry = { id, ...fields(payload), createdAt: existing.createdAt, updatedAt: now,
-      passwordChangedAt: existing.password === payload.password ? existing.passwordChangedAt : now };
+    const data = fields(payload);
+    if ((existing.type ?? "login") !== ("type" in data ? data.type : "login")) throw new HttpError(400, "保存済みの項目の種類は変更できません");
+    const entry: VaultEntry = "type" in data ? { id, ...data, createdAt: existing.createdAt, updatedAt: now } :
+      { id, ...data, createdAt: existing.createdAt, updatedAt: now,
+        passwordChangedAt: (existing as PasswordEntry).password === data.password ? (existing as PasswordEntry).passwordChangedAt : now };
     const plaintext = serialize(entry);
     try { await context.store.writeEntry(root, plaintext, entryContext(context, id, envelope.revision + 1), options); return entry; }
     finally { plaintext.fill(0); }
@@ -120,7 +134,7 @@ export function deleteV2Entry(input: unknown) {
     return { success: true };
   });
 }
-export function restoreV2Entries(entries: PasswordEntry[]) {
+export function restoreV2Entries(entries: VaultEntry[]) {
   return mutation(async (context, root, options) => {
     const snapshots: { entryId: string; plaintext: Buffer }[] = [];
     try {

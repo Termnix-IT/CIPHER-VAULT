@@ -41,6 +41,21 @@ test("approved search returns only bounded candidate fields and origin, without 
   assert.deepEqual(Object.keys(result[0]).sort(), ["id", "origin", "serviceName"]); assert.equal(JSON.stringify(result).includes("private-"), false);
   assert.equal(candidateOrigin("javascript:secret"), null); assert.equal(candidateOrigin("broken"), null);
 });
+test("API names are candidates, while cards are excluded before the result limit and detail reads", async () => {
+  const reads = [];
+  const search = approvedCandidateSearch({ requireUnlocked: () => "current", confirm: async () => true,
+    list: () => ({ items: [...Array.from({ length: 25 }, (_, index) => ({ id: `card-${index}`, type: "creditCard", serviceName: "Synthetic Card" })),
+      { id: "api", type: "apiKey", serviceName: "Synthetic API" }, { id: "login", serviceName: "Synthetic Login" }] }),
+    detail: id => { reads.push(id); return { url: "https://user:private@example.test/path?secret=canary", apiKey: { key: "private-key", keyId: "private-id" } }; } });
+  const request = query => ({ query, clientId: "synthetic", displayName: "Codex", signal: new AbortController().signal });
+  assert.deepEqual(await search(request("synthetic")), [
+    { id: "api", serviceName: "Synthetic API", origin: "https://example.test" },
+    { id: "login", serviceName: "Synthetic Login", origin: "https://example.test" }
+  ]);
+  assert.deepEqual(reads, ["api", "login"]);
+  assert.deepEqual(await search(request("card")), []); assert.deepEqual(reads, ["api", "login"]);
+});
+
 test("denial, lock, generation replacement, cancellation and concurrent dialogs never read the Vault", async () => {
   for (const scenario of ["denied", "locked", "generation", "aborted", "pending"]) {
     let reads = 0, generation = "current", release; const controller = new AbortController();

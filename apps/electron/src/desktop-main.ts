@@ -21,7 +21,7 @@ import { LocalPairingError } from "./local-pairing.js";
 import { approvedCandidateSearch } from "./approved-candidate-search.js";
 import type {
   PasswordGenerationOptions,
-  PasswordEntryUpsertPayload,
+  VaultEntryUpsertPayload,
   VaultResetPayload,
   VaultSetupPayload,
   VaultUnlockPayload
@@ -55,13 +55,13 @@ type VaultServiceModule = {
 };
 
 type EntryServiceModule = {
-  listEntries: () => { items: import("@password-manager/shared/types").PasswordEntrySummary[] };
-  getEntryById: (id: string) => import("@password-manager/shared/types").PasswordEntry;
-  createEntry: (payload: PasswordEntryUpsertPayload) => import("@password-manager/shared/types").PasswordEntry | Promise<import("@password-manager/shared/types").PasswordEntry>;
+  listEntries: () => { items: import("@password-manager/shared/types").VaultEntrySummary[] };
+  getEntryById: (id: string) => import("@password-manager/shared/types").VaultEntry;
+  createEntry: (payload: VaultEntryUpsertPayload) => import("@password-manager/shared/types").VaultEntry | Promise<import("@password-manager/shared/types").VaultEntry>;
   updateEntry: (
     id: string,
-    payload: PasswordEntryUpsertPayload
-  ) => import("@password-manager/shared/types").PasswordEntry | Promise<import("@password-manager/shared/types").PasswordEntry>;
+    payload: VaultEntryUpsertPayload
+  ) => import("@password-manager/shared/types").VaultEntry | Promise<import("@password-manager/shared/types").VaultEntry>;
   deleteEntry: (id: string) => { success: boolean };
 };
 

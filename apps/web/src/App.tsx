@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { CLIPBOARD_CLEAR_AFTER_MS } from "@password-manager/shared";
-import type { PasswordEntry, PasswordEntrySummary, PasswordEntryUpsertPayload, VaultStatus } from "@password-manager/shared/types";
+import type { VaultEntry, VaultEntrySummary, VaultEntryUpsertPayload, VaultStatus } from "@password-manager/shared/types";
 import {
   copyText, createEntry, deleteEntry, fetchEntries, fetchEntry, generatePassword,
   lockVault, observeVaultStatus, recordVaultActivity, resetVault, setupVault, unlockVault, updateEntry, supportsLocalConnections
@@ -16,8 +16,8 @@ export function App() {
   const [maintenanceOpened, setMaintenanceOpened] = useState(false);
   const [connectionsOpened, setConnectionsOpened] = useState(false);
   const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null);
-  const [entries, setEntries] = useState<PasswordEntrySummary[]>([]);
-  const [selectedEntry, setSelectedEntry] = useState<PasswordEntry | null>(null);
+  const [entries, setEntries] = useState<VaultEntrySummary[]>([]);
+  const [selectedEntry, setSelectedEntry] = useState<VaultEntry | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingEntries, setIsLoadingEntries] = useState(false);
   const [isCreatingEntry, setIsCreatingEntry] = useState(false);
@@ -137,7 +137,7 @@ export function App() {
     }
   }
 
-  async function handleCreateEntry(payload: PasswordEntryUpsertPayload) {
+  async function handleCreateEntry(payload: VaultEntryUpsertPayload) {
     const epoch = viewEpoch.current;
     setIsCreatingEntry(true); setErrorMessage("");
     try {
@@ -164,7 +164,7 @@ export function App() {
     } finally { if (isCurrent(epoch)) setIsLoadingEntryDetail(false); }
   }
 
-  async function handleUpdateEntry(id: string, payload: PasswordEntryUpsertPayload) {
+  async function handleUpdateEntry(id: string, payload: VaultEntryUpsertPayload) {
     const epoch = viewEpoch.current;
     setIsUpdatingEntry(true); setErrorMessage("");
     try {
@@ -233,6 +233,13 @@ export function App() {
     setIsEditingEntry(true);
   }
 
+  function handleOpenMaintenance() {
+    if (!statusRef.current?.isUnlocked || isCreatingEntry || isUpdatingEntry || isDeletingEntry || isLoadingEntryDetail || isGeneratingPassword) return;
+    if (hasUnsavedChanges && !window.confirm("未保存の変更を破棄して保管庫の管理を開きますか？")) return;
+    setHasUnsavedChanges(false); setIsFormOpen(false); setIsEditingEntry(false);
+    setMaintenanceOpened(true);
+  }
+
   const menu = <AppMenu key={`menu-${vaultStatus?.sessionId ?? "initial"}`}
     isUnlocked={vaultStatus?.isUnlocked ?? false}
     isBusy={isSubmitting || isCreatingEntry || isUpdatingEntry || isDeletingEntry}
@@ -250,7 +257,7 @@ export function App() {
     onGroupedViewChange={setIsGroupedView}
     onSelectEntry={handleSelectEntry}
     onCopy={handleCopyToClipboard}
-    onMaintenance={() => setMaintenanceOpened(true)}
+    onMaintenance={handleOpenMaintenance}
     onConnections={() => setConnectionsOpened(true)}
     connectionsAvailable={supportsLocalConnections()}
   />;
@@ -272,6 +279,8 @@ export function App() {
       {menu}
       {maintenanceRequired ? <div className="cipher-auth-shell"><p role="status">保管庫の切り替え状態を確認しています。</p></div> : vaultStatus.isUnlocked ? (
         <VaultDashboard key={`vault-${vaultStatus.sessionId}`}
+          vaultFormat={vaultStatus.maintenance?.format ?? "unknown"}
+          onOpenMaintenance={handleOpenMaintenance}
           hasUnsavedChanges={hasUnsavedChanges}
           isFormOpen={isFormOpen}
           onFormOpenChange={setIsFormOpen}

@@ -2,7 +2,7 @@ import { ZxcvbnFactory } from "@zxcvbn-ts/core";
 import { setImmediate } from "node:timers/promises";
 import * as common from "@zxcvbn-ts/language-common";
 import * as english from "@zxcvbn-ts/language-en";
-import type { AuditIssue, SecurityAudit } from "@password-manager/shared/types";
+import type { AuditIssue, SecurityAudit, PasswordEntry } from "@password-manager/shared/types";
 import { getDatabase } from "../db/database.js";
 import { decryptSecret, getVaultSession } from "./crypto-service.js";
 import { HttpError } from "../lib/errors.js";
@@ -23,8 +23,8 @@ export async function auditVault(): Promise<SecurityAudit> {
   if (busy) throw new HttpError(409, "監査の完了を待ってください");
   const session = getVaultSession();
   const now = Date.now();
-  const rows = isV2Vault() ? listEntries().items.map(summary => {
-    const entry = getEntryById(summary.id);
+  const rows = isV2Vault() ? listEntries().items.filter(summary => summary.type !== "apiKey" && summary.type !== "creditCard").map(summary => {
+    const entry = getEntryById(summary.id) as PasswordEntry;
     return { id: entry.id, service_name: entry.serviceName, login_id: entry.loginId, encrypted_password: "",
       password: entry.password, url: entry.url, updated_at: entry.updatedAt, password_changed_at: entry.passwordChangedAt };
   }) : getDatabase().prepare(`SELECT id, service_name, login_id, encrypted_password, url,

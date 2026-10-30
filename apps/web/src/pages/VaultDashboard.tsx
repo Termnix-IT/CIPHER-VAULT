@@ -1,8 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { PasswordEntry, PasswordEntrySummary, PasswordEntryUpsertPayload } from "@password-manager/shared/types";
-import { EntryEditor } from "../components/EntryEditor";
+import type { VaultEntry, VaultEntrySummary, VaultEntryUpsertPayload, VaultMaintenanceState } from "@password-manager/shared/types";
+import { EntryEditor, entryTypeLabel } from "../components/EntryEditor";
 
 type VaultDashboardProps = {
+  vaultFormat: VaultMaintenanceState["format"];
+  onOpenMaintenance: () => void;
   hasUnsavedChanges: boolean;
   onDirtyChange: (dirty: boolean) => void;
   isFormOpen: boolean;
@@ -12,21 +14,21 @@ type VaultDashboardProps = {
   onEditEntry: () => void;
   isGroupedView: boolean;
   onGroupedViewChange: (grouped: boolean) => void;
-  entries: PasswordEntrySummary[];
+  entries: VaultEntrySummary[];
   isLoading: boolean;
   isCreating: boolean;
   isUpdating: boolean;
   isDeleting: boolean;
   isLoadingDetail: boolean;
   isGeneratingPassword: boolean;
-  selectedEntry: PasswordEntry | null;
+  selectedEntry: VaultEntry | null;
   errorMessage: string;
   copyMessage: string;
   onLock: () => Promise<void>;
   onRefresh: () => Promise<void>;
-  onCreateEntry: (payload: PasswordEntryUpsertPayload) => Promise<void>;
+  onCreateEntry: (payload: VaultEntryUpsertPayload) => Promise<void>;
   onSelectEntry: (id: string) => Promise<void>;
-  onUpdateEntry: (id: string, payload: PasswordEntryUpsertPayload) => Promise<void>;
+  onUpdateEntry: (id: string, payload: VaultEntryUpsertPayload) => Promise<void>;
   onDeleteEntry: (id: string) => Promise<void>;
   onGeneratePassword: () => Promise<string>;
   onCopyToClipboard: (value: string, label: string) => Promise<void>;
@@ -45,10 +47,10 @@ export function VaultDashboard(props: VaultDashboardProps) {
   const previousSelection = useRef<string | null>(null);
   const search = searchTerm.trim().toLocaleLowerCase("ja-JP");
   const filtered = useMemo(() => entries.filter((entry) => !search ||
-    [entry.serviceName, entry.loginId, entry.group ?? "", ...entry.tags]
+    [entry.serviceName, entry.loginId ?? "", entry.group ?? "", entryTypeLabel(entry.type), ...entry.tags]
       .some((field) => field.toLocaleLowerCase("ja-JP").includes(search))), [entries, search]);
   const groups = useMemo(() => {
-    const result = new Map<string, PasswordEntrySummary[]>();
+    const result = new Map<string, VaultEntrySummary[]>();
     for (const entry of filtered) {
       const group = entry.group || "未分類";
       result.set(group, [...(result.get(group) ?? []), entry]);
@@ -132,7 +134,7 @@ export function VaultDashboard(props: VaultDashboardProps) {
     props.onEditingChange(false);
     props.onFormOpenChange(false);
   }
-  function renderEntry(entry: PasswordEntrySummary) {
+  function renderEntry(entry: VaultEntrySummary) {
     return <button key={entry.id} type="button" data-entry-id={entry.id}
       className={`entry-row ${!isFormOpen && selectedEntry?.id === entry.id ? "entry-row--active" : ""}`}
       disabled={busy} aria-current={!isFormOpen && selectedEntry?.id === entry.id ? "true" : undefined}
@@ -143,7 +145,8 @@ export function VaultDashboard(props: VaultDashboardProps) {
       <span className="entry-badge" aria-hidden="true">{entry.serviceName.charAt(0).toUpperCase()}</span>
       <span className="entry-info">
         <span className="entry-name">{entry.serviceName}</span>
-        <span className="entry-login">{entry.loginId}</span>
+        <span className="entry-login">{entry.type === "creditCard" ? `クレジットカード · 末尾 ${entry.cardLast4}`
+          : entry.type === "apiKey" ? "APIキー" : `ログイン · ${entry.loginId}`}</span>
       </span>
     </button>;
   }
@@ -155,7 +158,7 @@ export function VaultDashboard(props: VaultDashboardProps) {
             <button className="cipher-btn sidebar-add" type="button" disabled={busy || isFormOpen} onClick={toggleCreate}>＋ 新規追加</button>
           </div>
           <div className="search-prompt">
-            <input className="search-input" type="search" aria-label="サービス名・ID・グループ・タグで検索" placeholder="検索"
+            <input className="search-input" type="search" aria-label="サービス名・ID・グループ・タグ・種類で検索" placeholder="検索"
               value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} />
             {searchTerm && <button className="search-clear-btn" type="button" aria-label="検索条件をクリア" onClick={() => setSearchTerm("")}>×</button>}
           </div>
@@ -182,7 +185,10 @@ export function VaultDashboard(props: VaultDashboardProps) {
       </aside>
       <section className="vault-detail" ref={detailRef} aria-label={isFormOpen ? "新規エントリ" : props.isEditingEntry ? "エントリの編集" : "エントリの詳細"}>
         <div className="inspector-header">
-          <h1 className="inspector-title">{isFormOpen ? "新規エントリ" : selectedEntry?.serviceName ?? "エントリを選択"}</h1>
+          <div className="inspector-heading">
+            {selectedEntry && !isFormOpen && <span className="inspector-entry-type">{entryTypeLabel(selectedEntry.type)}</span>}
+            <h1 className="inspector-title">{isFormOpen ? "新規エントリ" : selectedEntry?.serviceName ?? "エントリを選択"}</h1>
+          </div>
           {selectedEntry && !isFormOpen && !props.isEditingEntry && <div className="inspector-actions">
             <button className="cipher-btn cipher-btn--primary" type="button" disabled={busy} onClick={props.onEditEntry}>編集する</button>
             <div className="inspector-more" ref={moreRef} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setMoreOpen(false); }}>
@@ -199,6 +205,7 @@ export function VaultDashboard(props: VaultDashboardProps) {
         </p>}
         {props.isLoadingDetail ? <p className="empty-state-text" role="status">復号中…</p> : isFormOpen || selectedEntry ?
           <EntryEditor key={isFormOpen ? "new" : selectedEntry!.id}
+            vaultFormat={props.vaultFormat} onOpenMaintenance={props.onOpenMaintenance}
             entry={isFormOpen ? null : selectedEntry} isEditing={isFormOpen || props.isEditingEntry} busy={busy} isSaving={props.isCreating || props.isUpdating}
             isGenerating={props.isGeneratingPassword} onDirtyChange={props.onDirtyChange}
             onGenerate={props.onGeneratePassword} onCopy={props.onCopyToClipboard}

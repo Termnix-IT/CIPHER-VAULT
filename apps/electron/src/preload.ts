@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type {
   PasswordGenerationOptions,
   PasswordManagerDesktopApi,
-  PasswordEntryUpsertPayload,
+  VaultEntryUpsertPayload,
   VaultResetPayload,
   VaultSetupPayload,
   VaultUnlockPayload
@@ -43,8 +43,8 @@ const passwordManagerApi: PasswordManagerDesktopApi = {
   resetVault: (payload: VaultResetPayload, sessionId) => ipcRenderer.invoke("vault:reset", sessionId, payload),
   fetchEntries: (sessionId) => ipcRenderer.invoke("entries:list", sessionId),
   fetchEntry: (id: string, sessionId) => ipcRenderer.invoke("entries:getById", sessionId, id),
-  createEntry: (payload: PasswordEntryUpsertPayload, sessionId) => ipcRenderer.invoke("entries:create", sessionId, payload),
-  updateEntry: (id: string, payload: PasswordEntryUpsertPayload, sessionId) => ipcRenderer.invoke("entries:update", sessionId, id, payload),
+  createEntry: (payload: VaultEntryUpsertPayload, sessionId) => ipcRenderer.invoke("entries:create", sessionId, payload),
+  updateEntry: (id: string, payload: VaultEntryUpsertPayload, sessionId) => ipcRenderer.invoke("entries:update", sessionId, id, payload),
   deleteEntry: (id: string, sessionId) => ipcRenderer.invoke("entries:delete", sessionId, id),
   generatePassword: (options: PasswordGenerationOptions, sessionId) => ipcRenderer.invoke("password:generate", sessionId, options),
   copyText: (value: string, sessionId) => ipcRenderer.invoke("clipboard:writeText", sessionId, value)
