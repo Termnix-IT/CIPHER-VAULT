@@ -133,6 +133,19 @@ try {
   await evaluate("window.passwordManager.checkForUpdates()");
   await evaluate("window.passwordManager.downloadUpdate()");
   assert.equal(await evaluate("window.passwordManager.installUpdate(false)"), undefined);
+  // Only the update state is synthetic; exercise the real menu, dialog and postponement.
+  window.webContents.send("updates:state", { ...updateState, status: "downloaded", latestVersion: "9.9.9", progress: 100 });
+  await evaluate("[...document.querySelectorAll('.app-menu-trigger')].find(button => button.textContent === 'ヘルプ').click()");
+  await waitFor("!!document.querySelector('#app-menu-help .app-menu-item')");
+  await click('#app-menu-help .app-menu-item');
+  await waitFor("document.querySelector('.app-info-dialog').open && document.querySelector('.app-info-dialog').textContent.includes('再起動して更新できます')");
+  assert.equal(await evaluate("[...document.querySelectorAll('.app-info-actions button')].some(button => button.textContent === '再起動して更新' && !button.disabled)"), true);
+  await capture("update-ready.png");
+  await evaluate("[...document.querySelectorAll('.app-info-actions button')].find(button => button.textContent === 'あとで').click()");
+  await waitFor("!document.querySelector('.app-info-dialog').open");
+  assert.equal((await evaluate("window.passwordManager.getUpdateState()")).status, "unsupported");
+  window.webContents.send("updates:state", updateState);
+  console.log("PASS update dialog presents restart and postponement without installing");
   console.log("PASS sandbox preload, local fonts, CSP and denied browser permissions preserve desktop update APIs");
   assert.equal(path.resolve(app.getPath("userData")), path.resolve(profile));
   const services = await import("../apps/api/dist/apps/api/src/services/vault-service.js");

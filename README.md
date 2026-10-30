@@ -120,7 +120,7 @@ v0.3.0以降で利用できます。新規の保管庫は従来形式で作成�
 
 ## アプリを更新する
 
-Windowsのsetup版では「ヘルプ」→「アプリ情報 / 更新」から確認・ダウンロード・再起動して更新します。起動時の確認や通常終了時の自動適用はありません。portable版と開発モードでは配布ページを案内します。
+Windowsのsetup版では「ヘルプ」→「アプリ情報 / 更新」から確認・ダウンロードし、「再起動して更新」でインストーラーの操作なしに更新できます。OSの権限確認が出る場合があります。起動時の確認や通常終了時の自動適用はありません。その他の配布形式は配布ページから入手します。
 
 更新機能のない旧版からは、アプリを終了して新しいsetupを同じインストール先へ上書きします。詳しくは[手動更新とアイコン](docs/手動更新とアイコン.md)を参照してください。
 
@@ -147,28 +147,11 @@ npm run dev:desktop
 | `npm run dev:desktop` | ViteとElectronで開発起動 |
 | `npm run build` / `npm run start` | Web/APIをビルドし、`http://localhost:3001` で起動 |
 | `npm run build:desktop` / `npm run start:desktop` | デスクトップ版をビルド・起動 |
-| `npm run test:api` | 一時DBでサービス・HTTP・暗号互換・Web配布の生成・固定導入を確認 |
-| `npm run test:security` | Electronの画面URL・IPC送信元・sandbox preload・CSP・権限の境界を確認 |
-| `npm run test:sessions` | 共通入力検証・KDF互換性・試行制御・OS連動・コピー期限を確認 |
-| `npm run test:local-endpoint` | 合成データ専用のpipe/socketでOS権限・peer資格情報・PID偽装拒否を検証 |
-| `npm run test:native-transport` | native helperをビルドし、OS接続・TLS相互認証・取消をNode/Electronで確認 |
-| `npm run test:desktop-session` | 専用の一時保管庫でElectronの画面・IPC・失効を自動確認 |
-| `npm run test:desktop-dev` | 一時ViteサーバーでElectron開発画面とHMR接続も確認 |
-| `npm run test:web-policy` | 一時HTTPサーバーでWeb版のCSP・画面・API通信を確認 |
-| `npm run test:updates` | 手動更新の制御確認 |
 | `npm run package:desktop` | `dist-desktop/` にWindows用setup・portableを生成（公開しない） |
 | `npm run package:desktop:linux` / `npm run package:desktop:mac` | 対象OS上でLinux / macOSの評価用パッケージを生成（公開しない） |
-| `npm run test:desktop-package` | 生成済みアプリをソース外へコピーし、一時保管庫の移行・再起動・鍵消去を確認 |
-| `npm run test:desktop-artifacts` | Linuxのtar.gz・展開AppImage、macOSのzip・読み取り専用dmg内のアプリを確認 |
 | `npm run package` | Node.jsで動かすWeb/API配布フォルダ `release/` を生成 |
 
-ElectronはpreloadとIPCを経由して共通サービスを呼び出し、保管庫操作にHTTPサーバーを使いません。Web/APIのDBは既定で `apps/api/data/`、Electronは `userData/data/` に保存します。開発・テストでは利用中の保管庫を初期化・上書きしないでください。
-
-Electronの画面はsandboxとcontextIsolationを有効にし、ブラウザの権限要求を拒否します。CSPと読み込み先の制限は、[設計](docs/設計.md#画面のsandboxとcsp)を参照してください。
-
-個別起動、ネイティブ依存、保存先、配布手順は[開発・配布手順](docs/開発・配布手順.md)を参照してください。
-
-CIにはWindowsの回帰・画面テスト、Linux/macOSのCore試験、各OSの配布アプリ検証を設定しています。本番依存のhigh以上と、全依存のlow以上の指摘を失敗条件にします。Linux/macOSのパッケージは評価用で、公開済みの製品対応を意味しません。検証範囲と署名の制約は[開発・配布手順](docs/開発・配布手順.md#ciと依存監査)を参照してください。
+検証コマンドは[変更に応じた検証](docs/開発・配布手順.md#変更に応じた検証)から選びます。開発・テストで利用中の保管庫を初期化・上書きしないでください。構成・通信・暗号化は[設計](docs/設計.md)、保存先・配布・CIは[開発・配布手順](docs/開発・配布手順.md)を参照してください。Linux/macOSのパッケージは評価用です。
 
 ## 関連ドキュメント
 

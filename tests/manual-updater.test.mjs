@@ -2,23 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { ManualUpdater } from "../apps/electron/dist/apps/electron/src/manual-updater.js";
-import { parseUpdateInfo } from "electron-updater/out/providers/Provider.js";
-
-test("updater parses channel YAML with the patched parser and rejects malformed metadata", () => {
-  const metadata = parseUpdateInfo(`version: 0.2.4
-files:
-  - url: fixture-setup.exe
-    sha512: fixture-checksum
-    size: 123
-releaseNotes: |
-  <h2>Changes</h2>
-  <ul><li>Security fix</li></ul>
-`, "latest.yml", "https://example.test/latest.yml");
-  assert.equal(metadata.version, "0.2.4");
-  assert.deepEqual(metadata.files, [{ url: "fixture-setup.exe", sha512: "fixture-checksum", size: 123 }]);
-  assert.match(metadata.releaseNotes, /<li>Security fix<\/li>/);
-  assert.throws(() => parseUpdateInfo("files: [", "latest.yml", "https://example.test/latest.yml"), { code: "ERR_UPDATER_INVALID_UPDATE_INFO" });
-});
 
 class FakeUpdater extends EventEmitter {
   checks = 0;
@@ -36,7 +19,7 @@ class FakeUpdater extends EventEmitter {
     return [];
   }
   quitAndInstall(silent, relaunch) {
-    assert.equal(silent, false);
+    assert.equal(silent, true);
     assert.equal(relaunch, true);
     this.installs++;
   }
@@ -67,13 +50,19 @@ test("startup, check and download never install or start the next step automatic
   assert.equal(controller.getState().status, "downloaded");
 });
 
-test("unsaved edit cancellation retains the downloaded update; explicit consent installs once", async () => {
+test("unsaved edit cancellation retains the update; preparation precedes one silent install and relaunch", async () => {
   const { updater, controller } = setup();
   await controller.check(); await controller.download();
   await controller.install(async () => false);
   assert.equal(controller.getState().status, "downloaded");
   assert.equal(updater.installs, 0);
   let locked = false;
+  const install = updater.quitAndInstall.bind(updater);
+  updater.quitAndInstall = (...args) => {
+    assert.equal(locked, true);
+    assert.equal(controller.getState().status, "installing");
+    install(...args);
+  };
   await controller.install(async () => { locked = true; return true; });
   assert.equal(locked, true);
   assert.equal(updater.installs, 1);

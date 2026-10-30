@@ -41,14 +41,13 @@ export function AppInfo({ hasUnsavedChanges, isSaving, renderTrigger, onClose }:
       </div>
       <div className="app-info-update" aria-live="polite">
         <h3>ソフトウェアの更新</h3>
-        <p>確認・ダウンロード・インストールは、操作したときだけ実行します。</p>
         {status === "checking" && <p>最新版を確認しています…</p>}
         {status === "current" && <p>お使いのバージョンは最新です。</p>}
         {state?.latestVersion && <p>更新バージョン：{state.latestVersion}</p>}
         {releaseNotes && <details><summary>変更内容</summary><pre>{releaseNotes}</pre></details>}
         {status === "downloading" && <div><progress aria-label="ダウンロード進捗" max="100" value={state?.progress ?? 0} /><p>ダウンロード中… {Math.floor(state?.progress ?? 0)}%</p></div>}
-        {status === "downloaded" && <p>更新の準備ができました。「あとで」を選ぶと、通常終了時にも適用されません。</p>}
-        {status === "installing" && <p>保管庫をロックしました。インストーラーを起動しています…</p>}
+        {status === "downloaded" && <p>再起動して更新できます。「あとで」を選ぶと更新しません。</p>}
+        {status === "installing" && <p>更新後に自動で再起動します…</p>}
         {(status === "unsupported" || !api) && <p>アプリ内更新は、Windows の setup 版で利用できます。</p>}
         {(error || state?.message) && <p className="form-error" role="alert">{error || state?.message}</p>}
         <div className="app-info-actions">

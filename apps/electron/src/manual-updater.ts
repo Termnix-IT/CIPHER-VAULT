@@ -66,7 +66,7 @@ export class ManualUpdater {
     try {
       if (!await prepare()) return false;
       this.set({ status: "installing" });
-      this.updater.quitAndInstall(false, true);
+      this.updater.quitAndInstall(true, true);
     } catch { this.fail(); }
     finally { this.busy = false; }
   }
