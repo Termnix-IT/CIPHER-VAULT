@@ -34,10 +34,11 @@ const evaluate = source => window.webContents.executeJavaScript(source);
 async function waitFor(source) { for (let i = 0; i < 300; i++) { if (await evaluate(source)) return; await delay(50); } throw new Error("Connections UI condition failed: " + source); }
 const click = selector => evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
 async function fill(selector, value) { await evaluate(`(()=>{const input=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`); }
+async function fillMaster(value) { for (const selector of ['.cipher-form input[name=master]', '.cipher-form input[name=confirm]']) if (await evaluate(`!!document.querySelector(${JSON.stringify(selector)})`)) await fill(selector, value); }
 async function open() {
   await evaluate("[...document.querySelectorAll('.app-menu-trigger')].find(b=>b.textContent==='ツール').click()");
-  await waitFor("[...document.querySelectorAll('.app-menu-item')].some(b=>b.textContent==='接続の管理'&&!b.disabled)");
-  await evaluate("[...document.querySelectorAll('.app-menu-item')].find(b=>b.textContent==='接続の管理').click()");
+  await waitFor("[...document.querySelectorAll('.app-menu-item')].some(b=>b.textContent==='外部アプリの接続'&&!b.disabled)");
+  await evaluate("[...document.querySelectorAll('.app-menu-item')].find(b=>b.textContent==='外部アプリの接続').click()");
   await waitFor("!!document.querySelector('.local-connections-dialog[open] .connections-status')");
 }
 async function save() { await click(".connections-export"); await waitFor("document.querySelector('.local-connections-dialog .vault-tool-message')?.textContent.includes('保存しました')"); return JSON.parse(fs.readFileSync(receiptFile)); }
@@ -51,7 +52,7 @@ async function run() { try {
   await import("../apps/electron/dist/apps/electron/src/main.js"); await created;
   assert.equal(await evaluate("document.fonts.load('500 14px \"Noto Sans JP\"','接続の管理').then(fonts=>fonts.length>0&&fonts.every(font=>font.status==='loaded'))"), true);
   await waitFor("!!document.querySelector('.cipher-form input[type=password]')"); assert.equal(vaultSession.getState().isUnlocked, false);
-  await fill('.cipher-form input[type=password]', password); await click('.cipher-form button[type=submit]');
+  await fillMaster(password); await click('.cipher-form button[type=submit]');
   await waitFor("!!document.querySelector('.cipher-dashboard')&&!document.querySelector('.sidebar-lock').disabled");
   await open();
   const executable = nativeTransportExecutable({ packaged: false, resourcesPath: "", workspaceRoot: path.resolve(".") });
@@ -59,7 +60,7 @@ async function run() { try {
   const current = () => vaultSession.requireUnlocked();
   let metadata;
   if (phase === "create") {
-    await waitFor("document.querySelector('.connections-status strong')?.textContent.includes('無効')");
+    await waitFor("document.querySelector('.connections-status strong')?.textContent.includes('オフ')");
     await click('.connections-status button'); await waitFor("!!document.querySelector('.connections-ready')");
     identity = await generateLocalIdentity({ executable, role: "client" });
     const reference = { identityId: randomUUID(), role: "client", fingerprint256: new X509Certificate(identity.certificate).fingerprint256 };

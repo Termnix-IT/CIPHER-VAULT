@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { CLIPBOARD_CLEAR_AFTER_MS } from "@password-manager/shared";
-import type { VaultEntry, VaultEntrySummary, VaultEntryUpsertPayload, VaultStatus } from "@password-manager/shared/types";
+import type { VaultEntry, VaultEntrySummary, VaultEntryUpsertPayload, VaultMaintenanceOperation, VaultStatus } from "@password-manager/shared/types";
 import {
   copyText, createEntry, deleteEntry, fetchEntries, fetchEntry, generatePassword,
   lockVault, observeVaultStatus, recordVaultActivity, resetVault, setupVault, unlockVault, updateEntry, supportsLocalConnections
@@ -14,6 +14,7 @@ import { LocalConnections } from "./components/LocalConnections";
 
 export function App() {
   const [maintenanceOpened, setMaintenanceOpened] = useState(false);
+  const [maintenanceRequest, setMaintenanceRequest] = useState<VaultMaintenanceOperation | null>(null);
   const [connectionsOpened, setConnectionsOpened] = useState(false);
   const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null);
   const [entries, setEntries] = useState<VaultEntrySummary[]>([]);
@@ -26,6 +27,7 @@ export function App() {
   const [isLoadingEntryDetail, setIsLoadingEntryDetail] = useState(false);
   const [isGeneratingPassword, setIsGeneratingPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [lockNotice, setLockNotice] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -47,10 +49,11 @@ export function App() {
       setConnectionsOpened(false);
       setIsLoadingEntries(false); setIsLoadingEntryDetail(false);
       setIsCreatingEntry(false); setIsUpdatingEntry(false); setIsDeletingEntry(false); setIsGeneratingPassword(false);
-      setErrorMessage(state.lockReason === "idle" ? "5分間操作がなかったため保管庫をロックしました"
-        : state.lockReason === "clock-change" ? "システム時刻の変更を検出したため保管庫をロックしました"
-        : state.lockReason === "screen-lock" || state.lockReason === "screen-unlock" ? "OSの画面ロックに伴い保管庫をロックしました"
-        : state.lockReason === "suspend" || state.lockReason === "resume" ? "スリープ・復帰に伴い保管庫をロックしました" : "");
+      setErrorMessage("");
+      setLockNotice(state.lockReason === "idle" ? "5分間操作がなかったのでロックしました"
+        : state.lockReason === "clock-change" ? "パソコンの時刻が変わったのでロックしました"
+        : state.lockReason === "screen-lock" || state.lockReason === "screen-unlock" ? "パソコンの画面ロックに合わせてロックしました"
+        : state.lockReason === "suspend" || state.lockReason === "resume" ? "スリープに合わせてロックしました" : "");
     }
     setVaultStatus(state);
   }), []);
@@ -98,7 +101,7 @@ export function App() {
       setEntries(response.items);
       setSelectedEntry((current) => current && response.items.some((entry) => entry.id === current.id) ? current : null);
     } catch (error) {
-      if (isCurrent(epoch)) setErrorMessage(error instanceof Error ? error.message : "エントリ一覧を読み込めませんでした");
+      if (isCurrent(epoch)) setErrorMessage(error instanceof Error ? error.message : "一覧を読み込めませんでした");
     } finally {
       if (isCurrent(epoch)) setIsLoadingEntries(false);
     }
@@ -106,22 +109,22 @@ export function App() {
 
   async function handleVaultSubmit(masterPassword: string) {
     const request = ++submission.current;
-    setIsSubmitting(true); setErrorMessage("");
+    setIsSubmitting(true); setErrorMessage(""); setLockNotice("");
     try {
       if (statusRef.current?.isConfigured) await unlockVault({ masterPassword });
       else await setupVault({ masterPassword });
     } catch (error) {
-      if (request === submission.current) setErrorMessage(error instanceof Error ? error.message : "保管庫の操作に失敗しました");
+      if (request === submission.current) setErrorMessage(error instanceof Error ? error.message : "保管庫を開けませんでした");
     } finally {
       if (request === submission.current) setIsSubmitting(false);
     }
   }
 
   async function handleLockVault() {
-    if (hasUnsavedChanges && !window.confirm("保存していない内容を破棄して保管庫をロックしますか？")) return;
+    if (hasUnsavedChanges && !window.confirm("保存していない変更を破棄してロックしますか？")) return;
     try { await lockVault(); }
     catch (error) {
-      if (statusRef.current?.isUnlocked) setErrorMessage(error instanceof Error ? error.message : "保管庫をロックできませんでした");
+      if (statusRef.current?.isUnlocked) setErrorMessage(error instanceof Error ? error.message : "ロックできませんでした");
     }
   }
 
@@ -147,7 +150,7 @@ export function App() {
       await refreshEntries();
       if (!isCurrent(epoch)) throw new VaultSessionChangedError();
     } catch (error) {
-      if (isCurrent(epoch)) setErrorMessage(error instanceof Error ? error.message : "エントリを作成できませんでした");
+      if (isCurrent(epoch)) setErrorMessage(error instanceof Error ? error.message : "保存できませんでした");
       throw error;
     } finally { if (isCurrent(epoch)) setIsCreatingEntry(false); }
   }
@@ -160,7 +163,7 @@ export function App() {
       if (!isCurrent(epoch)) return;
       setSelectedEntry(entry); setIsFormOpen(false); setIsEditingEntry(false); setHasUnsavedChanges(false);
     } catch (error) {
-      if (isCurrent(epoch)) setErrorMessage(error instanceof Error ? error.message : "エントリ詳細を読み込めませんでした");
+      if (isCurrent(epoch)) setErrorMessage(error instanceof Error ? error.message : "項目を開けませんでした");
     } finally { if (isCurrent(epoch)) setIsLoadingEntryDetail(false); }
   }
 
@@ -174,7 +177,7 @@ export function App() {
       await refreshEntries();
       if (!isCurrent(epoch)) throw new VaultSessionChangedError();
     } catch (error) {
-      if (isCurrent(epoch)) setErrorMessage(error instanceof Error ? error.message : "エントリを更新できませんでした");
+      if (isCurrent(epoch)) setErrorMessage(error instanceof Error ? error.message : "保存できませんでした");
       throw error;
     } finally { if (isCurrent(epoch)) setIsUpdatingEntry(false); }
   }
@@ -189,7 +192,7 @@ export function App() {
       await refreshEntries();
       if (!isCurrent(epoch)) throw new VaultSessionChangedError();
     } catch (error) {
-      if (isCurrent(epoch)) setErrorMessage(error instanceof Error ? error.message : "エントリを削除できませんでした");
+      if (isCurrent(epoch)) setErrorMessage(error instanceof Error ? error.message : "削除できませんでした");
       throw error;
     } finally { if (isCurrent(epoch)) setIsDeletingEntry(false); }
   }
@@ -212,7 +215,7 @@ export function App() {
     try {
       await copyText(value);
       if (!isCurrent(epoch)) return;
-      setCopyMessage(`${label}をコピーしました${window.passwordManager ? `（${CLIPBOARD_CLEAR_AFTER_MS / 1000}秒後またはロック時に消去）` : ""}`);
+      setCopyMessage(`${label}をコピーしました${window.passwordManager ? ` · ${CLIPBOARD_CLEAR_AFTER_MS / 1000}秒後かロック時に消えます` : ""}`);
       window.setTimeout(() => { if (isCurrent(epoch)) setCopyMessage(""); }, 2000);
     } catch (error) {
       if (isCurrent(epoch)) setErrorMessage(error instanceof Error ? error.message : "クリップボードへコピーできませんでした");
@@ -222,7 +225,7 @@ export function App() {
 
   function handleOpenCreateForm() {
     if (isFormOpen || isCreatingEntry || isUpdatingEntry || isDeletingEntry || isLoadingEntryDetail) return;
-    if (hasUnsavedChanges && !window.confirm("保存していない内容を破棄して新規エントリを開きますか？")) return;
+    if (hasUnsavedChanges && !window.confirm("保存していない変更を破棄して、新しい項目を作りますか？")) return;
     setHasUnsavedChanges(false);
     setIsEditingEntry(false);
     setIsFormOpen(true);
@@ -233,10 +236,11 @@ export function App() {
     setIsEditingEntry(true);
   }
 
-  function handleOpenMaintenance() {
+  function handleOpenMaintenance(operation: VaultMaintenanceOperation) {
     if (!statusRef.current?.isUnlocked || isCreatingEntry || isUpdatingEntry || isDeletingEntry || isLoadingEntryDetail || isGeneratingPassword) return;
-    if (hasUnsavedChanges && !window.confirm("未保存の変更を破棄して保管庫の管理を開きますか？")) return;
+    if (hasUnsavedChanges && !window.confirm("保存していない変更を破棄して続けますか？")) return;
     setHasUnsavedChanges(false); setIsFormOpen(false); setIsEditingEntry(false);
+    setMaintenanceRequest(operation);
     setMaintenanceOpened(true);
   }
 
@@ -255,6 +259,7 @@ export function App() {
     onNewEntry={handleOpenCreateForm}
     onEditEntry={handleEditEntry}
     onGroupedViewChange={setIsGroupedView}
+    vaultFormat={vaultStatus?.maintenance?.format ?? "unknown"}
     onSelectEntry={handleSelectEntry}
     onCopy={handleCopyToClipboard}
     onMaintenance={handleOpenMaintenance}
@@ -266,8 +271,8 @@ export function App() {
     return (
       <main className="app-shell">
         {menu}
-        <div className="cipher-auth-shell">
-          <p className="loading-text">&gt; 保管庫を読み込み中...</p>
+        <div className="status-shell">
+          <p role="status">読み込み中…</p>
           {errorMessage ? <p className="form-error">{errorMessage}</p> : null}
         </div>
       </main>
@@ -277,10 +282,10 @@ export function App() {
   return (
     <main className="app-shell">
       {menu}
-      {maintenanceRequired ? <div className="cipher-auth-shell"><p role="status">保管庫の切り替え状態を確認しています。</p></div> : vaultStatus.isUnlocked ? (
+      {maintenanceRequired ? <div className="status-shell"><p role="status">前回の変更を確認しています…</p></div> : vaultStatus.isUnlocked ? (
         <VaultDashboard key={`vault-${vaultStatus.sessionId}`}
           vaultFormat={vaultStatus.maintenance?.format ?? "unknown"}
-          onOpenMaintenance={handleOpenMaintenance}
+          onOpenMaintenance={() => handleOpenMaintenance("migrate")}
           hasUnsavedChanges={hasUnsavedChanges}
           isFormOpen={isFormOpen}
           onFormOpenChange={setIsFormOpen}
@@ -288,7 +293,6 @@ export function App() {
           onEditingChange={setIsEditingEntry}
           onEditEntry={handleEditEntry}
           isGroupedView={isGroupedView}
-          onGroupedViewChange={setIsGroupedView}
           onDirtyChange={setHasUnsavedChanges}
           entries={entries}
           isLoading={isLoadingEntries}
@@ -301,7 +305,6 @@ export function App() {
           errorMessage={errorMessage}
           copyMessage={copyMessage}
           onLock={handleLockVault}
-          onRefresh={refreshEntries}
           onCreateEntry={handleCreateEntry}
           onSelectEntry={handleSelectEntry}
           onUpdateEntry={handleUpdateEntry}
@@ -316,11 +319,12 @@ export function App() {
           allowReset={vaultStatus.maintenance?.format !== "v2"}
           isSubmitting={isSubmitting}
           errorMessage={errorMessage}
+          notice={lockNotice}
           onSubmit={handleVaultSubmit}
           onReset={handleResetVault}
         />
       )}
-      <VaultMaintenance status={vaultStatus} opened={maintenanceOpened || maintenanceRequired} onClose={() => setMaintenanceOpened(false)} />
+      <VaultMaintenance status={vaultStatus} requested={maintenanceRequest} opened={maintenanceOpened || maintenanceRequired} onClose={() => setMaintenanceOpened(false)} />
       <LocalConnections key={vaultStatus.sessionId} opened={connectionsOpened && vaultStatus.isUnlocked && !maintenanceRequired} onClose={() => setConnectionsOpened(false)} />
     </main>
   );

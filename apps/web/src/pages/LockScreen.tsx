@@ -1,7 +1,6 @@
 import type { FormEvent } from "react";
 import { useEffect, useRef, useState } from "react";
-import { BinaryRain } from "../components/BinaryRain";
-import { useGlitchDecode } from "../lib/useGlitchDecode";
+import { LockIcon } from "../components/Icons";
 
 type LockScreenProps = {
   onDirtyChange: (dirty: boolean) => void;
@@ -9,6 +8,7 @@ type LockScreenProps = {
   allowReset?: boolean;
   isSubmitting: boolean;
   errorMessage: string;
+  notice?: string;
   onSubmit: (masterPassword: string) => Promise<void>;
   onReset: () => Promise<void>;
 };
@@ -31,18 +31,21 @@ export function LockScreen({
   allowReset = true,
   isSubmitting,
   errorMessage,
+  notice = "",
   onSubmit,
   onReset,
 }: LockScreenProps) {
   const [masterPassword, setMasterPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [mismatch, setMismatch] = useState(false);
   const [resetStep, setResetStep] = useState<ResetStep>("idle");
   const [hasAcknowledgedDataLoss, setHasAcknowledgedDataLoss] = useState(false);
   const [resetCode, setResetCode] = useState("");
   const [resetCodeInput, setResetCodeInput] = useState("");
+  const [pasteBlocked, setPasteBlocked] = useState(false);
   const [hasAttemptedReset, setHasAttemptedReset] = useState(false);
   const resetCodeInputRef = useRef<HTMLInputElement>(null);
-  const decodedTitle = useGlitchDecode("CIPHER VAULT", 900); // タイトルは英語維持
-  useEffect(() => { onDirtyChange(Boolean(masterPassword || resetCodeInput)); }, [masterPassword, resetCodeInput, onDirtyChange]);
+  useEffect(() => { onDirtyChange(Boolean(masterPassword || confirmPassword || resetCodeInput)); }, [masterPassword, confirmPassword, resetCodeInput, onDirtyChange]);
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
   useEffect(() => {
@@ -53,11 +56,16 @@ export function LockScreen({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!isConfigured && masterPassword !== confirmPassword) {
+      setMismatch(true);
+      return;
+    }
     await onSubmit(masterPassword);
   }
 
   function openResetWarning() {
     setMasterPassword("");
+    setConfirmPassword("");
     setHasAcknowledgedDataLoss(false);
     setResetCode("");
     setResetCodeInput("");
@@ -72,6 +80,7 @@ export function LockScreen({
 
     setResetCode(createResetConfirmationCode());
     setResetCodeInput("");
+    setPasteBlocked(false);
     setHasAttemptedReset(false);
     setResetStep("confirmation");
   }
@@ -101,170 +110,104 @@ export function LockScreen({
     }
   }
 
-  const isResetFlow = resetStep !== "idle";
+  const message = mismatch ? "もう一度入力した内容が一致しません" : errorMessage;
 
   return (
-    <div className="cipher-auth-shell">
-      <BinaryRain />
-
-      {/* Corner system markers */}
-      <div className="corner-marker corner-marker--tl" aria-hidden="true">
-        <span>SYS: 0xA4E2F1</span>
-        <span>ENC: AES-256-GCM</span>
-      </div>
-      <div className="corner-marker corner-marker--tr" aria-hidden="true">
-        <span>KDF: SCRYPT</span>
-        <span>HMAC: SHA-256</span>
-      </div>
-      <div className="corner-marker corner-marker--bl" aria-hidden="true">
-        <span>PROTOCOL: LOCAL</span>
-        <span>BUILD: 1.0.0</span>
-      </div>
-      <div className="corner-marker corner-marker--br" aria-hidden="true">
-        <span>CLEARANCE: REQUIRED</span>
-        <span>AUTH: MASTER KEY</span>
-      </div>
-
-      <section className="cipher-panel">
-        <div className="panel-scan-line" aria-hidden="true" />
-
-        <h1 className="glitch-title">{decodedTitle}</h1>
-
-        <p className="system-status">
-          {">"} システム状態:{" "}
-          <span className={isResetFlow ? "status-value status-value--danger" : "status-value"}>
-            {isResetFlow ? "リセット確認中" : isConfigured ? "ロック中" : "未設定"}
-          </span>
-        </p>
-
-        <div className="system-specs" aria-hidden="true">
-          <span>CIPHER: AES-256-GCM</span>
-          <span className="spec-sep">·</span>
-          <span>KDF: SCRYPT</span>
-          <span className="spec-sep">·</span>
-          <span>STORAGE: LOCAL</span>
-        </div>
+    <div className="lock-shell">
+      <section className="lock-panel">
+        <div className="lock-mark"><LockIcon /></div>
+        <h1 className="lock-title">CIPHER VAULT</h1>
 
         {resetStep === "idle" ? (
           <>
             <form className="cipher-form" onSubmit={handleSubmit}>
-              <label className="terminal-label">
-                マスターキー
+              <input
+                className="field-input"
+                name="master"
+                type="password"
+                aria-label="マスターパスワード"
+                placeholder={isConfigured ? "マスターパスワード" : "マスターパスワード（12文字以上）"}
+                value={masterPassword}
+                onChange={(e) => { setMasterPassword(e.target.value); setMismatch(false); }}
+                minLength={isConfigured ? undefined : 12}
+                autoComplete={isConfigured ? "current-password" : "new-password"}
+                autoFocus
+              />
+              {!isConfigured ? (
                 <input
-                  className="terminal-input"
+                  className="field-input"
+                  name="confirm"
                   type="password"
-                  placeholder={
-                    isConfigured
-                      ? "パスフレーズを入力_"
-                      : "パスフレーズを作成（12文字以上）_"
-                  }
-                  value={masterPassword}
-                  onChange={(e) => setMasterPassword(e.target.value)}
-                  minLength={isConfigured ? undefined : 12}
-                  autoComplete={isConfigured ? "current-password" : "new-password"}
-                  autoFocus
+                  aria-label="マスターパスワードをもう一度入力"
+                  placeholder="もう一度入力"
+                  value={confirmPassword}
+                  onChange={(e) => { setConfirmPassword(e.target.value); setMismatch(false); }}
+                  minLength={12}
+                  autoComplete="new-password"
                 />
-              </label>
-
-              {errorMessage ? (
-                <p className="error-line">{"! ERR: "}{errorMessage}</p>
               ) : null}
 
-              <button
-                className="cipher-btn cipher-btn--primary cipher-btn--block"
-                type="submit"
-                disabled={isSubmitting}
-              >
-                {isSubmitting
-                  ? "[ 認証中... ]"
-                  : isConfigured
-                  ? "[ 保管庫を解錠 ]"
-                  : "[ 保管庫を初期化 ]"}
+              {message ? <p className="lock-message lock-message--error" role="alert">{message}</p>
+                : notice ? <p className="lock-message lock-message--notice" role="status">{notice}</p> : null}
+
+              <button className="btn btn--primary btn--large btn--block" type="submit" disabled={isSubmitting}>
+                {isSubmitting ? (isConfigured ? "開いています…" : "作成しています…") : isConfigured ? "開く" : "保管庫を作成"}
               </button>
             </form>
 
-            {isConfigured && allowReset ? (
-              <button className="reset-entry-link" type="button" onClick={openResetWarning}>
-                マスターキーを忘れた場合
-              </button>
-            ) : isConfigured ? <p className="lock-hint">初期化には現在のマスターキーが必要です。解除後に「ツール」から保管庫の管理を開いてください。</p> : (
-              <p className="lock-hint">
-                新しい保管庫を作成します。マスターキーは復元できません。
-              </p>
-            )}
+            {!isConfigured ? <p className="lock-hint">忘れると、保存した内容は取り出せなくなります。</p>
+              : allowReset ? <button className="reset-entry-link" type="button" onClick={openResetWarning}>パスワードを忘れた場合</button> : null}
           </>
         ) : null}
 
         {resetStep === "warning" ? (
           <section className="reset-flow" aria-labelledby="reset-warning-title">
-            <p className="reset-flow-step">RESET PROTOCOL // STEP 1 OF 2</p>
-            <h2 id="reset-warning-title" className="reset-flow-title">保管庫を完全にリセットしますか？</h2>
-            <div className="reset-warning" role="alert">
-              <p>保存済みのパスワード、メモ、ログイン情報はすべて削除されます。</p>
-              <p>削除したデータは復元できません。新しい保管庫として再設定が必要です。</p>
-            </div>
+            <h2 id="reset-warning-title">保管庫をリセットしますか？</h2>
+            <p role="alert">保存したパスワードやメモはすべて消え、元に戻せません。</p>
             <label className="reset-acknowledgement">
               <input
                 type="checkbox"
                 checked={hasAcknowledgedDataLoss}
                 onChange={(event) => setHasAcknowledgedDataLoss(event.target.checked)}
               />
-              <span>すべての保存データが失われることを理解しました</span>
+              <span>すべて消えることを理解しました</span>
             </label>
             <div className="reset-actions">
-              <button className="cipher-btn" type="button" onClick={cancelReset}>[ キャンセル ]</button>
-              <button
-                className="cipher-btn cipher-btn--danger"
-                type="button"
-                disabled={!hasAcknowledgedDataLoss}
-                onClick={openResetConfirmation}
-              >
-                [ 最終確認へ ]
-              </button>
+              <button className="btn" type="button" onClick={cancelReset}>キャンセル</button>
+              <button className="btn btn--danger" type="button" disabled={!hasAcknowledgedDataLoss} onClick={openResetConfirmation}>次へ</button>
             </div>
           </section>
         ) : null}
 
         {resetStep === "confirmation" ? (
           <form className="reset-flow" onSubmit={handleReset}>
-            <p className="reset-flow-step">RESET PROTOCOL // STEP 2 OF 2</p>
-            <h2 className="reset-flow-title">確認コードを入力してください</h2>
-            <p className="reset-code-label">表示されたコードを手入力してください</p>
+            <h2>下のコードを入力してください</h2>
             <output className="reset-code" aria-label={`確認コード ${resetCode}`}>{resetCode}</output>
-            <label className="terminal-label">
-              確認コード
-              <input
-                ref={resetCodeInputRef}
-                className="terminal-input reset-code-input"
-                type="text"
-                value={resetCodeInput}
-                onChange={(event) => {
-                  const nextValue = event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
-                  setResetCodeInput(nextValue.slice(0, RESET_CODE_LENGTH));
-                }}
-                onPaste={(event) => event.preventDefault()}
-                maxLength={RESET_CODE_LENGTH}
-                autoComplete="off"
-                spellCheck={false}
-                aria-describedby="reset-code-help"
-              />
-            </label>
-            <p id="reset-code-help" className="reset-code-help">コピー＆ペーストは使用できません。</p>
+            <input
+              ref={resetCodeInputRef}
+              className="field-input reset-code-input"
+              type="text"
+              aria-label="確認コード"
+              value={resetCodeInput}
+              onChange={(event) => {
+                const nextValue = event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+                setResetCodeInput(nextValue.slice(0, RESET_CODE_LENGTH));
+              }}
+              onPaste={(event) => { event.preventDefault(); setPasteBlocked(true); }}
+              maxLength={RESET_CODE_LENGTH}
+              autoComplete="off"
+              spellCheck={false}
+            />
+            {pasteBlocked ? <p role="status">貼り付けはできません。手で入力してください。</p> : null}
 
             {hasAttemptedReset && errorMessage ? (
-              <p className="error-line" aria-live="polite">{"! ERR: "}{errorMessage}</p>
+              <p className="lock-message lock-message--error" aria-live="polite">{errorMessage}</p>
             ) : null}
 
             <div className="reset-actions">
-              <button className="cipher-btn" type="button" onClick={() => setResetStep("warning")} disabled={isSubmitting}>
-                [ 戻る ]
-              </button>
-              <button
-                className="cipher-btn cipher-btn--danger"
-                type="submit"
-                disabled={isSubmitting || resetCodeInput !== resetCode}
-              >
-                {isSubmitting ? "[ リセット中... ]" : "[ すべて削除してリセット ]"}
+              <button className="btn" type="button" onClick={() => setResetStep("warning")} disabled={isSubmitting}>戻る</button>
+              <button className="btn btn--danger" type="submit" disabled={isSubmitting || resetCodeInput !== resetCode}>
+                {isSubmitting ? "リセットしています…" : "すべて消してリセット"}
               </button>
             </div>
           </form>

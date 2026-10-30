@@ -84,6 +84,7 @@ async function fill(selector, value) {
     input.dispatchEvent(new Event('input', { bubbles: true }));
   })()`);
 }
+async function fillMaster(value) { for (const selector of ['.cipher-form input[name=master]', '.cipher-form input[name=confirm]']) if (await evaluate(`!!document.querySelector(${JSON.stringify(selector)})`)) await fill(selector, value); }
 async function capture(name) {
   if (!output) return;
   mkdirSync(output, { recursive: true });
@@ -109,7 +110,7 @@ try {
   assert.equal(preferences.contextIsolation, true);
   assert.equal(preferences.nodeIntegration, false);
   assert.equal(await evaluate("typeof require === 'undefined' && typeof process === 'undefined' && typeof Buffer === 'undefined' && Object.isFrozen(window.passwordManager)"), true);
-  assert.equal(await evaluate("(async () => { const a = await document.fonts.load('400 16px \"Share Tech Mono\"'); const b = await document.fonts.load('500 16px \"JetBrains Mono\"'); return a.length > 0 && b.length > 0 && a.every(x => x.status === 'loaded') && b.every(x => x.status === 'loaded'); })()"), true);
+  assert.equal(await evaluate("(async () => { const a = await document.fonts.load('400 16px \"Noto Sans JP\"'); const b = await document.fonts.load('500 16px \"JetBrains Mono\"'); return a.length > 0 && b.length > 0 && a.every(x => x.status === 'loaded') && b.every(x => x.status === 'loaded'); })()"), true);
   await evaluate("window.__policyViolations = []; document.addEventListener('securitypolicyviolation', event => window.__policyViolations.push(event.effectiveDirective));");
   if (!process.env.CIPHER_VAULT_TEST_RENDERER_URL) {
     await evaluate("(() => { const script = document.createElement('script'); script.textContent = 'window.__inlineExecuted = true'; document.head.append(script); script.remove(); })()");
@@ -138,7 +139,7 @@ try {
   await evaluate("[...document.querySelectorAll('.app-menu-trigger')].find(button => button.textContent === 'ヘルプ').click()");
   await waitFor("!!document.querySelector('#app-menu-help .app-menu-item')");
   await click('#app-menu-help .app-menu-item');
-  await waitFor("document.querySelector('.app-info-dialog').open && document.querySelector('.app-info-dialog').textContent.includes('再起動して更新できます')");
+  await waitFor("document.querySelector('.app-info-dialog').open && document.querySelector('.app-info-dialog').textContent.includes('再起動すると更新されます')");
   assert.equal(await evaluate("[...document.querySelectorAll('.app-info-actions button')].some(button => button.textContent === '再起動して更新' && !button.disabled)"), true);
   await capture("update-ready.png");
   await evaluate("[...document.querySelectorAll('.app-info-actions button')].find(button => button.textContent === 'あとで').click()");
@@ -155,7 +156,7 @@ try {
   assert.equal(path.resolve(getDatabasePath()), path.join(profile, "data", "password-manager.db"));
 
   // Exercise the real React handlers and the preload/IPC path with synthetic inputs.
-  await fill('.cipher-form input[type=password]', "desktop-session-fixture-passphrase");
+  await fillMaster("desktop-session-fixture-passphrase");
   await click('.cipher-form button[type=submit]');
   await waitFor("!!document.querySelector('.cipher-dashboard') && !document.querySelector('.sidebar-lock').disabled");
   const backupFile = await evaluate(`(async () => window.passwordManager.exportBackup({passphrase:"synthetic-sandbox-backup-passphrase"}, (await window.passwordManager.fetchVaultStatus()).sessionId))()`);
@@ -226,14 +227,14 @@ try {
   assert.deepEqual(database.prepare("SELECT * FROM password_entries").get(), before);
   services.lockVault();
   await waitFor("!!document.querySelector('.cipher-form input[type=password]')");
-  await fill('.cipher-form input[type=password]', "desktop-session-fixture-passphrase");
+  await fillMaster("desktop-session-fixture-passphrase");
   await click('.cipher-form button[type=submit]');
   await waitFor("!!document.querySelector('.entry-row') && !document.querySelector('.sidebar-lock').disabled");
   await click('.entry-row');
   await waitFor("!!document.querySelector('.entry-view-fields')");
   console.log("PASS the renderer retains a rejected edit, displays the limit and preserves the stored row");
   await click('button[aria-label="パスワードをコピー"]');
-  await waitFor("document.body.textContent.includes('30秒後またはロック時に消去')");
+  await waitFor("document.body.textContent.includes('30秒後かロック時に消えます')");
   for (const event of ["poll-locked", "lock-screen", "unlock-screen", "suspend", "resume"]) {
     const id = services.getVaultStatus().sessionId;
     await evaluate(`window.passwordManager.copyText("synthetic OS clipboard fixture", ${JSON.stringify(id)})`);
@@ -253,7 +254,7 @@ try {
       powerMonitor.emit(event === "suspend" ? "resume" : "unlock-screen");
       assert.equal(services.getVaultStatus().isUnlocked, false);
     }
-    await fill('.cipher-form input[type=password]', "desktop-session-fixture-passphrase");
+    await fillMaster("desktop-session-fixture-passphrase");
     await click('.cipher-form button[type=submit]');
     await waitFor("!!document.querySelector('.entry-row') && !document.querySelector('.sidebar-lock').disabled");
     await click('.entry-row');
@@ -270,7 +271,7 @@ try {
   await delay(50);
   assert.equal(clipboardClears, clearsBeforeReplacement);
   assert.equal(clipboardItems[0], replacement);
-  await fill('.cipher-form input[type=password]', "desktop-session-fixture-passphrase");
+  await fillMaster("desktop-session-fixture-passphrase");
   await click('.cipher-form button[type=submit]');
   await waitFor("!!document.querySelector('.entry-row') && !document.querySelector('.sidebar-lock').disabled");
   await click('.entry-row');
@@ -304,11 +305,11 @@ try {
   assert.deepEqual(database.prepare("SELECT * FROM password_entries").get(), before);
   console.log(`PASS ${realIdle ? "real" : "simulated"} five-minute Core expiry clears the unsaved renderer and preserves the DB`);
 
-  await fill('.cipher-form input[type=password]', "wrong-fixture-password");
+  await fillMaster("wrong-fixture-password");
   await click('.cipher-form button[type=submit]');
   await waitFor("document.body.textContent.includes('マスターパスワードが正しくありません')");
   assert.equal(services.getVaultStatus().isUnlocked, false);
-  await fill('.cipher-form input[type=password]', "desktop-session-fixture-passphrase");
+  await fillMaster("desktop-session-fixture-passphrase");
   await click('.cipher-form button[type=submit]');
   await waitFor("!!document.querySelector('.entry-row') && !document.querySelector('.sidebar-lock').disabled");
   await click('.entry-row');
@@ -374,7 +375,7 @@ try {
 
   window.webContents.reload();
   await waitFor("!!document.querySelector('.cipher-form input[type=password]')");
-  await fill('.cipher-form input[type=password]', "desktop-session-fixture-passphrase");
+  await fillMaster("desktop-session-fixture-passphrase");
   await click('.cipher-form button[type=submit]');
   await waitFor("!!document.querySelector('.entry-row') && !document.querySelector('.sidebar-lock').disabled");
   await evaluate(`window.passwordManager.copyText("synthetic exit clipboard fixture", ${JSON.stringify(services.getVaultStatus().sessionId)})`);

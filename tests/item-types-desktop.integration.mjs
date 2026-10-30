@@ -41,11 +41,12 @@ const click = selector => evaluate(`document.querySelector(${JSON.stringify(sele
 async function fill(selector, value) {
   await evaluate(`(()=>{const input=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
 }
+async function fillMaster(value) { for (const selector of ['.cipher-form input[name=master]', '.cipher-form input[name=confirm]']) if (await evaluate(`!!document.querySelector(${JSON.stringify(selector)})`)) await fill(selector, value); }
 async function fillField(label, value) {
   await evaluate(`(()=>{const field=[...document.querySelectorAll('.editor-fields .editor-field')].find(field=>field.querySelector('.form-label')?.textContent===${JSON.stringify(label)});const input=field.querySelector('input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
 }
 async function choose(type) {
-  await evaluate(`(()=>{const select=document.querySelector('select[aria-label="保存する種類"]');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(select,${JSON.stringify(type)});select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+  await click(`.type-tabs button[data-type="${type}"]`);
 }
 const ipc = (method, ...args) => evaluate(`(async()=>{const id=(await window.passwordManager.fetchVaultStatus()).sessionId;return window.passwordManager[${JSON.stringify(method)}](...${JSON.stringify(args)},id)})()`);
 const hash = file => createHash("sha256").update(readFileSync(file)).digest("hex");
@@ -65,13 +66,13 @@ async function copy(label, value) {
   await waitFor("!!document.querySelector('.copy-btn--copied')");
 }
 async function newItem(type) {
-  await click(".sidebar-add"); await waitFor("!!document.querySelector('select[aria-label=\"保存する種類\"]')");
+  await click(".sidebar-add"); await waitFor("!!document.querySelector('.type-tabs')");
   await choose(type); await waitFor(`!!document.querySelector('.entry-editor--${type} .editor-fields')`);
 }
 async function saved(title) {
   await click(".entry-editor button[type=submit]");
   await waitFor(`!!document.querySelector('.entry-view-fields')&&document.querySelector('.inspector-title').textContent===${JSON.stringify(title)}&&!document.querySelector('.sidebar-lock').disabled`);
-  assert.equal(await evaluate("document.querySelector('select[aria-label=\"保存する種類\"]')===null"), true);
+  assert.equal(await evaluate("document.querySelector('.type-tabs')===null"), true);
 }
 async function checkLayout(name) {
   for (const [width, height] of [[1000, 680], [1200, 780]]) {
@@ -98,7 +99,7 @@ async function run() {
     const preferences = window.webContents.getLastWebPreferences();
     assert.equal(preferences.sandbox, true); assert.equal(preferences.nodeIntegration, false); assert.equal(preferences.contextIsolation, true);
     await waitFor("!!document.querySelector('.cipher-form input[type=password]')");
-    await fill(".cipher-form input[type=password]", phase === "v2" ? v2Password : "synthetic-item-types-legacy-master");
+    await fillMaster(phase === "v2" ? v2Password : "synthetic-item-types-legacy-master");
     await click(".cipher-form button[type=submit]");
     await waitFor("!!document.querySelector('.cipher-dashboard')&&!document.querySelector('.sidebar-lock').disabled");
     assert.equal((await ipc("fetchVaultStatus")).maintenance.format, phase);
@@ -125,40 +126,40 @@ async function run() {
       const cardTitle = "Synthetic Card UI", number = "4111111111111111", securityCode = "839";
       await newItem("apiKey");
       await checkLayout("api-form");
-      await fillField("名前", apiTitle); await fillField("キー／トークン", apiSecret); await fillField("キーID（任意）", "synthetic-key-id");
-      await fillField("有効期限（任意）", "2029-12-31"); await fillField("接続先URL（任意）", "https://api.example.test");
-      await fillField("グループ", "Synthetic group"); await fillField("タグ", "synthetic, api");
+      await fillField("名前", apiTitle); await fillField("キー", apiSecret); await fillField("キーID", "synthetic-key-id");
+      await fillField("有効期限", "2029-12-31"); await fillField("URL", "https://api.example.test");
+      await click(".editor-more button"); await waitFor("!!document.querySelector('.editor-fields .editor-field textarea')"); await fillField("グループ", "Synthetic group"); await fillField("タグ", "synthetic, api");
       await saved(apiTitle);
       let summaries = (await ipc("fetchEntries")).items, api = summaries.find(entry => entry.serviceName === apiTitle);
       assert.equal(api.type, "apiKey"); assert.equal(Object.hasOwn(api, "apiKey"), false);
       assert.equal((await ipc("fetchEntry", api.id)).apiKey.key, apiSecret);
-      await reveal("キー／トークン", apiSecret); await copy("キー／トークン", apiSecret);
+      await reveal("キー", apiSecret); await copy("キー", apiSecret);
       await click(".inspector-actions > button"); await waitFor("!!document.querySelector('.entry-editor--apiKey .editor-fields')");
-      assert.equal(await evaluate("document.querySelector('select[aria-label=\"保存する種類\"]')===null"), true);
+      assert.equal(await evaluate("document.querySelector('.type-tabs')===null"), true);
       assert.equal(await evaluate("document.querySelector('.editor-fields input[autocomplete=\"new-password\"]').type"), "password");
-      await fillField("キー／トークン", editedApi); await saved(apiTitle);
+      await fillField("キー", editedApi); await saved(apiTitle);
       assert.equal((await ipc("fetchEntry", api.id)).apiKey.key, editedApi); assert.equal(await secretAbsent(editedApi), true);
       console.log("PASS actual API form, immutable saved type, exact credential copy and edit/save hide state");
 
       await newItem("creditCard"); await fillField("名前", cardTitle); await fillField("カード番号", "4111 1111 1111 1111");
       await checkLayout("card-form");
-      await fillField("名義（任意）", "SYNTHETIC OWNER"); await fillField("有効期限（任意）", "2029-12"); await fillField("セキュリティコード（任意）", securityCode);
+      await fillField("名義", "SYNTHETIC OWNER"); await fillField("有効期限", "2029-12"); await fillField("セキュリティコード", securityCode);
       await saved(cardTitle); summaries = (await ipc("fetchEntries")).items;
       const card = summaries.find(entry => entry.serviceName === cardTitle);
       assert.equal(card.type, "creditCard"); assert.equal(card.cardLast4, "1111"); assert.equal(Object.hasOwn(card, "card"), false);
       const detail = await ipc("fetchEntry", card.id);
       await checkLayout("card-detail");
       assert.equal(detail.card.number, number); assert.equal(detail.card.expiryMonth, "2029-12"); assert.equal(detail.card.securityCode, securityCode);
-      assert.equal(await evaluate(`document.querySelector('.entry-list').textContent.includes('末尾 1111')&&!document.querySelector('.entry-list').textContent.includes(${JSON.stringify(number)})&&!document.querySelector('.entry-list').textContent.includes(${JSON.stringify(editedApi)})`), true);
+      assert.equal(await evaluate(`document.querySelector('.entry-list').textContent.includes('•••• 1111')&&!document.querySelector('.entry-list').textContent.includes(${JSON.stringify(number)})&&!document.querySelector('.entry-list').textContent.includes(${JSON.stringify(editedApi)})`), true);
       await reveal("カード番号", number); assert.equal(await secretAbsent(securityCode), true);
       await reveal("セキュリティコード", securityCode); await click(revealButton("カード番号", true));
       assert.equal(await secretAbsent(number), true); assert.equal(await secretAbsent(securityCode), false, "Hiding one field must not change another field's visibility");
       await copy("カード番号", number); await copy("セキュリティコード", securityCode);
       await click(".inspector-actions > button"); await waitFor("!!document.querySelector('.entry-editor--creditCard .editor-fields')");
       assert.equal(await evaluate("[...document.querySelectorAll('.editor-fields input[autocomplete=\"new-password\"]')].every(input=>input.type==='password')"), true);
-      await fillField("名義（任意）", "SYNTHETIC EDITED OWNER"); await saved(cardTitle);
+      await fillField("名義", "SYNTHETIC EDITED OWNER"); await saved(cardTitle);
       assert.equal((await ipc("fetchEntry", card.id)).card.cardholder, "SYNTHETIC EDITED OWNER");
-      await select(api.id); await reveal("キー／トークン", editedApi); await select(card.id); await select(api.id);
+      await select(api.id); await reveal("キー", editedApi); await select(card.id); await select(api.id);
       assert.equal(await secretAbsent(editedApi), true); await select(card.id);
       assert.equal(await secretAbsent(number), true); assert.equal(await secretAbsent(securityCode), true);
       console.log("PASS actual card form, separate two-activation reveals, synthetic clipboard and selection/edit reset");

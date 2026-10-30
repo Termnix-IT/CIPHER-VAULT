@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AppUpdateState } from "@password-manager/shared/types";
 import { releaseNotesToText } from "../lib/release-notes";
+import { CloseIcon } from "./Icons";
 
 export function AppInfo({ hasUnsavedChanges, isSaving, renderTrigger, onClose }: {
   hasUnsavedChanges: boolean;
@@ -19,50 +20,51 @@ export function AppInfo({ hasUnsavedChanges, isSaving, renderTrigger, onClose }:
     let receivedEvent = false;
     const unsubscribe = api.onUpdateState((next) => { receivedEvent = true; setState(next); });
     void api.getUpdateState().then((next) => { if (active && !receivedEvent) setState(next); })
-      .catch(() => { if (active) setError("アプリ情報を取得できませんでした。"); });
+      .catch(() => { if (active) setError("バージョン情報を取得できませんでした。"); });
     return () => { active = false; unsubscribe(); };
   }, [api]);
 
   async function run(action: () => Promise<void>) {
     setError("");
     try { await action(); }
-    catch { setError("操作に失敗しました。もう一度お試しください。"); }
+    catch { setError("うまくいきませんでした。もう一度お試しください。"); }
   }
   const status = state?.status;
   const close = () => dialogRef.current?.close();
   const open = () => { if (!dialogRef.current?.open) dialogRef.current?.showModal(); };
+  const latest = state?.latestVersion && ["available", "downloading", "downloaded", "installing"].includes(status ?? "") ? `バージョン ${state.latestVersion} があります` : "";
+  const stateText = status === "checking" ? "確認しています…"
+    : status === "current" ? "最新のバージョンです"
+    : status === "downloaded" ? "再起動すると更新されます"
+    : status === "installing" ? "更新しています。終わると自動で再起動します"
+    : status === "unsupported" || !api ? "このバージョンはアプリ内で更新できません"
+    : latest;
   return <>
-    {renderTrigger ? renderTrigger(open) : <button className="app-info-trigger" onClick={open}>アプリ情報</button>}
+    {renderTrigger ? renderTrigger(open) : <button className="btn" onClick={open}>バージョンと更新</button>}
     <dialog className="app-info-dialog" ref={dialogRef} aria-labelledby="app-info-title" onClose={onClose}>
       <div className="app-info-heading">
-        <img src="./icon.png" alt="" width="88" height="88" />
-        <div><h2 id="app-info-title">CIPHER VAULT</h2><p>{state ? `バージョン ${state.currentVersion}` : "ローカルのパスワード保管庫"}</p></div>
-        <button className="cipher-btn" aria-label="アプリ情報を閉じる" onClick={close}>閉じる</button>
+        <img src="./icon.png" alt="" width="64" height="64" />
+        <div><h2 id="app-info-title">CIPHER VAULT</h2>{state && <p>バージョン {state.currentVersion}</p>}</div>
+        <button className="icon-btn" type="button" aria-label="閉じる" onClick={close}><CloseIcon /></button>
       </div>
       <div className="app-info-update" aria-live="polite">
-        <h3>ソフトウェアの更新</h3>
-        {status === "checking" && <p>最新版を確認しています…</p>}
-        {status === "current" && <p>お使いのバージョンは最新です。</p>}
-        {state?.latestVersion && <p>更新バージョン：{state.latestVersion}</p>}
+        {stateText && <p className="app-info-state">{stateText}</p>}
+        {status === "downloading" && <><progress aria-label="ダウンロードの進み具合" max="100" value={state?.progress ?? 0} /><p className="form-notice">ダウンロード中 {Math.floor(state?.progress ?? 0)}%</p></>}
         {releaseNotes && <details><summary>変更内容</summary><pre>{releaseNotes}</pre></details>}
-        {status === "downloading" && <div><progress aria-label="ダウンロード進捗" max="100" value={state?.progress ?? 0} /><p>ダウンロード中… {Math.floor(state?.progress ?? 0)}%</p></div>}
-        {status === "downloaded" && <p>再起動して更新できます。「あとで」を選ぶと更新しません。</p>}
-        {status === "installing" && <p>更新後に自動で再起動します…</p>}
-        {(status === "unsupported" || !api) && <p>アプリ内更新は、Windows の setup 版で利用できます。</p>}
         {(error || state?.message) && <p className="form-error" role="alert">{error || state?.message}</p>}
         <div className="app-info-actions">
-          {api && status && ["idle", "current", "error"].includes(status) && <button className="cipher-btn" onClick={() => void run(api.checkForUpdates)}>更新を確認</button>}
-          {api && status === "available" && <button className="cipher-btn" onClick={() => void run(api.downloadUpdate)}>ダウンロード</button>}
+          {api && status && ["idle", "current", "error"].includes(status) && <button className="btn" onClick={() => void run(api.checkForUpdates)}>更新を確認</button>}
+          {api && status === "available" && <button className="btn btn--primary" onClick={() => void run(api.downloadUpdate)}>ダウンロード</button>}
           {api && status === "downloaded" && <>
-            <button className="cipher-btn" disabled={isSaving} onClick={() => void run(async () => {
+            <button className="btn btn--primary" disabled={isSaving} onClick={() => void run(async () => {
               if (await api.installUpdate(hasUnsavedChanges) === false) close();
             })}>再起動して更新</button>
-            <button className="cipher-btn" onClick={close}>あとで</button>
+            <button className="btn" onClick={close}>あとで</button>
           </>}
-          {api && status === "unsupported" && <button className="cipher-btn" onClick={() => void run(api.openReleasePage)}>配布ページを開く</button>}
+          {api && status === "unsupported" && <button className="btn" onClick={() => void run(api.openReleasePage)}>ダウンロードページを開く</button>}
         </div>
-        {isSaving && status === "downloaded" && <p>保存処理の完了後に更新できます。</p>}
-        <p className="app-info-note">更新の確認時は GitHub に接続します。保管庫の内容は送信しません。</p>
+        {isSaving && status === "downloaded" && <p className="form-notice">保存が終わると更新できます</p>}
+        <p className="app-info-note">更新の確認ではGitHubに接続します。保管庫の中身は送りません。</p>
       </div>
     </dialog>
   </>;
