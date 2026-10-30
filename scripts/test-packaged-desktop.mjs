@@ -145,12 +145,23 @@ try {
   await waitForRenderer("!document.querySelector('.vault-maintenance-dialog[open]')"); await unlock(next);
   assert.equal((await ipc("fetchEntry", entry.id)).password, password); assert.equal((await ipc("auditVault")).total, 1);
   assert.equal(JSON.parse((await ipc("exportBackup", { passphrase: backup })).content).version, 1);
+  const api = await ipc("createEntry", { type: "apiKey", serviceName: "Packaged synthetic API", apiKey: { key: "  synthetic-packaged-key-not-valid  ", keyId: "synthetic-id", expiresOn: "2029-12-31" } });
+  const card = await ipc("createEntry", { type: "creditCard", serviceName: "Packaged synthetic card", card: { number: "4111 1111 1111 1111", cardholder: "SYNTHETIC OWNER", expiryMonth: "2029-12", securityCode: "007" } });
+  assert.equal(api.apiKey.key, "  synthetic-packaged-key-not-valid  "); assert.equal(card.card.number, "4111111111111111");
+  const summaries = (await ipc("fetchEntries")).items;
+  assert.equal(summaries.find(item => item.id === card.id).cardLast4, "1111");
+  assert.equal(summaries.some(item => Object.hasOwn(item, "apiKey") || Object.hasOwn(item, "card")), false);
+  assert.equal((await ipc("auditVault")).total, 1);
+  assert.equal(JSON.parse((await ipc("exportBackup", { passphrase: backup })).content).version, 2);
   assert.ok(existsSync(path.join(profile, "data/vault-current.json")));
   await stop(); console.log("PASS isolated packaged sandbox, SQLite, entry creation, v2 migration, backup and key cleanup");
   await launch(); const restarted = await ipc("fetchVaultStatus"); assert.equal(restarted.isUnlocked, false); assert.equal(restarted.maintenance.format, "v2");
   await nativeProbe.afterRestart();
   if (nativeProbe.protectedKeys) console.log("PASS credentials restored after actual application restart authenticate the same registration and revoke");
   await unlock(next); assert.equal((await ipc("fetchEntry", entry.id)).password, password);
+  assert.equal((await ipc("fetchEntry", api.id)).apiKey.key, api.apiKey.key);
+  assert.deepEqual((await ipc("fetchEntry", card.id)).card, card.card);
+  console.log("PASS packaged API/card save, masked summaries, mixed backup and retained fields after restart");
   await stop(); console.log("PASS packaged restart opens the same v2 vault locked and unlocks retained data");
 } finally {
   inspector?.close();

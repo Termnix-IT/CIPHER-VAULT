@@ -19,6 +19,8 @@ test("package inspection detects missing shared runtime, packed native binaries 
   const native = `node_modules/better-sqlite3/prebuilds/${process.platform}-${process.arch}.node`;
   const required = ["apps/electron/dist/apps/electron/src/main.js", "apps/electron/dist/apps/electron/src/preload.cjs", "apps/api/dist/apps/api/src/services/vault-maintenance-service.js",
     "apps/api/dist/apps/api/src/db/sqlite-file-scope.js", "apps/web/dist/index.html", "apps/web/dist/fonts/test.ttf", "apps/web/dist/fonts/OFL.txt",
+    "apps/api/dist/apps/api/src/crypto/vault-backup.js", "apps/api/dist/apps/api/src/lib/vault-entry-validation.js",
+    "apps/api/dist/apps/api/src/migration/typed-backup-recovery.js",
     "node_modules/@password-manager/shared/package.json", "node_modules/@password-manager/shared/dist/index.js", "node_modules/@password-manager/shared/dist/renderer-policy.js",
     "apps/electron/dist/apps/electron/src/native-transport.js", "apps/electron/dist/apps/electron/src/local-client-auth.js",
     "apps/electron/dist/apps/electron/src/local-client-store.js", "apps/electron/dist/apps/electron/src/local-client-registry.js",
@@ -50,6 +52,8 @@ test("package inspection detects missing shared runtime, packed native binaries 
     assert.equal(inspectDesktopPackage(await fixture("valid")).version, "0.0.0-fixture");
     const missing = await fixture("missing", { omit: "node_modules/@password-manager/shared/dist/index.js" });
     assert.throws(() => inspectDesktopPackage(missing), /Missing packaged runtime file/);
+    const missingTyped = await fixture("missing-typed", { omit: "apps/api/dist/apps/api/src/migration/typed-backup-recovery.js" });
+    assert.throws(() => inspectDesktopPackage(missingTyped), /Missing packaged runtime file/);
     const packed = await fixture("packed", { unpack: false }); assert.throws(() => inspectDesktopPackage(packed), /SQLite binary must be unpacked/);
     for (const [key, value] of [["arch", "wrong"], ["platform", "wrong"], ["version", "wrong"]]) {
       const wrong = await fixture(`helper-${key}`, { helper: { [key]: value } });
