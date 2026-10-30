@@ -1,4 +1,5 @@
 import { TextDecoder } from "node:util";
+import { validateAdditionalEntry } from "../lib/vault-entry-validation.js";
 
 export const V2_PROFILE = "scrypt-n17-r8-p1-k32";
 export const V2_CIPHER = "aes-256-gcm";
@@ -142,7 +143,9 @@ function decodeUtf8(value: Buffer) {
 
 export function validateEntryPlaintext(plaintext: Buffer, expectedId: string) {
   try {
-    const value = record(JSON.parse(decodeUtf8(plaintext)), ["id", "serviceName", "loginId", "password", "notes", "url", "tags", "group", "createdAt", "updatedAt", "passwordChangedAt"]);
+    const decoded = JSON.parse(decodeUtf8(plaintext));
+    if (decoded?.type === "apiKey" || decoded?.type === "creditCard") { validateAdditionalEntry(decoded, expectedId); return; }
+    const value = record(decoded, ["id", "serviceName", "loginId", "password", "notes", "url", "tags", "group", "createdAt", "updatedAt", "passwordChangedAt"]);
     if (value.id !== expectedId) invalid();
     for (const field of ["serviceName", "loginId", "password", "notes", "url"]) if (!unicodeText(value[field])) invalid();
     if (!(value.serviceName as string).trim() || !(value.loginId as string).trim() || !value.password) invalid();

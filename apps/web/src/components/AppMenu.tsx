@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { PasswordEntry } from "@password-manager/shared/types";
+import type { PasswordEntry, VaultEntry } from "@password-manager/shared/types";
 import { AppInfo } from "./AppInfo";
 import { VaultTools } from "./VaultTools";
 
@@ -10,7 +10,7 @@ type AppMenuProps = {
   isLoading: boolean;
   hasUnsavedChanges: boolean;
   entryCount: number;
-  selectedEntry: PasswordEntry | null;
+  selectedEntry: VaultEntry | null;
   isFormOpen: boolean;
   isEditingEntry: boolean;
   isGroupedView: boolean;
@@ -27,6 +27,7 @@ type AppMenuProps = {
 };
 
 export function AppMenu(props: AppMenuProps) {
+  const selectedLogin = props.selectedEntry?.type === "apiKey" || props.selectedEntry?.type === "creditCard" ? null : props.selectedEntry as PasswordEntry | null;
   const [opened, setOpened] = useState<MenuName | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const triggerRefs = useRef<Partial<Record<MenuName, HTMLButtonElement | null>>>({});
@@ -90,8 +91,8 @@ export function AppMenu(props: AppMenuProps) {
             {group("edit", "編集", [
               { label: "新規エントリ", disabled: disabled || props.isFormOpen || props.isLoading, action: props.onNewEntry },
               { label: "選択中のエントリを編集", disabled: disabled || props.isLoading || props.isFormOpen || props.isEditingEntry || !props.selectedEntry, action: props.onEditEntry },
-              { label: "ログインIDをコピー", disabled: disabled || props.isLoading || props.isFormOpen || !props.selectedEntry, action: () => props.selectedEntry ? props.onCopy(props.selectedEntry.loginId, "ログインID") : undefined },
-              { label: "パスワードをコピー", disabled: disabled || props.isLoading || props.isFormOpen || !props.selectedEntry, action: () => props.selectedEntry ? props.onCopy(props.selectedEntry.password, "パスワード") : undefined }
+              { label: "ログインIDをコピー", disabled: disabled || props.isLoading || props.isFormOpen || !selectedLogin, action: () => selectedLogin ? props.onCopy(selectedLogin.loginId, "ログインID") : undefined },
+              { label: "パスワードをコピー", disabled: disabled || props.isLoading || props.isFormOpen || !selectedLogin, action: () => selectedLogin ? props.onCopy(selectedLogin.password, "パスワード") : undefined }
             ])}
             {group("view", "表示", [
               { label: "全件表示", disabled, selected: !props.isGroupedView, action: () => props.onGroupedViewChange(false) },

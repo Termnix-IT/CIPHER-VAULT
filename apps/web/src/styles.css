@@ -1156,6 +1156,8 @@ body::after {
   justify-content: space-between; border-bottom: 1px solid var(--border); flex-shrink: 0; position: relative; z-index: 2;
 }
 .inspector-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 24px var(--font-body); }
+.inspector-heading { min-width: 0; }
+.inspector-entry-type { display: block; margin-bottom: 5px; color: var(--text-dim); font-size: 12px; }
 .inspector-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .inspector-more { position: relative; }
 .inspector-more-trigger { padding: 8px 12px; font-size: 18px; line-height: 1; }
@@ -1180,6 +1182,17 @@ body::after {
 .copy-btn:disabled { opacity: .4; cursor: default; }
 .copy-btn:focus-visible { outline: 1px solid var(--accent-cyan); outline-offset: 3px; }
 .entry-editor .form-input { min-width: 0; width: 100%; padding: 10px 12px; font-size: 13px; border: 1px solid var(--border); background: var(--bg-void); }
+.editor-type-picker { display: flex; align-items: center; gap: 16px; min-height: 64px; margin-bottom: 8px; }
+.editor-type-picker .form-label { color: var(--text-dim); font-size: 13px; }
+.entry-editor .editor-type-picker select { width: auto; min-width: 190px; color: var(--text-primary); font-family: var(--font-body); }
+.entry-editor--apiKey .editor-fields, .entry-editor--creditCard .editor-fields { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 18px 20px; padding-top: 8px; }
+.entry-editor--apiKey .editor-field, .entry-editor--creditCard .editor-field { display: flex; flex-direction: column; align-items: stretch; gap: 7px; min-width: 0; min-height: 0; padding: 0; border: 0; }
+.entry-editor--apiKey .editor-field--wide, .entry-editor--creditCard .editor-field--wide,
+.entry-editor--apiKey .editor-notes, .entry-editor--creditCard .editor-notes { grid-column: 1 / -1; }
+.entry-editor--apiKey .editor-notes .form-label, .entry-editor--creditCard .editor-notes .form-label { padding-top: 0; }
+.entry-migration-notice { margin-top: 12px; padding: 20px; border: 1px solid var(--border); background: var(--bg-void); }
+.entry-migration-notice h2 { margin-bottom: 10px; font-size: 16px; font-weight: 500; }
+.entry-migration-notice p { margin-bottom: 18px; color: var(--text-dim); font-size: 13px; line-height: 1.8; }
 .entry-editor .form-inline { min-width: 0; }
 .entry-editor .form-inline .cipher-btn { height: 40px; }
 .password-input-wrap { flex: 1; min-width: 0; position: relative; }
@@ -1307,6 +1320,7 @@ body::after {
   .sidebar-heading { flex-wrap: wrap; }
   .editor-scroll, .inspector-header, .editor-actions, .vault-detail .inspector-feedback, .inspector-empty { padding-inline: 16px; }
   .editor-field { grid-template-columns: 1fr; gap: 8px; padding-block: 12px; }
+  .entry-editor--apiKey .editor-fields, .entry-editor--creditCard .editor-fields { grid-template-columns: minmax(0,1fr); }
   .entry-view-field { grid-template-columns: minmax(0,1fr) 34px; padding-block: 14px; row-gap: 6px; }
   .entry-view-field dt { grid-column: 1 / -1; }
   .entry-view-field .copy-btn { grid-column: 2; grid-row: 2; }

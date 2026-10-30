@@ -1,13 +1,21 @@
 import { randomBytes } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import type { PasswordEntry, VaultEntry } from "@password-manager/shared/types";
 import { createMemoryDatabase } from "../db/database.js";
 import { restoreLegacyEntries } from "../db/legacy-entry-writer.js";
 import { decodeBackupV1, deriveBackupKey, parseBackupV1 } from "../crypto/backup-v1.js";
 import { deriveVaultKey, deriveVerifier, encryptLegacySecret, verifyVaultKey } from "../crypto/legacy-codec.js";
 import { LegacyPreflightError, readLegacyEntries, readLegacyMetadata } from "./legacy-reader.js";
+import { parseVaultBackup } from "../crypto/vault-backup.js";
+import { verifyTypedBackupRecovery } from "./typed-backup-recovery.js";
 
 /** Authenticate the actual envelope, then restore into an independent, differently keyed memory vault. */
-export async function verifyBackupRecovery(content: string, passphrase: Buffer, active: () => void) {
+export function verifyBackupRecovery(content: string, passphrase: Buffer, active: () => void): Promise<PasswordEntry[]>;
+export function verifyBackupRecovery(content: string, passphrase: Buffer, active: () => void, options: { allowTyped: true }): Promise<VaultEntry[]>;
+export async function verifyBackupRecovery(content: string, passphrase: Buffer, active: () => void, options?: { allowTyped: true }) {
+  active();
+  // Legacy migration still accepts only its established v1 recovery artifact.
+  if (options?.allowTyped && parseVaultBackup(content).version === 2) return verifyTypedBackupRecovery(content, passphrase, active);
   let backupKey: Buffer | undefined, scratchKey: Buffer | undefined, password: Buffer | undefined;
   let scratch: ReturnType<typeof createMemoryDatabase> | undefined;
   let entries: ReturnType<typeof decodeBackupV1> | undefined;

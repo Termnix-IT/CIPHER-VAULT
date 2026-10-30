@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { renameSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import type { PasswordEntry } from "@password-manager/shared/types";
+import type { VaultEntry } from "@password-manager/shared/types";
 import { createRootKey, unwrapRootKey, VaultCodecError, wrapRootKey } from "../crypto/v2-codec.js";
 import { copyPlaintext, parsePasswordSlotContext, record } from "../crypto/v2-format.js";
 import type { PasswordSlotContext } from "../crypto/v2-format.js";
@@ -46,7 +46,7 @@ async function replace(directory: string, sourceInput: PasswordSlotContext | und
   let sourceKey: Buffer | undefined, targetKey: Buffer | undefined, passphrase: Buffer | undefined;
   let oldPassword: string | undefined, newPassword: string | undefined, root: string | undefined;
   let session: VaultSession | undefined, sessionId: string | undefined, started = false, publishing = false;
-  let original: PasswordEntry[] = [], actual: PasswordEntry[] = [];
+  let original: VaultEntry[] = [], actual: VaultEntry[] = [];
   try {
     let source: PasswordSlotContext, target: PasswordSlotContext | undefined, mode: ReplacementMode, signal: AbortSignal | undefined;
     try {

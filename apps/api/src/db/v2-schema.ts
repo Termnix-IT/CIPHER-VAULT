@@ -4,6 +4,7 @@ import type { PasswordSlotContext, PasswordSlotEnvelope } from "../crypto/v2-cod
 
 export const V2_APPLICATION_ID = 0x43563200;
 export const V2_SCHEMA_VERSION = 1;
+export const V2_ITEM_SCHEMA_VERSION = 2;
 export const V2_STORE_LIMITS = Object.freeze({ encryptions: 2 ** 20, entries: 10000 });
 
 type StoreCode = "EXISTS" | "INVALID_STORE" | "IO_FAILED" | "CLOSED" | "FAULTED" |
@@ -64,7 +65,7 @@ export function readHeader(database: Database.Database, expected: PasswordSlotCo
 
 export function inspectV2Database(database: Database.Database, expected: PasswordSlotContext): V2Header {
   if (database.pragma("application_id", { simple: true }) !== V2_APPLICATION_ID ||
-      database.pragma("user_version", { simple: true }) !== V2_SCHEMA_VERSION ||
+      ![V2_SCHEMA_VERSION, V2_ITEM_SCHEMA_VERSION].includes(database.pragma("user_version", { simple: true }) as number) ||
       database.pragma("journal_mode", { simple: true }) !== "delete") invalidStore();
   const objects = database.prepare("SELECT type, name, sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' LIMIT 4")
     .all() as { type: string; name: string; sql: string }[];

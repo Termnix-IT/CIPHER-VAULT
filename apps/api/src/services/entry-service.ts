@@ -3,6 +3,7 @@ import type {
   PasswordEntry,
   PasswordEntrySummary
 } from "@password-manager/shared/types";
+import type { VaultEntry } from "@password-manager/shared/types";
 import { getDatabase } from "../db/database.js";
 import { HttpError } from "../lib/errors.js";
 import { decryptSecret, encryptSecret } from "./crypto-service.js";
@@ -126,6 +127,7 @@ export function getEntryById(inputId: unknown) {
 export function createEntry(input: unknown) {
   if (isV2Vault()) return createV2Entry(input);
   requireUnlockedVault();
+  requireLegacyItem(input);
   const payload = parseEntryPayload(input);
   if ((countEntriesStatement().get() as { count: number }).count >= INPUT_LIMITS.entries) {
     throw new HttpError(413, "保管庫への新規登録は10000件まで対応しています");
@@ -154,6 +156,7 @@ export function createEntry(input: unknown) {
 export function updateEntry(inputId: unknown, input: unknown) {
   if (isV2Vault()) return updateV2Entry(inputId, input);
   requireUnlockedVault();
+  requireLegacyItem(input);
   const id = parseEntryId(inputId);
   const payload = parseEntryPayload(input);
 
@@ -196,8 +199,14 @@ export function deleteEntry(inputId: unknown) {
   };
 }
 
-export function restoreEntriesIntoEmptyVault(entries: PasswordEntry[]) {
+function requireLegacyItem(input: unknown) {
+  const descriptor = input && typeof input === "object" ? Object.getOwnPropertyDescriptor(input, "type") : undefined;
+  if (descriptor && "value" in descriptor && descriptor.value !== undefined && descriptor.value !== "login")
+    throw new HttpError(409, "APIキー・カードの保存には新しい形式への移行が必要です。保管庫の管理から移行してください");
+}
+export function restoreEntriesIntoEmptyVault(entries: VaultEntry[]) {
   if (isV2Vault()) return restoreV2Entries(entries);
   const session = requireUnlockedVault();
-  return restoreLegacyEntries(getDatabase(), entries, encryptSecret, () => { requireUnlockedVault(session); });
+  if (entries.some(entry => entry.type === "apiKey" || entry.type === "creditCard")) throw new HttpError(409, "このバックアップの復元には新しい形式への移行が必要です");
+  return restoreLegacyEntries(getDatabase(), entries as PasswordEntry[], encryptSecret, () => { requireUnlockedVault(session); });
 }

@@ -13,6 +13,8 @@ export function inspectDesktopPackage(directory, platform = process.platform, ar
     !/(?:^|\/)\.env(?:\.|$)|\.(?:db|sqlite)(?:-(?:wal|shm|journal))?$|\.(?:log|cvkey|cvpair|cvconnection)$/i.test(file), "Unexpected private data or test tooling in package");
   const required = ["package.json", "apps/electron/dist/apps/electron/src/main.js", "apps/electron/dist/apps/electron/src/preload.cjs",
     "apps/api/dist/apps/api/src/services/vault-maintenance-service.js", "apps/api/dist/apps/api/src/db/sqlite-file-scope.js", "apps/web/dist/index.html",
+    "apps/api/dist/apps/api/src/crypto/vault-backup.js", "apps/api/dist/apps/api/src/lib/vault-entry-validation.js",
+    "apps/api/dist/apps/api/src/migration/typed-backup-recovery.js",
     "node_modules/@password-manager/shared/package.json", "node_modules/@password-manager/shared/dist/index.js", "node_modules/@password-manager/shared/dist/renderer-policy.js",
     "apps/electron/dist/apps/electron/src/native-transport.js", "apps/electron/dist/apps/electron/src/local-client-auth.js",
     "apps/electron/dist/apps/electron/src/local-client-store.js", "apps/electron/dist/apps/electron/src/local-client-registry.js",

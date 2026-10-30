@@ -1,7 +1,7 @@
 import type {
   BackupExportPayload, BackupRestorePayload, BackupFile, SecurityAudit,
   PasswordGenerationOptions, PasswordGenerationResult, PasswordManagerDesktopApi,
-  PasswordEntry, PasswordEntrySummary, PasswordEntryUpsertPayload,
+  VaultEntry, VaultEntrySummary, VaultEntryUpsertPayload,
   VaultResetPayload, VaultSetupPayload, VaultStatus, VaultUnlockPayload, VaultMaintenancePayload
 } from "@password-manager/shared/types";
 import { VaultClientSession, VaultSessionChangedError } from "./vault-client-session";
@@ -99,16 +99,16 @@ export function recordVaultActivity() {
   return run((id) => getDesktopApi()?.recordVaultActivity(id) ?? request<VaultStatus>("/vault/activity", { method: "POST" }, id));
 }
 export function fetchEntries() {
-  return run((id) => getDesktopApi()?.fetchEntries(id) ?? request<{ items: PasswordEntrySummary[] }>("/entries", undefined, id));
+  return run((id) => getDesktopApi()?.fetchEntries(id) ?? request<{ items: VaultEntrySummary[] }>("/entries", undefined, id));
 }
 export function fetchEntry(entryId: string) {
-  return run((id) => getDesktopApi()?.fetchEntry(entryId, id) ?? request<PasswordEntry>(`/entries/${entryId}`, undefined, id));
+  return run((id) => getDesktopApi()?.fetchEntry(entryId, id) ?? request<VaultEntry>(`/entries/${entryId}`, undefined, id));
 }
-export function createEntry(payload: PasswordEntryUpsertPayload) {
-  return run((id) => getDesktopApi()?.createEntry(payload, id) ?? request<PasswordEntry>("/entries", { method: "POST", body: JSON.stringify(payload) }, id));
+export function createEntry(payload: VaultEntryUpsertPayload) {
+  return run((id) => getDesktopApi()?.createEntry(payload, id) ?? request<VaultEntry>("/entries", { method: "POST", body: JSON.stringify(payload) }, id));
 }
-export function updateEntry(entryId: string, payload: PasswordEntryUpsertPayload) {
-  return run((id) => getDesktopApi()?.updateEntry(entryId, payload, id) ?? request<PasswordEntry>(`/entries/${entryId}`, { method: "PUT", body: JSON.stringify(payload) }, id));
+export function updateEntry(entryId: string, payload: VaultEntryUpsertPayload) {
+  return run((id) => getDesktopApi()?.updateEntry(entryId, payload, id) ?? request<VaultEntry>(`/entries/${entryId}`, { method: "PUT", body: JSON.stringify(payload) }, id));
 }
 export function deleteEntry(entryId: string) {
   return run((id) => getDesktopApi()?.deleteEntry(entryId, id) ?? request<{ success: boolean }>(`/entries/${entryId}`, { method: "DELETE" }, id));

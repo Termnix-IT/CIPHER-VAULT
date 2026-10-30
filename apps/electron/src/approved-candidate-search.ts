@@ -4,7 +4,7 @@ import { candidateOrigin, candidateQuery, candidateResult, type CandidateSearch 
 export function approvedCandidateSearch(options: {
   requireUnlocked(expected?: string): string;
   confirm(input: { displayName: string; query: string }): Promise<boolean>;
-  list(): { items: readonly { id: string; serviceName: string }[] };
+  list(): { items: readonly { id: string; serviceName: string; type?: "login" | "apiKey" | "creditCard" }[] };
   detail(id: string): { url: string };
 }): CandidateSearch {
   let busy = false;
@@ -16,7 +16,8 @@ export function approvedCandidateSearch(options: {
     const active = () => { options.requireUnlocked(session); if (input.signal.aborted || Date.now() >= deadline) throw new BrowserConnectionError(); };
     try {
       if (!await options.confirm({ displayName: input.displayName, query })) throw new BrowserConnectionError(); active();
-      const matches = options.list().items.filter(item => item.serviceName.toLowerCase().includes(query.toLowerCase()) && Buffer.byteLength(item.serviceName) <= 1024).slice(0, 20);
+      const matches = options.list().items.filter(item => (item.type === undefined || item.type === "login" || item.type === "apiKey") &&
+        item.serviceName.toLowerCase().includes(query.toLowerCase()) && Buffer.byteLength(item.serviceName) <= 1024).slice(0, 20);
       const items = matches.map(item => { active(); return { id: item.id, serviceName: item.serviceName, origin: candidateOrigin(options.detail(item.id).url) }; });
       active(); return candidateResult(items);
     } catch { throw new BrowserConnectionError(); }

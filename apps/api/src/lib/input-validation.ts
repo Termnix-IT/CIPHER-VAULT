@@ -27,7 +27,7 @@ export function parseRecord(value: unknown, fields: readonly string[]): Record<s
   return result;
 }
 
-function text(value: unknown, label: string, maxBytes: number) {
+export function text(value: unknown, label: string, maxBytes: number) {
   if (typeof value !== "string") throw new HttpError(400, `${label}は文字列で指定してください`);
   if (value.length > maxBytes || Buffer.byteLength(value, "utf8") > maxBytes) {
     throw new HttpError(413, `${label}の容量が上限を超えています（${maxBytes} byteまで）`);
@@ -35,7 +35,7 @@ function text(value: unknown, label: string, maxBytes: number) {
   return value;
 }
 
-function jsonSize(value: object, maxBytes = INPUT_LIMITS.requestBytes) {
+export function jsonSize(value: object, maxBytes = INPUT_LIMITS.requestBytes) {
   if (Buffer.byteLength(JSON.stringify(value), "utf8") > maxBytes) {
     throw new HttpError(413, "リクエストの容量が上限を超えています");
   }

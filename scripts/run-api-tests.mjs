@@ -10,7 +10,7 @@ if (mode !== "--core") assert.equal(process.platform, "win32", "Windows release 
 const core = ["tests/api-regression.test.mjs", "tests/crypto-compatibility.test.mjs", "tests/v2-codec.test.mjs",
   "tests/database-lifecycle.test.mjs", "tests/v2-store.test.mjs", "tests/migration-preflight.test.mjs",
   "tests/migration-staging.test.mjs", "tests/vault-activation.test.mjs", "tests/v2-runtime.test.mjs",
-  "tests/v2-replacement.test.mjs", "tests/vault-maintenance.test.mjs", "tests/web-release.test.mjs", "tests/api-test-runner.test.mjs"];
+  "tests/v2-replacement.test.mjs", "tests/vault-maintenance.test.mjs", "tests/item-types.test.mjs", "tests/item-type-maintenance.test.mjs", "tests/web-release.test.mjs", "tests/api-test-runner.test.mjs"];
 const runs = mode === "--windows-release" ? [] : [
   { runtime: "electron", files: core }, { runtime: "node", files: core }
 ];
