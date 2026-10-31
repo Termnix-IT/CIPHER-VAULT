@@ -1,5 +1,5 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { VaultEntry, VaultEntrySummary, VaultEntryUpsertPayload, VaultMaintenanceState } from "@password-manager/shared/types";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { VaultEntry, VaultEntrySummary, VaultEntryType, VaultEntryUpsertPayload, VaultMaintenanceState } from "@password-manager/shared/types";
 import { EntryEditor, entryTypeLabel } from "../components/EntryEditor";
 import { ChevronIcon, CloseIcon, LockIcon, PlusIcon, SearchIcon } from "../components/Icons";
 
@@ -34,6 +34,34 @@ type VaultDashboardProps = {
 };
 
 const UNGROUPED = "グループなし";
+const TYPE_FILTERS: { type: VaultEntryType; label: string }[] = [{ type: "login", label: "ログイン" }, { type: "apiKey", label: "APIキー" }, { type: "creditCard", label: "カード" }];
+const KANA_ROWS = ["あ", "か", "さ", "た", "な", "は", "ま", "や", "ら", "わ"];
+const DAY_MS = 24 * 60 * 60 * 1000;
+type SortOrder = "name" | "updated";
+
+const entryType = (entry: VaultEntrySummary): VaultEntryType => entry.type ?? "login";
+const byName = (a: VaultEntrySummary, b: VaultEntrySummary) => a.serviceName.localeCompare(b.serviceName, "ja", { numeric: true, sensitivity: "base" });
+const byUpdated = (a: VaultEntrySummary, b: VaultEntrySummary) => b.updatedAt.localeCompare(a.updatedAt) || byName(a, b);
+
+/** Index heading for name order: Latin initial, kana row, kanji, or "#" for digits and symbols. */
+function nameSection(name: string) {
+  const first = name.trim().normalize("NFKC").charAt(0);
+  if (/[a-z]/i.test(first)) return first.toUpperCase();
+  // Katakana to hiragana, then drop voicing marks so が falls under か.
+  const kana = first.replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60)).normalize("NFD").charAt(0);
+  if (/[ぁ-ゖ]/.test(kana)) return `${[...KANA_ROWS].reverse().find((row) => row <= kana) ?? "あ"}行`;
+  if (/\p{Script=Han}/u.test(first)) return "漢字";
+  return "#";
+}
+function updatedSection(updatedAt: string, now: number) {
+  const age = now - new Date(updatedAt).getTime();
+  return age < DAY_MS ? "24時間以内" : age < 7 * DAY_MS ? "7日以内" : age < 30 * DAY_MS ? "30日以内" : "それ以前";
+}
+function sections(items: VaultEntrySummary[], label: (entry: VaultEntrySummary) => string) {
+  const result = new Map<string, VaultEntrySummary[]>();
+  for (const entry of items) { const key = label(entry); result.set(key, [...(result.get(key) ?? []), entry]); }
+  return [...result.entries()];
+}
 
 function entrySubtitle(entry: VaultEntrySummary) {
   return entry.type === "creditCard" ? `•••• ${entry.cardLast4}` : entry.type === "apiKey" ? "APIキー" : entry.loginId;
@@ -43,14 +71,23 @@ export function VaultDashboard(props: VaultDashboardProps) {
   const { entries, selectedEntry, isFormOpen, isGroupedView } = props;
   const [searchTerm, setSearchTerm] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [typeFilter, setTypeFilter] = useState<VaultEntryType | "all">("all");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("name");
+  const [savedNotice, setSavedNotice] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
-  const markerRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLElement>(null);
   const previousSelection = useRef<string | null>(null);
   const search = searchTerm.trim().toLocaleLowerCase("ja-JP");
-  const filtered = useMemo(() => entries.filter((entry) => !search ||
+  const presentTypes = useMemo(() => TYPE_FILTERS.filter(({ type }) => entries.some((entry) => entryType(entry) === type)), [entries]);
+  // A filter for a type that no longer exists falls back to all items instead of showing an empty list.
+  const activeType = presentTypes.length > 1 && presentTypes.some(({ type }) => type === typeFilter) ? typeFilter : "all";
+  const filtered = useMemo(() => entries.filter((entry) => (activeType === "all" || entryType(entry) === activeType) && (!search ||
     [entry.serviceName, entry.loginId ?? "", entry.group ?? "", entryTypeLabel(entry.type), ...entry.tags]
-      .some((field) => field.toLocaleLowerCase("ja-JP").includes(search))), [entries, search]);
+      .some((field) => field.toLocaleLowerCase("ja-JP").includes(search)))).sort(sortOrder === "name" ? byName : byUpdated), [entries, search, activeType, sortOrder]);
+  const listSections = useMemo(() => {
+    const now = Date.now();
+    return sections(filtered, sortOrder === "name" ? (entry) => nameSection(entry.serviceName) : (entry) => updatedSection(entry.updatedAt, now));
+  }, [filtered, sortOrder]);
   const groups = useMemo(() => {
     const result = new Map<string, VaultEntrySummary[]>();
     for (const entry of filtered) {
@@ -61,27 +98,12 @@ export function VaultDashboard(props: VaultDashboardProps) {
   }, [filtered]);
   const busy = props.isCreating || props.isUpdating || props.isDeleting || props.isLoadingDetail || props.isGeneratingPassword;
 
-  useLayoutEffect(() => {
-    const list = listRef.current;
-    const marker = markerRef.current;
-    if (!list || !marker) return;
-    const active = list.querySelector<HTMLElement>(".entry-row--active");
-    if (!active) {
-      marker.hidden = true;
-      return;
-    }
-    const position = () => {
-      const top = active.getBoundingClientRect().top - list.getBoundingClientRect().top;
-      marker.style.transform = `translateY(${top}px)`;
-      marker.style.height = `${active.offsetHeight}px`;
-      marker.hidden = false;
-    };
-    position();
-    const observer = new ResizeObserver(position);
-    observer.observe(list);
-    observer.observe(active);
-    return () => observer.disconnect();
-  }, [filtered, selectedEntry?.id, isFormOpen, isGroupedView, collapsedGroups, props.isLoading]);
+  useEffect(() => {
+    if (!savedNotice) return;
+    const timer = window.setTimeout(() => setSavedNotice(false), 1600);
+    return () => window.clearTimeout(timer);
+  }, [savedNotice]);
+  useEffect(() => { if (props.isEditingEntry || isFormOpen) setSavedNotice(false); }, [props.isEditingEntry, isFormOpen]);
 
   useLayoutEffect(() => {
     if (props.isLoadingDetail) return;
@@ -133,7 +155,7 @@ export function VaultDashboard(props: VaultDashboardProps) {
       disabled={busy} aria-current={active ? "true" : undefined}
       onClick={() => {
         if (active) return;
-        if (canDiscard()) void props.onSelectEntry(entry.id);
+        if (canDiscard()) { setSavedNotice(false); void props.onSelectEntry(entry.id); }
       }}>
       <span className="entry-badge" aria-hidden="true">{entry.serviceName.charAt(0).toUpperCase()}</span>
       <span className="entry-info">
@@ -144,6 +166,10 @@ export function VaultDashboard(props: VaultDashboardProps) {
   }
   const feedback = props.errorMessage || props.copyMessage;
   const showHeader = isFormOpen || Boolean(selectedEntry) || props.isLoadingDetail;
+  const renderSection = ([name, items]: [string, VaultEntrySummary[]]) => <div key={name} role="group" aria-label={name}>
+    <p className="list-section" aria-hidden="true">{name}</p>
+    {items.map(renderEntry)}
+  </div>;
 
   return <div className="cipher-dashboard">
     <aside className="vault-sidebar" aria-label="項目の一覧">
@@ -157,9 +183,19 @@ export function VaultDashboard(props: VaultDashboardProps) {
         </div>
         <button className="btn sidebar-add" type="button" aria-label="新しい項目" title="新しい項目" disabled={busy || isFormOpen} onClick={openCreate}><PlusIcon /></button>
       </div>
+      {presentTypes.length > 1 && <div className="list-filter" role="group" aria-label="種類で絞り込み">
+        <button type="button" aria-pressed={activeType === "all"} onClick={() => setTypeFilter("all")}>すべて</button>
+        {presentTypes.map(({ type, label }) => <button key={type} type="button" aria-pressed={activeType === type} onClick={() => setTypeFilter(type)}>{label}</button>)}
+      </div>}
+      {entries.length > 0 && <div className="list-meta">
+        <span>{filtered.length}件</span>
+        <select className="list-sort" aria-label="並び順" value={sortOrder} onChange={(event) => setSortOrder(event.target.value as SortOrder)}>
+          <option value="name">名前順</option>
+          <option value="updated">更新順</option>
+        </select>
+      </div>}
       <div className="entry-list">
         <div className="entry-list-content" ref={listRef}>
-          <div className="entry-selection-marker" ref={markerRef} aria-hidden="true" hidden />
           {props.isLoading && <p className="empty-state-text" role="status">読み込み中…</p>}
           {!props.isLoading && search && filtered.length === 0 && <p className="empty-state-text">見つかりません</p>}
           {!props.isLoading && (isGroupedView && !search ? groups.map(([name, items]) => <div key={name}>
@@ -170,7 +206,7 @@ export function VaultDashboard(props: VaultDashboardProps) {
               <span className="group-header-name">{name}</span><span className="group-header-count">{items.length}</span>
             </button>
             {!collapsedGroups.has(name) && items.map(renderEntry)}
-          </div>) : filtered.map(renderEntry))}
+          </div>) : listSections.map(renderSection))}
         </div>
       </div>
       <div className="sidebar-foot">
@@ -179,7 +215,13 @@ export function VaultDashboard(props: VaultDashboardProps) {
     </aside>
     <section className="vault-detail" ref={detailRef} aria-label={isFormOpen ? "新しい項目" : props.isEditingEntry ? "項目の編集" : "項目の詳細"}>
       {showHeader && <div className="inspector-header">
-        <h1 className="inspector-title">{isFormOpen ? "新しい項目" : selectedEntry?.serviceName ?? ""}</h1>
+        <div className="inspector-heading">
+          <h1 className="inspector-title">{isFormOpen ? "新しい項目" : selectedEntry?.serviceName ?? ""}</h1>
+          {selectedEntry && !isFormOpen && <p className="inspector-meta">
+            {entryTypeLabel(selectedEntry.type)} · 更新 {new Date(selectedEntry.updatedAt).toLocaleDateString("ja-JP")}
+            <span className="inspector-saved" role="status">{savedNotice ? "保存しました" : ""}</span>
+          </p>}
+        </div>
         {selectedEntry && !isFormOpen && !props.isEditingEntry && <div className="inspector-actions"><button className="btn" type="button" disabled={busy} onClick={props.onEditEntry}>編集</button></div>}
       </div>}
       {props.isLoadingDetail ? <p className="empty-state-text" role="status">開いています…</p> : isFormOpen || selectedEntry ?
@@ -191,6 +233,7 @@ export function VaultDashboard(props: VaultDashboardProps) {
           onSave={async (payload) => {
             if (isFormOpen) { await props.onCreateEntry(payload); props.onFormOpenChange(false); }
             else if (selectedEntry) await props.onUpdateEntry(selectedEntry.id, payload);
+            setSavedNotice(true);
           }}
           onDelete={isFormOpen ? undefined : deleteSelected}
           onCancel={cancelEditing} /> :
