@@ -19,7 +19,8 @@ export function VaultMaintenance({ status, requested, opened, onClose }: { statu
   const dialog = useRef<HTMLDialogElement>(null), form = useRef<HTMLFormElement>(null), firstInput = useRef<HTMLInputElement>(null);
   const busyRef = useRef(false), alive = useRef(true), source = useRef(""), wasOpened = useRef(false);
   const cancelRequested = useRef(false);
-  const fallback = (): VaultMaintenanceOperation => status.maintenance?.format === "legacy" ? "migrate" : "rekey";
+  // Same rule as the Tools menu and the editor notice: only a known v2 vault offers rekey.
+  const fallback = (): VaultMaintenanceOperation => status.maintenance?.format === "v2" ? "rekey" : "migrate";
   const [operation, setOperation] = useState<VaultMaintenanceOperation>(status.maintenance?.state === "recovery-required" ? "recover" : fallback());
   const [fields, setFields] = useState(empty), [acknowledged, setAcknowledged] = useState(false);
   const [busy, setBusy] = useState(false), [cancelBusy, setCancelBusy] = useState(false), [error, setError] = useState(""), [message, setMessage] = useState("");

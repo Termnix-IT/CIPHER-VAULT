@@ -23,9 +23,12 @@ async function run() {
   let server, window, storage;
   try {
     await app.whenReady();
-    storage = await import("../apps/api/dist/apps/api/src/db/database.js");
-    storage.openDatabase();
-    assert.equal(path.resolve(storage.getDatabasePath()), path.join(profile, "data", "password-manager.db"));
+    // Start like apps/api/src/server.ts so the status carries the vault format.
+    storage = await import("../apps/api/dist/apps/api/src/services/vault-maintenance-service.js");
+    storage.openApplicationVault();
+    assert.equal(storage.getVaultMaintenanceState()?.format, "legacy");
+    const { getDatabasePath } = await import("../apps/api/dist/apps/api/src/db/database.js");
+    assert.equal(path.resolve(getDatabasePath()), path.join(profile, "data", "password-manager.db"));
     const { router } = await import("../apps/api/dist/apps/api/src/routes/router.js");
     server = createServer((request, response) => { void router(request, response); });
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -52,6 +55,7 @@ async function run() {
     await waitFor("!!document.querySelector('.cipher-dashboard') && !document.querySelector('.sidebar-lock').disabled");
     await evaluate("[...document.querySelectorAll('.app-menu-trigger')].find(button=>button.textContent==='ツール').click()");
     await waitFor("[...document.querySelectorAll('.app-menu-item')].some(button=>button.textContent==='保管庫を更新…'&&!button.disabled)");
+    assert.equal(await evaluate("[...document.querySelectorAll('.app-menu-item')].some(button=>button.textContent==='マスターパスワードを変更…')"), false);
     assert.equal(await evaluate("[...document.querySelectorAll('.app-menu-item')].find(button=>button.textContent==='外部アプリの接続').disabled"), true);
     await evaluate("[...document.querySelectorAll('.app-menu-trigger')].find(button=>button.textContent==='ツール').click()");
     await click('.sidebar-add');
@@ -75,13 +79,13 @@ async function run() {
     console.log("PASS production HTTP CSP permits the real Web vault flow and local fonts, blocks inline scripts/external fetch and renders hostile entry text safely");
     clearTimeout(watchdog);
     server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); server = undefined;
-    storage.closeDatabase(); storage = undefined;
+    storage.closeApplicationVault(); storage = undefined;
     window.destroy(); app.quit();
   } catch (error) {
     clearTimeout(watchdog);
     console.error("FAIL web policy integration", error);
     server?.closeAllConnections(); server?.close();
-    storage?.closeDatabase();
+    storage?.closeApplicationVault();
     app.exit(1);
   }
 }
