@@ -3,6 +3,8 @@ import type { VaultEntry, VaultEntrySummary, VaultEntryType, VaultEntryUpsertPay
 import { EntryEditor, entryTypeLabel } from "../components/EntryEditor";
 import { ChevronIcon, CloseIcon, LockIcon, PlusIcon, SearchIcon } from "../components/Icons";
 
+export type CopyNotice = { id: number; text: string; clearsInMs: number | null };
+
 type VaultDashboardProps = {
   vaultFormat: VaultMaintenanceState["format"];
   onOpenMaintenance: () => void;
@@ -23,7 +25,8 @@ type VaultDashboardProps = {
   isGeneratingPassword: boolean;
   selectedEntry: VaultEntry | null;
   errorMessage: string;
-  copyMessage: string;
+  /** clearsInMs is how long until the desktop app clears the copied value, or null when nothing clears it. */
+  copyNotice: CopyNotice | null;
   onLock: () => Promise<void>;
   onCreateEntry: (payload: VaultEntryUpsertPayload) => Promise<void>;
   onSelectEntry: (id: string) => Promise<void>;
@@ -75,6 +78,7 @@ export function VaultDashboard(props: VaultDashboardProps) {
   const [sortOrder, setSortOrder] = useState<SortOrder>("name");
   const [savedNotice, setSavedNotice] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
+  const highlightRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLElement>(null);
   const previousSelection = useRef<string | null>(null);
   const search = searchTerm.trim().toLocaleLowerCase("ja-JP");
@@ -105,6 +109,36 @@ export function VaultDashboard(props: VaultDashboardProps) {
   }, [savedNotice]);
   useEffect(() => { if (props.isEditingEntry || isFormOpen) setSavedNotice(false); }, [props.isEditingEntry, isFormOpen]);
 
+  // One shared highlight slides between rows; it jumps without sliding when it was hidden before.
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    const highlight = highlightRef.current;
+    if (!list || !highlight) return;
+    const active = list.querySelector<HTMLElement>(".entry-row--active");
+    if (!active) {
+      highlight.hidden = true;
+      list.classList.remove("entry-list-content--highlighted");
+      return;
+    }
+    const position = () => {
+      const top = active.getBoundingClientRect().top - list.getBoundingClientRect().top;
+      highlight.style.transform = `translateY(${top}px)`;
+      highlight.style.height = `${active.offsetHeight}px`;
+    };
+    if (highlight.hidden) {
+      highlight.style.transition = "none";
+      position();
+      highlight.hidden = false;
+      void highlight.offsetHeight;
+      highlight.style.transition = "";
+    } else position();
+    list.classList.add("entry-list-content--highlighted");
+    const observer = new ResizeObserver(position);
+    observer.observe(list);
+    observer.observe(active);
+    return () => observer.disconnect();
+  }, [filtered, listSections, selectedEntry?.id, isFormOpen, isGroupedView, collapsedGroups, props.isLoading]);
+
   useLayoutEffect(() => {
     if (props.isLoadingDetail) return;
     const selection = isFormOpen ? "new" : selectedEntry?.id ?? null;
@@ -118,10 +152,10 @@ export function VaultDashboard(props: VaultDashboardProps) {
     const rows = [...(listRef.current?.querySelectorAll<HTMLElement>(".entry-row") ?? [])];
     const nextIndex = rows.findIndex((row) => row.dataset.entryId === selection);
     const oldIndex = rows.findIndex((row) => row.dataset.entryId === previous);
-    const offset = oldIndex >= 0 && nextIndex >= 0 && nextIndex < oldIndex ? -8 : 8;
+    const offset = oldIndex >= 0 && nextIndex >= 0 && nextIndex < oldIndex ? -4 : 4;
     // Animate only the current DOM. Never retain an outgoing editor or a snapshot of its secrets.
     const frames = [{ opacity: 0, transform: `translateY(${offset}px)` }, { opacity: 1, transform: "translateY(0)" }];
-    const timing = { duration: 200, easing: "cubic-bezier(.2,.75,.25,1)" };
+    const timing = { duration: 160, easing: "cubic-bezier(.2,.75,.25,1)" };
     const animations = [form.animate(frames, timing), heading?.animate(frames, timing)];
     const cancel = () => animations.forEach((animation) => animation?.cancel());
     const preferenceChanged = () => { if (reducedMotion.matches) cancel(); };
@@ -164,7 +198,7 @@ export function VaultDashboard(props: VaultDashboardProps) {
       </span>
     </button>;
   }
-  const feedback = props.errorMessage || props.copyMessage;
+  const feedback = props.errorMessage || props.copyNotice?.text;
   const showHeader = isFormOpen || Boolean(selectedEntry) || props.isLoadingDetail;
   const renderSection = ([name, items]: [string, VaultEntrySummary[]]) => <div key={name} role="group" aria-label={name}>
     <p className="list-section" aria-hidden="true">{name}</p>
@@ -196,6 +230,7 @@ export function VaultDashboard(props: VaultDashboardProps) {
       </div>}
       <div className="entry-list">
         <div className="entry-list-content" ref={listRef}>
+          <div className="entry-highlight" ref={highlightRef} aria-hidden="true" hidden />
           {props.isLoading && <p className="empty-state-text" role="status">読み込み中…</p>}
           {!props.isLoading && search && filtered.length === 0 && <p className="empty-state-text">見つかりません</p>}
           {!props.isLoading && (isGroupedView && !search ? groups.map(([name, items]) => <div key={name}>
@@ -242,7 +277,12 @@ export function VaultDashboard(props: VaultDashboardProps) {
           <button className="btn btn--primary" type="button" disabled={busy} onClick={openCreate}><PlusIcon />追加</button>
         </div> : <div className="inspector-empty"><p>項目を選ぶと、ここに表示されます</p></div>}
       <div className="toast-region">
-        {feedback && <p key={feedback} className={`toast ${props.errorMessage ? "toast--error" : ""}`} role={props.errorMessage ? "alert" : "status"}>{feedback}</p>}
+        {feedback && <p key={props.errorMessage || props.copyNotice?.id} className={`toast ${props.errorMessage ? "toast--error" : "toast--copy"}`} role={props.errorMessage ? "alert" : "status"}>
+          {!props.errorMessage && (props.copyNotice?.clearsInMs ?? 0) > 0 && <svg className="copy-ring" viewBox="0 0 16 16" aria-hidden="true" style={{ ["--clear-ms" as string]: `${props.copyNotice?.clearsInMs}ms` }}>
+            <circle cx="8" cy="8" r="6" /><circle className="copy-ring-remaining" cx="8" cy="8" r="6" pathLength="100" />
+          </svg>}
+          {feedback}
+        </p>}
       </div>
     </section>
   </div>;

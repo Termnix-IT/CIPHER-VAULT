@@ -6,11 +6,15 @@ import {
   lockVault, observeVaultStatus, recordVaultActivity, resetVault, setupVault, unlockVault, updateEntry, supportsLocalConnections
 } from "./lib/api";
 import { LockScreen } from "./pages/LockScreen";
-import { VaultDashboard } from "./pages/VaultDashboard";
+import { VaultDashboard, type CopyNotice } from "./pages/VaultDashboard";
 import { AppMenu } from "./components/AppMenu";
 import { VaultSessionChangedError } from "./lib/vault-client-session";
 import { VaultMaintenance } from "./components/VaultMaintenance";
 import { LocalConnections } from "./components/LocalConnections";
+import { LockIcon } from "./components/Icons";
+
+type UnlockVeil = { shell: DOMRect; mark: DOMRect };
+const UNLOCK_VEIL_MS = 480;
 
 export function App() {
   const [maintenanceOpened, setMaintenanceOpened] = useState(false);
@@ -28,7 +32,10 @@ export function App() {
   const [isGeneratingPassword, setIsGeneratingPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [lockNotice, setLockNotice] = useState("");
-  const [copyMessage, setCopyMessage] = useState("");
+  const [copyNotice, setCopyNotice] = useState<CopyNotice | null>(null);
+  const copyTimer = useRef<number | undefined>(undefined);
+  const copyCount = useRef(0);
+  const [unlockVeil, setUnlockVeil] = useState<UnlockVeil | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isEditingEntry, setIsEditingEntry] = useState(false);
@@ -43,8 +50,9 @@ export function App() {
     const previous = statusRef.current;
     statusRef.current = state;
     if (previous?.sessionId !== state.sessionId || previous.isUnlocked !== state.isUnlocked) {
+      if (previous && !previous.isUnlocked && state.isUnlocked) showUnlockVeil();
       viewEpoch.current++;
-      setEntries([]); setSelectedEntry(null); setCopyMessage("");
+      setEntries([]); setSelectedEntry(null); clearCopyNotice();
       setIsFormOpen(false); setIsEditingEntry(false); setHasUnsavedChanges(false);
       setConnectionsOpened(false);
       setIsLoadingEntries(false); setIsLoadingEntryDetail(false);
@@ -210,13 +218,34 @@ export function App() {
     } finally { if (isCurrent(epoch)) setIsGeneratingPassword(false); }
   }
 
+  // Covers the lock screen's spot while its key icon opens and fades. Only positions are kept, never any field content.
+  function showUnlockVeil() {
+    const shell = document.querySelector(".lock-shell")?.getBoundingClientRect();
+    const mark = document.querySelector(".lock-mark")?.getBoundingClientRect();
+    if (!shell || !mark || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    setUnlockVeil({ shell, mark });
+    window.setTimeout(() => setUnlockVeil(null), UNLOCK_VEIL_MS);
+  }
+
+  function clearCopyNotice() {
+    window.clearTimeout(copyTimer.current);
+    setCopyNotice(null);
+  }
+
   async function handleCopyToClipboard(value: string, label: string) {
     const epoch = viewEpoch.current;
     try {
       await copyText(value);
       if (!isCurrent(epoch)) return;
-      setCopyMessage(`${label}をコピーしました${window.passwordManager ? ` · ${CLIPBOARD_CLEAR_AFTER_MS / 1000}秒後かロック時に消えます` : ""}`);
-      window.setTimeout(() => { if (isCurrent(epoch)) setCopyMessage(""); }, 2000);
+      // The desktop app clears the clipboard, so its notice stays and counts down until then.
+      const clearsInMs = window.passwordManager ? CLIPBOARD_CLEAR_AFTER_MS : null;
+      window.clearTimeout(copyTimer.current);
+      setCopyNotice({
+        id: ++copyCount.current,
+        text: `${label}をコピーしました${clearsInMs ? ` · ${clearsInMs / 1000}秒後かロック時に消えます` : ""}`,
+        clearsInMs
+      });
+      copyTimer.current = window.setTimeout(() => { if (isCurrent(epoch)) setCopyNotice(null); }, clearsInMs ?? 2000);
     } catch (error) {
       if (isCurrent(epoch)) setErrorMessage(error instanceof Error ? error.message : "クリップボードへコピーできませんでした");
       throw error;
@@ -303,7 +332,7 @@ export function App() {
           isGeneratingPassword={isGeneratingPassword}
           selectedEntry={selectedEntry}
           errorMessage={errorMessage}
-          copyMessage={copyMessage}
+          copyNotice={copyNotice}
           onLock={handleLockVault}
           onCreateEntry={handleCreateEntry}
           onSelectEntry={handleSelectEntry}
@@ -325,6 +354,10 @@ export function App() {
         />
       )}
       <VaultMaintenance status={vaultStatus} requested={maintenanceRequest} opened={maintenanceOpened || maintenanceRequired} onClose={() => setMaintenanceOpened(false)} />
+      {unlockVeil && <div className="unlock-veil" aria-hidden="true"
+        style={{ top: unlockVeil.shell.top, left: unlockVeil.shell.left, width: unlockVeil.shell.width, height: unlockVeil.shell.height }}>
+        <div className="lock-mark" style={{ top: unlockVeil.mark.top - unlockVeil.shell.top, left: unlockVeil.mark.left - unlockVeil.shell.left }}><LockIcon /></div>
+      </div>}
       <LocalConnections key={vaultStatus.sessionId} opened={connectionsOpened && vaultStatus.isUnlocked && !maintenanceRequired} onClose={() => setConnectionsOpened(false)} />
     </main>
   );
