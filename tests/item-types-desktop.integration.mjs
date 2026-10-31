@@ -79,7 +79,7 @@ async function checkLayout(name) {
     window.setSize(width, height); await delay(300);
     // A hidden CI window can pause compositor animations; measure their final layout.
     await evaluate("document.getAnimations().forEach(animation=>animation.finish())");
-    const layout = await evaluate(`(()=>{const r=document.querySelector('.editor-actions').getBoundingClientRect();return {scrollWidth:document.documentElement.scrollWidth,width:innerWidth,height:innerHeight,left:r.left,right:r.right,bottom:r.bottom};})()`);
+    const layout = await evaluate(`(()=>{const r=(document.querySelector('.editor-actions')??document.querySelector('.inspector-actions')).getBoundingClientRect();return {scrollWidth:document.documentElement.scrollWidth,width:innerWidth,height:innerHeight,left:r.left,right:r.right,bottom:r.bottom};})()`);
     assert.ok(layout.scrollWidth <= layout.width && layout.left >= -1 && layout.right <= layout.width + 1 && layout.bottom <= layout.height + 1, `Actions must remain reachable: ${JSON.stringify(layout)}`);
   }
 }

@@ -45,7 +45,6 @@ function toDraft(entry: VaultEntry | null, type: VaultEntryType = "login"): Draf
 export function EntryEditor({ entry, vaultFormat, onOpenMaintenance, isEditing, busy, isSaving, isGenerating, onDirtyChange, onGenerate, onCopy, onSave, onDelete, onCancel }: EntryEditorProps) {
   const [initial, setInitial] = useState(() => toDraft(entry));
   const [draft, setDraft] = useState(initial);
-  const [saved, setSaved] = useState(false);
   const [copiedLabel, setCopiedLabel] = useState<string | null>(null);
   const [showExtras, setShowExtras] = useState(() => Boolean(entry && (entry.group || entry.tags.length || entry.notes)));
   const copyRequest = useRef(0), draftEpoch = useRef(0);
@@ -61,11 +60,9 @@ export function EntryEditor({ entry, vaultFormat, onOpenMaintenance, isEditing, 
     setInitial(next); setDraft(next); setVisibility(hiddenSecrets());
     setShowExtras(Boolean(next.group || next.tags || next.notes));
     setCopiedLabel(null); copyRequest.current++; draftEpoch.current++;
-    if (editing) setSaved(false);
   }, [entry, editing]);
   useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => { alive.current = true; return () => { alive.current = false; draftEpoch.current++; copyRequest.current++; onDirtyChange(false); }; }, [onDirtyChange]);
-  useEffect(() => { if (!saved) return; const timer = window.setTimeout(() => setSaved(false), 1600); return () => window.clearTimeout(timer); }, [saved]);
   useEffect(() => {
     if (!copiedLabel) return;
     const timer = window.setTimeout(() => setCopiedLabel(null), 1600);
@@ -81,7 +78,7 @@ export function EntryEditor({ entry, vaultFormat, onOpenMaintenance, isEditing, 
 
   function change(key: Exclude<keyof Draft, "type">, value: string) {
     draftEpoch.current++; copyRequest.current++;
-    setDraft((current) => ({ ...current, [key]: value })); setVisibility(hiddenSecrets()); setCopiedLabel(null); setSaved(false);
+    setDraft((current) => ({ ...current, [key]: value })); setVisibility(hiddenSecrets()); setCopiedLabel(null);
   }
   function changeType(type: VaultEntryType) {
     if (entry || busy || isGenerating || type === draft.type) return;
@@ -89,7 +86,7 @@ export function EntryEditor({ entry, vaultFormat, onOpenMaintenance, isEditing, 
     if (hasSpecificValues && !window.confirm("種類を変えると、入力中のIDやパスワードなどは消えます。名前・URL・グループ・タグ・メモは残ります。変えますか？")) return;
     draftEpoch.current++; copyRequest.current++;
     setDraft((current) => ({ ...toDraft(null, type), serviceName: current.serviceName, url: current.url, group: current.group, tags: current.tags, notes: current.notes }));
-    setVisibility(hiddenSecrets()); setCopiedLabel(null); setSaved(false);
+    setVisibility(hiddenSecrets()); setCopiedLabel(null);
   }
   async function generate() {
     const epoch = draftEpoch.current;
@@ -107,7 +104,7 @@ export function EntryEditor({ entry, vaultFormat, onOpenMaintenance, isEditing, 
   }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!editing || busy || isGenerating || migrationRequired) return;
-    setVisibility(hiddenSecrets()); setSaved(false);
+    setVisibility(hiddenSecrets());
     const common = { serviceName: draft.serviceName, url: draft.url, notes: draft.notes,
       tags: draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean), group: draft.group.trim() || undefined };
     const payload: VaultEntryUpsertPayload = draft.type === "apiKey"
@@ -115,10 +112,8 @@ export function EntryEditor({ entry, vaultFormat, onOpenMaintenance, isEditing, 
       : draft.type === "creditCard"
         ? { ...common, type: "creditCard", card: { number: draft.cardNumber, cardholder: draft.cardholder, expiryMonth: draft.expiryMonth || undefined, securityCode: draft.securityCode } }
         : { ...common, loginId: draft.loginId, password: draft.password };
-    try {
-      await onSave(payload);
-      if (alive.current) setSaved(true);
-    } catch { /* Keep the draft open; the app displays the save error. */ }
+    try { await onSave(payload); }
+    catch { /* Keep the draft open; the app displays the save error. */ }
   }
   function field(key: Exclude<keyof Draft, "type">, label: string, required = false, inputType = "text", placeholder?: string) {
     return <label className="editor-field"><span className="form-label">{label}</span>
@@ -250,17 +245,11 @@ export function EntryEditor({ entry, vaultFormat, onOpenMaintenance, isEditing, 
         {entry.notes && <div className="entry-view-field entry-view-notes"><dt>メモ</dt><dd>{entry.notes}</dd><span /></div>}
       </dl>}
     </div>
-    <div className="editor-actions">
-      {editing ? <>
-        {entry && onDelete && <button className="text-btn text-btn--danger entry-delete" type="button" disabled={busy || isGenerating} onClick={onDelete}>削除</button>}
-        <span className="editor-actions-spacer" />
-        <button className="btn" type="button" disabled={busy || isGenerating} onClick={onCancel}>キャンセル</button>
-        <button className="btn btn--primary editor-save-btn" type="submit" disabled={busy || isGenerating || migrationRequired}>{isSaving ? "保存中…" : "保存"}</button>
-      </> : <>
-        <span className="entry-metadata">{entry && `更新日 ${new Date(entry.updatedAt).toLocaleDateString("ja-JP")}`}</span>
-        <span className="editor-actions-spacer" />
-        <span className="editor-save-status" role="status">{saved ? "保存しました" : ""}</span>
-      </>}
-    </div>
+    {editing && <div className="editor-actions">
+      {entry && onDelete && <button className="text-btn text-btn--danger entry-delete" type="button" disabled={busy || isGenerating} onClick={onDelete}>削除</button>}
+      <span className="editor-actions-spacer" />
+      <button className="btn" type="button" disabled={busy || isGenerating} onClick={onCancel}>キャンセル</button>
+      <button className="btn btn--primary editor-save-btn" type="submit" disabled={busy || isGenerating || migrationRequired}>{isSaving ? "保存中…" : "保存"}</button>
+    </div>}
   </form>;
 }
