@@ -220,7 +220,8 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .search-box .icon-btn svg { width: 14px; height: 14px; }
 .sidebar-add { width: 32px; height: 32px; padding: 0; }
 
-.list-filter { height: 32px; padding: 0 12px; display: flex; align-items: center; gap: 4px; flex-shrink: 0; border-bottom: 1px solid var(--border); }
+.sidebar-controls { flex-shrink: 0; border-bottom: 1px solid var(--border); }
+.list-filter { height: 32px; padding: 0 12px; display: flex; align-items: center; gap: 4px; }
 .list-filter button {
   height: 24px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--radius);
   background: transparent; color: var(--text-dim); font-size: 11px; white-space: nowrap;

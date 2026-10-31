@@ -207,27 +207,29 @@ export function VaultDashboard(props: VaultDashboardProps) {
 
   return <div className="cipher-dashboard">
     <aside className="vault-sidebar" aria-label="項目の一覧">
-      <div className="sidebar-head">
-        <div className="search-box">
-          <SearchIcon />
-          <input className="search-input" type="search" aria-label="検索" placeholder="検索"
-            value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} />
-          {search && <span className="search-count" role="status">{filtered.length} / {entries.length}</span>}
-          {searchTerm && <button className="icon-btn" type="button" aria-label="検索をクリア" onClick={() => setSearchTerm("")}><CloseIcon /></button>}
+      <div className="sidebar-controls">
+        <div className="sidebar-head">
+          <div className="search-box">
+            <SearchIcon />
+            <input className="search-input" type="search" aria-label="検索" placeholder="検索"
+              value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} />
+            {search && <span className="search-count" role="status">{filtered.length} / {entries.length}</span>}
+            {searchTerm && <button className="icon-btn" type="button" aria-label="検索をクリア" onClick={() => setSearchTerm("")}><CloseIcon /></button>}
+          </div>
+          <button className="btn sidebar-add" type="button" aria-label="新しい項目" title="新しい項目" disabled={busy || isFormOpen} onClick={openCreate}><PlusIcon /></button>
         </div>
-        <button className="btn sidebar-add" type="button" aria-label="新しい項目" title="新しい項目" disabled={busy || isFormOpen} onClick={openCreate}><PlusIcon /></button>
+        {presentTypes.length > 1 && <div className="list-filter" role="group" aria-label="種類で絞り込み">
+          <button type="button" aria-pressed={activeType === "all"} onClick={() => setTypeFilter("all")}>すべて</button>
+          {presentTypes.map(({ type, label }) => <button key={type} type="button" aria-pressed={activeType === type} onClick={() => setTypeFilter(type)}>{label}</button>)}
+        </div>}
+        {entries.length > 0 && <div className="list-meta">
+          <span>{filtered.length}件</span>
+          <select className="list-sort" aria-label="並び順" value={sortOrder} onChange={(event) => setSortOrder(event.target.value as SortOrder)}>
+            <option value="name">名前順</option>
+            <option value="updated">更新順</option>
+          </select>
+        </div>}
       </div>
-      {presentTypes.length > 1 && <div className="list-filter" role="group" aria-label="種類で絞り込み">
-        <button type="button" aria-pressed={activeType === "all"} onClick={() => setTypeFilter("all")}>すべて</button>
-        {presentTypes.map(({ type, label }) => <button key={type} type="button" aria-pressed={activeType === type} onClick={() => setTypeFilter(type)}>{label}</button>)}
-      </div>}
-      {entries.length > 0 && <div className="list-meta">
-        <span>{filtered.length}件</span>
-        <select className="list-sort" aria-label="並び順" value={sortOrder} onChange={(event) => setSortOrder(event.target.value as SortOrder)}>
-          <option value="name">名前順</option>
-          <option value="updated">更新順</option>
-        </select>
-      </div>}
       <div className="entry-list">
         <div className="entry-list-content" ref={listRef}>
           <div className="entry-highlight" ref={highlightRef} aria-hidden="true" hidden />
