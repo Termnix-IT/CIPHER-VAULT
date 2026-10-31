@@ -28,6 +28,7 @@ const created=new Promise(resolve=>app.once("browser-window-created",(_event,val
 const evaluate=source=>window.webContents.executeJavaScript(source);
 async function waitFor(source){for(let i=0;i<200;i++){if(await evaluate(source))return;await delay(50)}throw new Error("Maintenance UI condition failed: "+source)}
 async function fill(selector,value){await evaluate(`(()=>{const input=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`)}
+async function fillMaster(value) { for (const selector of ['.cipher-form input[name=master]', '.cipher-form input[name=confirm]']) if (await evaluate(`!!document.querySelector(${JSON.stringify(selector)})`)) await fill(selector, value); }
 const click=selector=>evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
 const hash=file=>createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 async function run(){
@@ -46,10 +47,10 @@ async function run(){
     assert.equal(await evaluate("(()=>{const dialog=document.querySelector('.vault-maintenance-dialog');return dialog.scrollWidth<=dialog.clientWidth})()"),true);
     window.setContentSize(1100,820);
     for(const [index,value] of [v2Password,password,password,compatibility.backupV1.passphrase].entries())await fill(`.maintenance-fields label:nth-child(${index+1}) input`,value);
-    await click('.vault-maintenance-dialog button[type=submit]');await waitFor("document.querySelector('.vault-tool-message')?.textContent.includes('切り替えを完了')");
+    await click('.vault-maintenance-dialog button[type=submit]');await waitFor("document.querySelector('.vault-tool-message')?.textContent.includes('新しいマスターパスワードで開いて')");
     assert.equal(vaultSession.getState().isUnlocked,false);assert.equal(hash(source),sourceHash);assert.equal(hash(path.join(directory,"password-manager.db")),legacyHash);
     await click('.vault-maintenance-dialog .vault-tool-heading button');await waitFor("!document.querySelector('.vault-maintenance-dialog[open]')");
-    await fill('.cipher-form input[type=password]',password);await click('.cipher-form button[type=submit]');await waitFor("!!document.querySelector('.entry-row')");
+    await fillMaster(password);await click('.cipher-form button[type=submit]');await waitFor("!!document.querySelector('.entry-row')");
     const state=vault.getVaultStatus();assert.equal(state.isUnlocked,true);assert.equal(state.maintenance.state,"ready");
     console.log("PASS actual recovery-only startup hides normal unlock and shows the bounded recovery form at the desktop minimum size");
     console.log("PASS actual recovery form authenticates the interrupted target, preserves sources and unlocks with its new master");
@@ -63,17 +64,17 @@ async function run(){
     }finally{legacyKey.fill(0);database.close()}
     maintenance.closeApplicationVault();maintenance.openApplicationVault({dataDirectory:legacyDirectory});
     await waitFor("!!document.querySelector('.cipher-form input[type=password]')");
-    await fill('.cipher-form input[type=password]',shortPassword);await click('.cipher-form button[type=submit]');await waitFor("!!document.querySelector('.entry-row')");
+    await fillMaster(shortPassword);await click('.cipher-form button[type=submit]');await waitFor("!!document.querySelector('.entry-row')");
     const beforeMigration=hash(legacySource);
     await evaluate("[...document.querySelectorAll('.app-menu-trigger')].find(b=>b.textContent==='ツール').click()");
-    await waitFor("[...document.querySelectorAll('.app-menu-item')].some(b=>b.textContent==='保管庫の管理'&&!b.disabled)");
-    await evaluate("[...document.querySelectorAll('.app-menu-item')].find(b=>b.textContent==='保管庫の管理').click()");
-    await waitFor("document.querySelector('.vault-maintenance-dialog[open] button[type=submit]')?.textContent==='確認して移行する'");
+    await waitFor("[...document.querySelectorAll('.app-menu-item')].some(b=>b.textContent==='保管庫を更新…'&&!b.disabled)");
+    await evaluate("[...document.querySelectorAll('.app-menu-item')].find(b=>b.textContent==='保管庫を更新…').click()");
+    await waitFor("document.querySelector('.vault-maintenance-dialog[open] button[type=submit]')?.textContent==='更新する'");
     for(const [index,value] of [shortPassword,migrationPassword,migrationPassword,compatibility.backupV1.passphrase,compatibility.backupV1.passphrase].entries())await fill(`.maintenance-fields label:nth-child(${index+1}) input`,value);
-    await click('.vault-maintenance-dialog button[type=submit]');await waitFor("document.querySelector('.vault-tool-message')?.textContent.includes('切り替えを完了')");
+    await click('.vault-maintenance-dialog button[type=submit]');await waitFor("document.querySelector('.vault-tool-message')?.textContent.includes('新しいマスターパスワードで開いて')");
     assert.equal(hash(legacySource),beforeMigration);assert.equal(storage.isV2Vault(),true);assert.equal(vaultSession.getState().isUnlocked,false);
     await click('.vault-maintenance-dialog .vault-tool-heading button');await waitFor("!document.querySelector('.vault-maintenance-dialog[open]')");
-    await fill('.cipher-form input[type=password]',migrationPassword);await click('.cipher-form button[type=submit]');await waitFor("!!document.querySelector('.entry-row')");
+    await fillMaster(migrationPassword);await click('.cipher-form button[type=submit]');await waitFor("!!document.querySelector('.entry-row')");
     console.log("PASS actual legacy management form migrates entries, retains the source and unlocks the new format");
     const key=vaultSession.requireKey(),store=storage.getV2Vault().store;app.once("will-quit",()=>{assert.deepEqual(key,Buffer.alloc(32));assert.equal(store.closed,true);console.log("PASS recovered vault shutdown destroys its key and closes storage")});
     clearTimeout(timeout);window.destroy();app.quit();

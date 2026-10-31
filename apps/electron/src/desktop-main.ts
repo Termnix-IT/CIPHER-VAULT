@@ -347,12 +347,12 @@ async function createMainWindow(appRoot: string, services: AppServices) {
     minWidth: 1000,
     minHeight: 680,
     autoHideMenuBar: true,
-    backgroundColor: "#08111d",
+    backgroundColor: "#121416",
     icon: existsSync(iconPath) ? iconPath : undefined,
     titleBarStyle: "hidden",
     titleBarOverlay: {
-      color: "#010a0f",
-      symbolColor: "#00ffff",
+      color: "#121416",
+      symbolColor: "#9ba3ab",
       height: 38
     },
     webPreferences: {

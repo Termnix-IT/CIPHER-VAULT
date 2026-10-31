@@ -100,7 +100,8 @@ async function launch() {
 }
 
 async function unlock(value) {
-  await fill('.cipher-form input[type=password]', value); await click('.cipher-form button[type=submit]');
+  for (const selector of ['.cipher-form input[name=master]', '.cipher-form input[name=confirm]']) if (await renderer(`!!document.querySelector(${JSON.stringify(selector)})`)) await fill(selector, value);
+  await click('.cipher-form button[type=submit]');
   await waitForRenderer("!!document.querySelector('.cipher-dashboard')&&!document.querySelector('.sidebar-lock').disabled");
 }
 async function stop() {
@@ -135,12 +136,12 @@ try {
   await waitForRenderer("!!document.querySelector('.entry-view-fields')");
   const entry = (await ipc("fetchEntries")).items[0]; assert.equal(entry.serviceName, title);
   await renderer("[...document.querySelectorAll('.app-menu-trigger')].find(b=>b.textContent==='ツール').click()");
-  await waitForRenderer("[...document.querySelectorAll('.app-menu-item')].some(b=>b.textContent==='保管庫の管理'&&!b.disabled)");
-  await renderer("[...document.querySelectorAll('.app-menu-item')].find(b=>b.textContent==='保管庫の管理').click()");
+  await waitForRenderer("[...document.querySelectorAll('.app-menu-item')].some(b=>b.textContent==='保管庫を更新…'&&!b.disabled)");
+  await renderer("[...document.querySelectorAll('.app-menu-item')].find(b=>b.textContent==='保管庫を更新…').click()");
   await waitForRenderer("!!document.querySelector('.vault-maintenance-dialog[open] form')");
   for (const [index, value] of [master, next, next, backup, backup].entries()) await fill(`.maintenance-fields label:nth-child(${index + 1}) input`, value);
   await click('.vault-maintenance-dialog button[type=submit]');
-  await waitForRenderer("document.querySelector('.vault-tool-message')?.textContent.includes('切り替えを完了')");
+  await waitForRenderer("document.querySelector('.vault-tool-message')?.textContent.includes('新しいマスターパスワードで開いて')");
   await click('.vault-maintenance-dialog .vault-tool-heading button');
   await waitForRenderer("!document.querySelector('.vault-maintenance-dialog[open]')"); await unlock(next);
   assert.equal((await ipc("fetchEntry", entry.id)).password, password); assert.equal((await ipc("auditVault")).total, 1);

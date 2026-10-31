@@ -29,7 +29,7 @@ const ipc = (name, ...args) => evaluate(`(async()=>{const p=window.passwordManag
 async function waitFor(source) { for (let i = 0; i < 200; i++) { if (await evaluate(source)) return; await delay(40); } throw new Error("MVP UI condition timed out"); }
 async function unlock() {
   await waitFor("!!document.querySelector('.cipher-form input[type=password]')");
-  await evaluate("(()=>{const i=document.querySelector('.cipher-form input[type=password]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,'synthetic-mvp-master');i.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('.cipher-form button[type=submit]').click()})()");
+  await evaluate("(()=>{for(const i of document.querySelectorAll('.cipher-form input[type=password]')){Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,'synthetic-mvp-master');i.dispatchEvent(new Event('input',{bubbles:true}))}document.querySelector('.cipher-form button[type=submit]').click()})()");
   await waitFor("!!document.querySelector('.cipher-dashboard')&&!document.querySelector('.sidebar-lock').disabled");
 }
 async function agentCommand(operation) {

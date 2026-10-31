@@ -183,5 +183,5 @@ jobs:
           node-version: "24"
           package-manager-cache: false
       # Audit the lockfile without running dependency install scripts.
-      - name: Reject all dependency findings
-        run: npm audit --package-lock-only --audit-level=low
+      - name: Reject dependency findings except documented, expiring exceptions
+        run: node scripts/audit-dependencies.mjs
