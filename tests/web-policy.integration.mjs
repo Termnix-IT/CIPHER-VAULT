@@ -56,7 +56,7 @@ async function run() {
     await evaluate("[...document.querySelectorAll('.app-menu-trigger')].find(button=>button.textContent==='ツール').click()");
     await waitFor("[...document.querySelectorAll('.app-menu-item')].some(button=>button.textContent==='保管庫を更新…'&&!button.disabled)");
     assert.equal(await evaluate("[...document.querySelectorAll('.app-menu-item')].some(button=>button.textContent==='マスターパスワードを変更…')"), false);
-    assert.equal(await evaluate("[...document.querySelectorAll('.app-menu-item')].find(button=>button.textContent==='外部アプリの接続').disabled"), true);
+    assert.equal(await evaluate("[...document.querySelectorAll('.app-menu-item')].some(button=>button.textContent==='外部アプリの接続')"), false);
     await evaluate("[...document.querySelectorAll('.app-menu-trigger')].find(button=>button.textContent==='ツール').click()");
     await click('.sidebar-add');
     await waitFor("!!document.querySelector('.editor-fields')");

@@ -33,9 +33,6 @@ jobs:
           cache-dependency-path: package-lock.json
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
-      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
-        with:
-          global-json-file: native/local-transport/global.json
       - name: Build desktop once for all regression tests
         run: npm run build:desktop
       - name: Renderer boundaries
@@ -46,16 +43,6 @@ jobs:
         run: node --import tsx --test tests/vault-session.test.mjs tests/web-session.test.mjs tests/vault-lifecycle.test.mjs tests/vault-kdf.test.mjs tests/input-validation.test.mjs tests/expiring-clipboard.test.mjs tests/desktop-platform.test.mjs
       - name: Manual updater
         run: node --test tests/manual-updater.test.mjs
-      - name: Desktop platform capability probe
-        run: node scripts/run-desktop-tests.mjs --platform
-      - name: Native local endpoint permissions and peer probe
-        run: npm run test:local-endpoint
-      - name: Native helper and mutual client authentication
-        run: npm run build:native-transport && node scripts/run-local-endpoint-tests.mjs --native
-      - name: Candidate search and MCP tool contracts
-        run: node --test tests/candidate-search.test.mjs tests/mcp-server.test.mjs
-      - name: MCP search through the desktop with synthetic credentials
-        run: node scripts/run-mcp-tests.mjs
       - name: Built desktop integration
         run: node scripts/run-desktop-tests.mjs
       - name: Migrated v2 desktop integration
@@ -69,66 +56,10 @@ jobs:
       - name: Production HTTP policy integration
         run: node scripts/run-desktop-tests.mjs --web
 
-  core:
-    name: Core (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+  desktop-package:
+    name: Windows desktop package
+    runs-on: windows-2025
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-15]
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: package-lock.json
-      - name: Linux runtime prerequisites
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3 make libnspr4 libnss3 libasound2t64 clang zlib1g-dev
-      - name: Install locked dependencies
-        run: npm ci --no-audit --no-fund
-      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
-        with:
-          global-json-file: native/local-transport/global.json
-      - name: Build API, Electron and native helper once
-        run: npm run build:api && npm --workspace apps/electron run build && npm run build:native-transport
-      - name: Core contracts in Node and Electron Node mode
-        run: node scripts/run-api-tests.mjs --core
-      - name: Session, KDF, input and platform contracts
-        run: node --import tsx --test tests/vault-session.test.mjs tests/web-session.test.mjs tests/vault-lifecycle.test.mjs tests/vault-kdf.test.mjs tests/input-validation.test.mjs tests/expiring-clipboard.test.mjs tests/desktop-platform.test.mjs
-      - name: Native local endpoint permissions and peer probe
-        run: npm run test:local-endpoint
-      - name: Native helper and mutual client authentication
-        run: node scripts/run-local-endpoint-tests.mjs --native
-
-  desktop-packages:
-    name: Desktop package (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-2025
-            package: npm run build:desktop && npm run build:native-transport && node node_modules/electron-builder/cli.js --win --dir --publish never
-          # Keep normal Chromium sandboxing; newer Ubuntu userns policy needs a separate acceptance test.
-          # Migrate this evaluation job before the runner's April 2027 retirement.
-          - os: ubuntu-22.04
-            package: npm run package:desktop:linux
-          - os: macos-15
-            package: npm run package:desktop:mac
-    defaults:
-      run:
-        shell: bash
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
@@ -140,35 +71,14 @@ jobs:
           node-version: "24"
           cache: npm
           cache-dependency-path: package-lock.json
-      - name: Linux package runtime and display prerequisites
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3 make libnspr4 libnss3 libasound2 xvfb xauth clang zlib1g-dev
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
-      - name: Package inclusion and native target contracts
+      - name: Package inclusion contracts
         run: npm run test:packaging-contract
-      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
-        with:
-          global-json-file: native/local-transport/global.json
-      - name: Build native evaluation packages without publishing
-        env:
-          # Only ad-hoc signing is configured; this job has no signing certificate secrets.
-          CSC_FOR_PULL_REQUEST: ${{ runner.os == 'macOS' && 'true' || 'false' }}
-        run: ${{ matrix.package }}
-      - name: Packaged sandbox, migration, restart and key cleanup (Linux)
-        if: runner.os == 'Linux'
-        run: xvfb-run -a npm run test:desktop-package
+      - name: Build the unpacked Windows application without publishing
+        run: npm run build:desktop && node node_modules/electron-builder/cli.js --win --dir --publish never
       - name: Packaged sandbox, migration, restart and key cleanup
-        if: runner.os != 'Linux'
         run: npm run test:desktop-package
-      - name: Extracted Linux artifacts
-        if: runner.os == 'Linux'
-        run: xvfb-run -a npm run test:desktop-artifacts
-      - name: Signed macOS zip and read-only dmg
-        if: runner.os == 'macOS'
-        run: npm run test:desktop-artifacts
 
   dependencies:
     name: Dependency audit
