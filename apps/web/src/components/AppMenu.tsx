@@ -24,8 +24,6 @@ type AppMenuProps = {
   onSelectEntry: (id: string) => Promise<void>;
   onCopy: (value: string, label: string) => Promise<void>;
   onMaintenance: (operation: VaultMaintenanceOperation) => void;
-  onConnections: () => void;
-  connectionsAvailable: boolean;
 };
 
 export function AppMenu(props: AppMenuProps) {
@@ -109,9 +107,7 @@ export function AppMenu(props: AppMenuProps) {
               ...(props.vaultFormat !== "v2"
                 ? [{ label: "保管庫を更新…", disabled: toolsDisabled, action: () => props.onMaintenance("migrate") }]
                 : [{ label: "マスターパスワードを変更…", disabled: toolsDisabled, action: () => props.onMaintenance("rekey") },
-                  { label: "保管庫を空にする…", disabled: toolsDisabled, action: () => props.onMaintenance("reset") }]),
-              "separator",
-              { label: "外部アプリの接続", disabled: toolsDisabled || !props.connectionsAvailable, action: props.onConnections }
+                  { label: "保管庫を空にする…", disabled: toolsDisabled, action: () => props.onMaintenance("reset") }])
             ])}
             {group("help", "ヘルプ", [{ label: "バージョンと更新", action: openInfo }])}
           </div>

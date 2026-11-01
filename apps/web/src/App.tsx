@@ -3,19 +3,17 @@ import { CLIPBOARD_CLEAR_AFTER_MS } from "@password-manager/shared";
 import type { VaultEntry, VaultEntrySummary, VaultEntryUpsertPayload, VaultMaintenanceOperation, VaultStatus } from "@password-manager/shared/types";
 import {
   copyText, createEntry, deleteEntry, fetchEntries, fetchEntry, generatePassword,
-  lockVault, observeVaultStatus, recordVaultActivity, resetVault, setupVault, unlockVault, updateEntry, supportsLocalConnections
+  lockVault, observeVaultStatus, recordVaultActivity, resetVault, setupVault, unlockVault, updateEntry
 } from "./lib/api";
 import { LockScreen } from "./pages/LockScreen";
 import { VaultDashboard } from "./pages/VaultDashboard";
 import { AppMenu } from "./components/AppMenu";
 import { VaultSessionChangedError } from "./lib/vault-client-session";
 import { VaultMaintenance } from "./components/VaultMaintenance";
-import { LocalConnections } from "./components/LocalConnections";
 
 export function App() {
   const [maintenanceOpened, setMaintenanceOpened] = useState(false);
   const [maintenanceRequest, setMaintenanceRequest] = useState<VaultMaintenanceOperation | null>(null);
-  const [connectionsOpened, setConnectionsOpened] = useState(false);
   const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null);
   const [entries, setEntries] = useState<VaultEntrySummary[]>([]);
   const [selectedEntry, setSelectedEntry] = useState<VaultEntry | null>(null);
@@ -46,7 +44,6 @@ export function App() {
       viewEpoch.current++;
       setEntries([]); setSelectedEntry(null); setCopyMessage("");
       setIsFormOpen(false); setIsEditingEntry(false); setHasUnsavedChanges(false);
-      setConnectionsOpened(false);
       setIsLoadingEntries(false); setIsLoadingEntryDetail(false);
       setIsCreatingEntry(false); setIsUpdatingEntry(false); setIsDeletingEntry(false); setIsGeneratingPassword(false);
       setErrorMessage("");
@@ -263,8 +260,6 @@ export function App() {
     onSelectEntry={handleSelectEntry}
     onCopy={handleCopyToClipboard}
     onMaintenance={handleOpenMaintenance}
-    onConnections={() => setConnectionsOpened(true)}
-    connectionsAvailable={supportsLocalConnections()}
   />;
 
   if (vaultStatus === null) {
@@ -325,7 +320,6 @@ export function App() {
         />
       )}
       <VaultMaintenance status={vaultStatus} requested={maintenanceRequest} opened={maintenanceOpened || maintenanceRequired} onClose={() => setMaintenanceOpened(false)} />
-      <LocalConnections key={vaultStatus.sessionId} opened={connectionsOpened && vaultStatus.isUnlocked && !maintenanceRequired} onClose={() => setConnectionsOpened(false)} />
     </main>
   );
 }

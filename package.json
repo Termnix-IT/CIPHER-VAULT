@@ -33,15 +33,9 @@
     "build:electron": "npm run build:shared && npm --workspace apps/electron run build",
     "build": "npm run build:shared && npm --workspace apps/web run build && npm --workspace apps/api run build",
     "build:desktop": "npm run build && npm --workspace apps/electron run build",
-    "package:desktop": "npm run build:desktop && npm run build:native-transport && electron-builder --win nsis portable --publish never",
-    "package:desktop:linux": "node scripts/require-native-build.mjs linux && npm run build:desktop && npm run build:native-transport && electron-builder --linux --publish never --config.directories.output=dist-desktop/linux",
-    "package:desktop:mac": "node scripts/require-native-build.mjs mac && npm run build:desktop && npm run build:native-transport && electron-builder --mac --publish never --config.directories.output=dist-desktop/macos",
+    "package:desktop": "npm run build:desktop && electron-builder --win nsis portable --publish never",
     "test:desktop-package": "node scripts/test-packaged-desktop.mjs",
-    "test:desktop-artifacts": "node scripts/test-desktop-artifacts.mjs",
     "test:packaging-contract": "node --test tests/desktop-packaging.test.mjs",
-    "test:local-endpoint": "node scripts/run-local-endpoint-tests.mjs",
-    "build:native-transport": "node scripts/build-native-transport.mjs",
-    "test:native-transport": "npm run build:native-transport && npm run build:api && npm run build:electron && node scripts/run-local-endpoint-tests.mjs --native",
     "test:updates": "npm run build:electron && node --test tests/manual-updater.test.mjs",
     "test:security": "npm run build:desktop && node --test tests/renderer-security.test.mjs tests/renderer-hardening.test.mjs",
     "test:sessions": "npm run build:api && npm run build:electron && node --import tsx --test tests/vault-session.test.mjs tests/web-session.test.mjs tests/vault-lifecycle.test.mjs tests/vault-kdf.test.mjs tests/input-validation.test.mjs tests/expiring-clipboard.test.mjs tests/desktop-platform.test.mjs",
@@ -49,10 +43,6 @@
     "test:desktop-v2": "npm run build:desktop && node scripts/run-desktop-tests.mjs --v2",
     "test:desktop-item-types": "npm run build:desktop && node scripts/run-desktop-tests.mjs --item-types",
     "test:desktop-maintenance": "npm run build:desktop && node scripts/run-desktop-tests.mjs --maintenance",
-    "test:desktop-connections": "npm run build:desktop && node scripts/run-desktop-tests.mjs --connections",
-    "test:browser-host": "npm run build:native-transport && npm run build:desktop && node --test tests/browser-native-config.test.mjs tests/browser-launcher.test.mjs tests/browser-host.integration.mjs",
-    "test:mcp": "npm run build:desktop && node --test tests/candidate-search.test.mjs tests/mcp-server.test.mjs && node scripts/run-mcp-tests.mjs",
-    "test:desktop-platform": "npm run build:electron && node scripts/run-desktop-tests.mjs --platform",
     "test:desktop-dev": "npm run build:desktop && node scripts/run-desktop-tests.mjs --dev",
     "test:web-policy": "npm run build && node scripts/run-desktop-tests.mjs --web",
     "test:api": "npm run build:api && node scripts/run-api-tests.mjs",
@@ -88,7 +78,6 @@
     "artifactName": "CIPHER-VAULT-${version}-${arch}.${ext}",
     "win": {
       "signAndEditExecutable": true,
-      "extraResources": [{ "from": "dist-desktop/native-transport/win32-${arch}", "to": "native-transport", "filter": ["cipher-vault-transport.exe", "cipher-vault-native-host.exe", "native-transport.json", "LICENSE.TXT", "THIRD-PARTY-NOTICES.TXT"] }],
       "target": [
         "nsis",
         "portable"
@@ -106,31 +95,6 @@
     },
     "portable": {
       "artifactName": "CIPHER-VAULT-${version}-${arch}-portable.${ext}"
-    },
-    "linux": {
-      "extraResources": [{ "from": "dist-desktop/native-transport/linux-${arch}", "to": "native-transport", "filter": ["cipher-vault-transport", "cipher-vault-native-host", "native-transport.json", "LICENSE.TXT", "THIRD-PARTY-NOTICES.TXT"] }],
-      "target": ["AppImage", "tar.gz"],
-      "icon": "build/icon.png",
-      "executableName": "cipher-vault",
-      "category": "Utility",
-      "artifactName": "CIPHER-VAULT-${version}-linux-${arch}.${ext}"
-    },
-    "appImage": {
-      "executableArgs": []
-    },
-    "toolsets": {
-      "appimage": "1.0.3"
-    },
-    "mac": {
-      "extraResources": [{ "from": "dist-desktop/native-transport/darwin-${arch}", "to": "native-transport", "filter": ["cipher-vault-transport", "cipher-vault-native-host", "native-transport.json", "LICENSE.TXT", "THIRD-PARTY-NOTICES.TXT"] }],
-      "binaries": ["Contents/Resources/native-transport/cipher-vault-transport", "Contents/Resources/native-transport/cipher-vault-native-host"],
-      "target": ["zip", "dmg"],
-      "icon": "build/icon.png",
-      "category": "public.app-category.utilities",
-      "identity": "-",
-      "notarize": false,
-      "hardenedRuntime": true,
-      "artifactName": "CIPHER-VAULT-${version}-macos-${arch}.${ext}"
     }
   }
 }
