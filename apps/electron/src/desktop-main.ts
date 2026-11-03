@@ -302,9 +302,9 @@ async function createMainWindow(appRoot: string, services: AppServices) {
   const iconPath = getWindowIconPath(appRoot);
 
   mainWindow = new BrowserWindow({
-    width: 1200,
+    width: 880,
     height: 780,
-    minWidth: 1000,
+    minWidth: 780,
     minHeight: 680,
     autoHideMenuBar: true,
     backgroundColor: "#121416",
@@ -313,7 +313,8 @@ async function createMainWindow(appRoot: string, services: AppServices) {
     titleBarOverlay: {
       color: "#121416",
       symbolColor: "#9ba3ab",
-      height: 38
+      // One pixel shorter than .app-titlebar so its bottom border stays visible under the caption buttons.
+      height: 37
     },
     webPreferences: {
       preload: getPreloadPath(),

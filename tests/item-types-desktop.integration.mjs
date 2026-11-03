@@ -71,11 +71,11 @@ async function newItem(type) {
 }
 async function saved(title) {
   await click(".entry-editor button[type=submit]");
-  await waitFor(`!!document.querySelector('.entry-view-fields')&&document.querySelector('.inspector-title').textContent===${JSON.stringify(title)}&&!document.querySelector('.sidebar-lock').disabled`);
+  await waitFor(`!!document.querySelector('.entry-view-fields')&&document.querySelector('.inspector-title').textContent===${JSON.stringify(title)}&&!!document.querySelector('.cipher-dashboard[aria-busy=false]')`);
   assert.equal(await evaluate("document.querySelector('.type-tabs')===null"), true);
 }
 async function checkLayout(name) {
-  for (const [width, height] of [[1000, 680], [1200, 780]]) {
+  for (const [width, height] of [[780, 680], [880, 780]]) {
     window.setSize(width, height); await delay(300);
     // A hidden CI window can pause compositor animations; measure their final layout.
     await evaluate("document.getAnimations().forEach(animation=>animation.finish())");
@@ -85,7 +85,7 @@ async function checkLayout(name) {
 }
 async function select(id) {
   await click(`.entry-row[data-entry-id="${id}"]`);
-  await waitFor(`!!document.querySelector('.entry-view-fields')&&document.querySelector('.entry-row--active')?.dataset.entryId===${JSON.stringify(id)}&&!document.querySelector('.sidebar-lock').disabled`);
+  await waitFor(`!!document.querySelector('.entry-view-fields')&&document.querySelector('.entry-row--active')?.dataset.entryId===${JSON.stringify(id)}&&!!document.querySelector('.cipher-dashboard[aria-busy=false]')`);
 }
 
 async function run() {
@@ -101,7 +101,7 @@ async function run() {
     await waitFor("!!document.querySelector('.cipher-form input[type=password]')");
     await fillMaster(phase === "v2" ? v2Password : "synthetic-item-types-legacy-master");
     await click(".cipher-form button[type=submit]");
-    await waitFor("!!document.querySelector('.cipher-dashboard')&&!document.querySelector('.sidebar-lock').disabled");
+    await waitFor("!!document.querySelector('.cipher-dashboard')&&!!document.querySelector('.cipher-dashboard[aria-busy=false]')");
     assert.equal((await ipc("fetchVaultStatus")).maintenance.format, phase);
 
     if (phase === "legacy") {
@@ -169,7 +169,10 @@ async function run() {
       await fill(".search-input", ""); await waitFor("document.querySelectorAll('.entry-row').length>=2");
       await reveal("カード番号", number); await reveal("セキュリティコード", securityCode); await copy("カード番号", number);
       const { vaultSession } = await import("../apps/api/dist/apps/api/src/services/vault-session.js");
-      const key = vaultSession.requireKey(); await click(".sidebar-lock");
+      const key = vaultSession.requireKey();
+      await evaluate("[...document.querySelectorAll('.app-menu-trigger')].find(button=>button.textContent==='ファイル').click()");
+      await waitFor("!!document.querySelector('#app-menu-file .app-menu-item')");
+      await evaluate("[...document.querySelectorAll('#app-menu-file .app-menu-item')].find(button=>button.textContent==='ロック').click()");
       await waitFor("!!document.querySelector('.cipher-form input[type=password]')&&document.querySelector('.entry-editor')===null");
       for (const secret of [apiSecret, editedApi, number, securityCode]) {
         assert.equal(await secretAbsent(secret), true);

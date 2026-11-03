@@ -96,7 +96,7 @@ async function launch() {
 async function unlock(value) {
   for (const selector of ['.cipher-form input[name=master]', '.cipher-form input[name=confirm]']) if (await renderer(`!!document.querySelector(${JSON.stringify(selector)})`)) await fill(selector, value);
   await click('.cipher-form button[type=submit]');
-  await waitForRenderer("!!document.querySelector('.cipher-dashboard')&&!document.querySelector('.sidebar-lock').disabled");
+  await waitForRenderer("!!document.querySelector('.cipher-dashboard')&&!!document.querySelector('.cipher-dashboard[aria-busy=false]')");
 }
 async function stop() {
   const capture = await evaluate(`(()=>{

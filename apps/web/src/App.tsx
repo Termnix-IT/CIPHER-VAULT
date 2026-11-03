@@ -328,7 +328,6 @@ export function App() {
           selectedEntry={selectedEntry}
           errorMessage={errorMessage}
           copyNotice={copyNotice}
-          onLock={handleLockVault}
           onCreateEntry={handleCreateEntry}
           onSelectEntry={handleSelectEntry}
           onUpdateEntry={handleUpdateEntry}

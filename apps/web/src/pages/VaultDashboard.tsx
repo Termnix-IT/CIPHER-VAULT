@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { VaultEntry, VaultEntrySummary, VaultEntryType, VaultEntryUpsertPayload, VaultMaintenanceState } from "@password-manager/shared/types";
 import { EntryEditor, entryTypeLabel } from "../components/EntryEditor";
-import { ChevronIcon, CloseIcon, LockIcon, PlusIcon, SearchIcon } from "../components/Icons";
+import { ChevronIcon, CloseIcon, PlusIcon, SearchIcon } from "../components/Icons";
 
 export type CopyNotice = { id: number; text: string; clearsInMs: number | null };
 
@@ -27,7 +27,6 @@ type VaultDashboardProps = {
   errorMessage: string;
   /** clearsInMs is how long until the desktop app clears the copied value, or null when nothing clears it. */
   copyNotice: CopyNotice | null;
-  onLock: () => Promise<void>;
   onCreateEntry: (payload: VaultEntryUpsertPayload) => Promise<void>;
   onSelectEntry: (id: string) => Promise<void>;
   onUpdateEntry: (id: string, payload: VaultEntryUpsertPayload) => Promise<void>;
@@ -205,7 +204,7 @@ export function VaultDashboard(props: VaultDashboardProps) {
     {items.map(renderEntry)}
   </div>;
 
-  return <div className="cipher-dashboard">
+  return <div className="cipher-dashboard" aria-busy={busy || props.isLoading}>
     <aside className="vault-sidebar" aria-label="項目の一覧">
       <div className="sidebar-controls">
         <div className="sidebar-head">
@@ -245,9 +244,6 @@ export function VaultDashboard(props: VaultDashboardProps) {
             {!collapsedGroups.has(name) && items.map(renderEntry)}
           </div>) : listSections.map(renderSection))}
         </div>
-      </div>
-      <div className="sidebar-foot">
-        <button className="btn sidebar-lock" type="button" disabled={busy || props.isLoading} onClick={() => { void props.onLock(); }}><LockIcon />ロック</button>
       </div>
     </aside>
     <section className="vault-detail" ref={detailRef} aria-label={isFormOpen ? "新しい項目" : props.isEditingEntry ? "項目の編集" : "項目の詳細"}>

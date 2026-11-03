@@ -45,7 +45,7 @@ async function run() {
     await waitFor("!!document.querySelector('.cipher-form input[type=password]')");
     assert.equal(await evaluate("typeof require==='undefined'&&typeof process==='undefined'&&Object.isFrozen(window.passwordManager)"), true);
     await fillMaster(v2Password); await click('.cipher-form button[type=submit]');
-    await waitFor("!!document.querySelector('.cipher-dashboard')&&!document.querySelector('.sidebar-lock').disabled");
+    await waitFor("!!document.querySelector('.cipher-dashboard')&&!!document.querySelector('.cipher-dashboard[aria-busy=false]')");
     assert.equal((await ipc("fetchEntries")).items.length, compatibility.legacy.entries.length);
     await click('.sidebar-add'); await waitFor("!!document.querySelector('.editor-fields')");
     await fill('.editor-fields .editor-field:nth-child(1) input', "V2 desktop synthetic");
@@ -66,7 +66,7 @@ async function run() {
     const key = vaultSession.requireKey(); await ipc("lockVault"); assert.deepEqual(key, Buffer.alloc(32));
     await waitFor("!!document.querySelector('.cipher-form input[type=password]')");
     await fillMaster(v2Password); await click('.cipher-form button[type=submit]');
-    await waitFor("!!document.querySelector('.entry-row')&&!document.querySelector('.sidebar-lock').disabled");
+    await waitFor("!!document.querySelector('.entry-row')&&!!document.querySelector('.cipher-dashboard[aria-busy=false]')");
     assert.equal((await ipc("fetchEntries")).items.length, summaries.length);
     assert.equal(digest(path.join(directory, "password-manager.db")), original);
     console.log("PASS actual v2 IPC delete, atomic v1 restore, audit and lock/re-unlock preserve the legacy original");
@@ -78,7 +78,7 @@ async function run() {
     assert.deepEqual(previousKey, Buffer.alloc(32)); assert.equal(digest(previousPath), previousHash); assert.notEqual(storage.getVaultStoragePath(), previousPath);
     await waitFor("!!document.querySelector('.cipher-form input[type=password]')");
     await fillMaster(replacementPassword); await click('.cipher-form button[type=submit]');
-    await waitFor("!!document.querySelector('.entry-row')&&!document.querySelector('.sidebar-lock').disabled");
+    await waitFor("!!document.querySelector('.entry-row')&&!!document.querySelector('.cipher-dashboard[aria-busy=false]')");
     assert.equal((await ipc("fetchEntries")).items.length, summaries.length);
     console.log("PASS actual maintenance IPC rekeys, preserves the source, reopens locked and unlocks with the new master");
     async function openMaintenance(label = "マスターパスワードを変更…") {
@@ -102,7 +102,7 @@ async function run() {
       await waitFor("!document.querySelector('.vault-maintenance-dialog[open]')");
       assert.equal(await evaluate("document.querySelector('.reset-entry-link')===null"),true);
       await fillMaster(password);await click('.cipher-form button[type=submit]');
-      await waitFor("!!document.querySelector('.cipher-dashboard')&&!document.querySelector('.sidebar-lock').disabled");
+      await waitFor("!!document.querySelector('.cipher-dashboard')&&!!document.querySelector('.cipher-dashboard[aria-busy=false]')");
     }
     const uiPassword="synthetic-maintenance-ui-new-password",beforeUiPath=storage.getVaultStoragePath(),beforeUiHash=digest(beforeUiPath);
     await openMaintenance();await fillMaintenance(replacementPassword,uiPassword);
@@ -137,7 +137,7 @@ async function run() {
       await click('.vault-maintenance-dialog .vault-tool-heading button');
     }finally{crypto.scrypt=scrypt;syncBuiltinESMExports();releaseKdf?.()}
     await fillMaster(emptyPassword);await click('.cipher-form button[type=submit]');
-    await waitFor("!!document.querySelector('.cipher-dashboard')&&!document.querySelector('.sidebar-lock').disabled");
+    await waitFor("!!document.querySelector('.cipher-dashboard')&&!!document.querySelector('.cipher-dashboard[aria-busy=false]')");
     console.log("PASS actual cancel action invalidates the pending operation without switching its source");
     const store = storage.getV2Vault().store, closingKey = vaultSession.requireKey();
     app.once("will-quit", () => {

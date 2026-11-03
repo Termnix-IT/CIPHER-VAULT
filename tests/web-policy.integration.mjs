@@ -52,7 +52,7 @@ async function run() {
     const fillMaster = async (value) => { for (const selector of ['.cipher-form input[name=master]', '.cipher-form input[name=confirm]']) if (await evaluate(`!!document.querySelector(${JSON.stringify(selector)})`)) await fill(selector, value); };
     await fillMaster("synthetic-web-policy-passphrase");
     await click('.cipher-form button[type=submit]');
-    await waitFor("!!document.querySelector('.cipher-dashboard') && !document.querySelector('.sidebar-lock').disabled");
+    await waitFor("!!document.querySelector('.cipher-dashboard') && !!document.querySelector('.cipher-dashboard[aria-busy=false]')");
     await evaluate("[...document.querySelectorAll('.app-menu-trigger')].find(button=>button.textContent==='ツール').click()");
     await waitFor("[...document.querySelectorAll('.app-menu-item')].some(button=>button.textContent==='保管庫を更新…'&&!button.disabled)");
     assert.equal(await evaluate("[...document.querySelectorAll('.app-menu-item')].some(button=>button.textContent==='マスターパスワードを変更…')"), false);
