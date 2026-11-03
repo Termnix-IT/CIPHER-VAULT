@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { INPUT_LIMITS as limits, parseEntryPayload, parseMasterPassword, parseBackupPayload, parseGenerationOptions,
+import { INPUT_LIMITS as limits, parseEntriesGroupPayload, parseEntryPayload, parseMasterPassword, parseBackupPayload, parseGenerationOptions,
   parseRecord, parseEntryId, parseSessionId, parseClipboardText, parseEmptyPayload, requireArgumentCount } from "../apps/api/dist/apps/api/src/lib/input-validation.js";
 import { validEntryPayload, invalidContractCases } from "./input-contract-fixtures.mjs";
 
@@ -67,7 +67,7 @@ test("generation, IDs, clipboard and argument counts reject unsupported shapes a
 });
 
 test("portable invalid contract fixtures carry no input values in errors", () => {
-  const parsers = { createEntry: parseEntryPayload, generatePassword: parseGenerationOptions,
+  const parsers = { createEntry: parseEntryPayload, setEntriesGroup: parseEntriesGroupPayload, generatePassword: parseGenerationOptions,
     exportBackup: (value) => parseBackupPayload(value, false), restoreBackup: (value) => parseBackupPayload(value, true),
     unlockVault: (value) => parseMasterPassword(value, false), resetVault: (value) => parseRecord(value, ["confirmation"]) };
   for (const item of invalidContractCases()) {

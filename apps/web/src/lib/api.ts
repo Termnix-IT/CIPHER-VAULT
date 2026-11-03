@@ -1,5 +1,5 @@
 import type {
-  BackupExportPayload, BackupRestorePayload, BackupFile, SecurityAudit,
+  BackupExportPayload, BackupRestorePayload, BackupFile, EntriesGroupPayload, SecurityAudit,
   PasswordGenerationOptions, PasswordGenerationResult, PasswordManagerDesktopApi,
   VaultEntry, VaultEntrySummary, VaultEntryUpsertPayload,
   VaultResetPayload, VaultSetupPayload, VaultStatus, VaultUnlockPayload, VaultMaintenancePayload
@@ -112,6 +112,11 @@ export function updateEntry(entryId: string, payload: VaultEntryUpsertPayload) {
 }
 export function deleteEntry(entryId: string) {
   return run((id) => getDesktopApi()?.deleteEntry(entryId, id) ?? request<{ success: boolean }>(`/entries/${entryId}`, { method: "DELETE" }, id));
+}
+export function setEntriesGroup(payload: EntriesGroupPayload) {
+  // Rewriting a large v2 vault one entry at a time can outlast the default request timeout.
+  return run((id) => getDesktopApi()?.setEntriesGroup(payload, id) ?? request<{ updatedCount: number }>("/entries/group",
+    { method: "POST", body: JSON.stringify(payload), signal: AbortSignal.timeout(315000) }, id));
 }
 export function generatePassword(options: PasswordGenerationOptions = {}) {
   return run((id) => getDesktopApi()?.generatePassword(options, id) ?? request<PasswordGenerationResult>("/password/generate", { method: "POST", body: JSON.stringify(options) }, id));

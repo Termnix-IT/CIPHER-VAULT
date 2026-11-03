@@ -163,6 +163,40 @@ test("audit checks only logins in a mixed vault", async () => {
   assert.equal((await auditVault()).total, compatibility.legacy.entries.length);
 });
 
+test("v2 group changes re-encrypt only changed items, keep every secret and its change date, and return no secret", async () => {
+  await open();
+  const key = await entries.createEntry(api()), credit = await entries.createEntry(card()), financial = await entries.createEntry(bank());
+  const login = await entries.createEntry({ serviceName: "Synthetic Login", loginId: "synthetic-login", password: "synthetic-login-secret" });
+  const ids = [key.id, credit.id, financial.id, login.id], snapshot = id => entries.getEntryById(id), before = Object.fromEntries(ids.map(id => [id, snapshot(id)]));
+  const counted = usage(), result = await entries.setEntriesGroup({ ids: [...ids, key.id], group: " Work " });
+  assert.deepEqual(result, { updatedCount: 4 }); assert.equal(usage(), counted + 4, "A repeated ID is written once");
+  for (const id of ids) {
+    const { group, updatedAt, ...rest } = snapshot(id), { group: _group, updatedAt: _updatedAt, ...expected } = before[id];
+    assert.equal(group, "Work"); assert.deepEqual(rest, expected); assert.ok(updatedAt >= _updatedAt);
+  }
+  const moved = usage(), updatedAt = snapshot(login.id).updatedAt;
+  assert.deepEqual(await entries.setEntriesGroup({ ids, group: "Work" }), { updatedCount: 0 });
+  assert.equal(usage(), moved, "An unchanged group must not spend an encryption"); assert.equal(snapshot(login.id).updatedAt, updatedAt);
+  await assert.rejects(entries.setEntriesGroup({ ids: [login.id, "00000000-0000-4000-8000-00000000ffff"], group: "Other" }), { statusCode: 404 });
+  assert.equal(snapshot(login.id).group, "Work", "An unknown ID fails before any write"); assert.equal(usage(), moved);
+  assert.deepEqual(await entries.setEntriesGroup({ ids: [key.id], group: null }), { updatedCount: 1 });
+  assert.equal(snapshot(key.id).group, null); assert.equal(snapshot(key.id).apiKey.key, secret);
+  vault.lockVault(); await vault.unlockVault({ masterPassword: v2Password });
+  assert.equal(snapshot(credit.id).group, "Work"); assert.equal(snapshot(credit.id).card.securityCode, code);
+  vault.lockVault();
+  await assert.rejects(async () => entries.setEntriesGroup({ ids: [key.id], group: "Locked" }), { statusCode: 423 });
+});
+
+test("a v2 group change that stops part way keeps finished items, leaves the rest readable and reports the failure", async () => {
+  await open();
+  const first = await entries.createEntry(api()), second = await entries.createEntry(card());
+  const db = new Database(getVaultStoragePath());
+  try { db.prepare("UPDATE vault_header SET encryption_count = ?").run(2 ** 20 - 1); } finally { db.close(); }
+  await assert.rejects(entries.setEntriesGroup({ ids: [first.id, second.id], group: "Partial" }), { statusCode: 409 });
+  assert.equal(entries.getEntryById(first.id).group, "Partial"); assert.equal(entries.getEntryById(second.id).group, null);
+  assert.equal(entries.getEntryById(second.id).card.securityCode, code);
+});
+
 test("HTTP shares typed validation and returns only safe summaries", async () => {
   await open(); const server = createServer(router); await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   try {

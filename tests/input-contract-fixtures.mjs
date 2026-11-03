@@ -19,7 +19,16 @@ export function invalidContractCases() {
     { operation: "exportBackup", payload: { passphrase: "synthetic-passphrase", content: "unexpected" }, status: 400, message: unknownMessage },
     { operation: "restoreBackup", payload: { passphrase: "synthetic-passphrase", content: [] }, status: 400, message: "バックアップファイルは文字列で指定してください" },
     { operation: "unlockVault", payload: { masterPassword: ["synthetic-passphrase"] }, status: 400, message: "マスターパスワードは文字列で指定してください" },
-    { operation: "resetVault", payload: { confirmation: "RESET_ALL_DATA", extra: true }, status: 400, message: unknownMessage }
+    { operation: "resetVault", payload: { confirmation: "RESET_ALL_DATA", extra: true }, status: 400, message: unknownMessage },
+    { operation: "setEntriesGroup", payload: { ids: "fixture", group: "仕事" }, status: 400, message: "対象の項目は配列で指定してください" },
+    { operation: "setEntriesGroup", payload: { ids: [], group: "仕事" }, status: 400, message: "対象の項目を1件以上選んでください" },
+    { operation: "setEntriesGroup", payload: { ids: Array(10001).fill("fixture"), group: "仕事" }, status: 413, message: "対象の項目は10000件まで指定できます" },
+    { operation: "setEntriesGroup", payload: { ids: [null], group: "仕事" }, status: 400, message: "エントリIDは文字列で指定してください" },
+    { operation: "setEntriesGroup", payload: { ids: ["fixture"] }, status: 400, message: "グループは文字列で指定してください" },
+    { operation: "setEntriesGroup", payload: { ids: ["fixture"], group: "  " }, status: 400, message: "グループ名を入力してください" },
+    { operation: "setEntriesGroup", payload: { ids: ["fixture"], group: " グループなし " }, status: 400, message: "「グループなし」はグループ名に使えません" },
+    { operation: "setEntriesGroup", payload: { ids: ["fixture"], group: "x".repeat(1025) }, status: 413, message: "グループの容量が上限を超えています（1024 byteまで）" },
+    { operation: "setEntriesGroup", payload: { ids: ["fixture"], group: "仕事", password: "must not be accepted" }, status: 400, message: unknownMessage }
   ];
   for (const [field, label, bytes] of [
     ["serviceName", "サービス名", 1024], ["loginId", "ログインID", 4096], ["password", "パスワード", 65536],
@@ -36,6 +45,6 @@ export function invalidContractCases() {
 }
 
 export const contractRoutes = {
-  createEntry: "/entries", generatePassword: "/password/generate", exportBackup: "/vault/backup/export",
+  createEntry: "/entries", setEntriesGroup: "/entries/group", generatePassword: "/password/generate", exportBackup: "/vault/backup/export",
   restoreBackup: "/vault/backup/restore", unlockVault: "/vault/unlock", resetVault: "/vault/reset"
 };

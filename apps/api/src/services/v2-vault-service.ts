@@ -6,7 +6,7 @@ import { validateEntryPlaintext } from "../crypto/v2-format.js";
 import { failVaultContext, getV2Vault } from "../db/vault-context.js";
 import { V2StoreError } from "../db/v2-store.js";
 import { HttpError } from "../lib/errors.js";
-import { INPUT_LIMITS, parseEntryId, parseEntryPayload, parseMasterPassword } from "../lib/input-validation.js";
+import { INPUT_LIMITS, parseEntriesGroupPayload, parseEntryId, parseEntryPayload, parseMasterPassword } from "../lib/input-validation.js";
 import { vaultSession } from "./vault-session.js";
 import { vaultUnlockGuard } from "./vault-unlock-guard.js";
 import { parseVaultEntryPayload } from "../lib/vault-entry-validation.js";
@@ -135,6 +135,24 @@ export function deleteV2Entry(input: unknown) {
     const id = parseEntryId(input), entry = context.store.readEntry(id); read(context, root, id); active();
     context.store.deleteEntry(entryContext(context, id, entry!.revision), { assertCurrent: active });
     return { success: true };
+  });
+}
+export function setV2EntriesGroup(input: unknown) {
+  vaultSession.requireUnlocked(); const { ids, group } = parseEntriesGroupPayload(input);
+  return mutation(async (context, root, options) => {
+    // Each entry has its own envelope, so a write failure keeps the entries already rewritten. An unknown ID fails before any write.
+    for (const id of ids) if (!context.store.readEntry(id)) throw new HttpError(404, "エントリが見つかりません");
+    let updatedCount = 0;
+    for (const id of ids) {
+      const envelope = context.store.readEntry(id);
+      if (!envelope) throw new HttpError(404, "エントリが見つかりません");
+      const existing = read(context, root, id);
+      if (existing.group === group) continue;
+      const plaintext = serialize({ ...existing, group, updatedAt: new Date(Math.max(Date.now(), Date.parse(existing.updatedAt))).toISOString() } as VaultEntry);
+      try { await context.store.writeEntry(root, plaintext, entryContext(context, id, envelope.revision + 1), options); updatedCount++; }
+      finally { plaintext.fill(0); }
+    }
+    return { updatedCount };
   });
 }
 export function restoreV2Entries(entries: VaultEntry[]) {

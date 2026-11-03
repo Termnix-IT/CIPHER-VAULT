@@ -7,7 +7,7 @@ import { readJsonBody } from "../lib/json.js";
 import { INPUT_LIMITS, parseEmptyPayload } from "../lib/input-validation.js";
 import { serveAppShell, tryServeStaticAsset } from "../lib/static.js";
 import { generatePassword } from "../services/password-service.js";
-import { createEntry, deleteEntry, getEntryById, listEntries, updateEntry } from "../services/entry-service.js";
+import { createEntry, deleteEntry, getEntryById, listEntries, setEntriesGroup, updateEntry } from "../services/entry-service.js";
 import { getVaultStatus, lockVaultForSession, recordVaultActivity, resetVault, setupVault, unlockVault } from "../services/vault-service.js";
 import { requireSessionId, vaultSession, withVaultSession } from "../services/vault-session.js";
 import { runVaultMaintenance } from "../services/vault-maintenance-service.js";
@@ -129,6 +129,15 @@ export async function router(request: IncomingMessage, response: ServerResponse)
         const payload = await readJsonBody(request);
         vaultSession.requireUnlocked(session);
         return createEntry(payload);
+      }));
+      return;
+    }
+
+    if (method === "POST" && url === "/entries/group") {
+      sendJson(response, 200, await withVaultSession(sessionId, async (session) => {
+        const payload = await readJsonBody(request);
+        vaultSession.requireUnlocked(session);
+        return setEntriesGroup(payload);
       }));
       return;
     }

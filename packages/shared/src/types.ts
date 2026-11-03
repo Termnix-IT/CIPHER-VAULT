@@ -53,6 +53,9 @@ export type VaultEntryUpsertPayload = PasswordEntryUpsertPayload |
   (AdditionalEntryPayload & { type: "creditCard"; card: { number: string; cardholder?: string; expiryMonth?: string; securityCode?: string } }) |
   (AdditionalEntryPayload & { type: "financial"; financial: { loginId: string; loginPassword: string; tradingPassword?: string; extraSecrets?: FinancialExtraSecret[] } });
 
+/** group null removes the items from their group. */
+export type EntriesGroupPayload = { ids: string[]; group: string | null };
+
 export type PasswordGenerationOptions = {
   length?: number;
   includeUppercase?: boolean;
@@ -142,6 +145,7 @@ export type PasswordManagerDesktopApi = {
   createEntry: (payload: VaultEntryUpsertPayload, sessionId: string) => Promise<VaultEntry>;
   updateEntry: (id: string, payload: VaultEntryUpsertPayload, sessionId: string) => Promise<VaultEntry>;
   deleteEntry: (id: string, sessionId: string) => Promise<{ success: boolean }>;
+  setEntriesGroup: (payload: EntriesGroupPayload, sessionId: string) => Promise<{ updatedCount: number }>;
   generatePassword: (options: PasswordGenerationOptions, sessionId: string) => Promise<PasswordGenerationResult>;
   copyText: (value: string, sessionId: string) => Promise<void>;
 };

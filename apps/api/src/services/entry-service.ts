@@ -8,10 +8,10 @@ import { getDatabase } from "../db/database.js";
 import { HttpError } from "../lib/errors.js";
 import { decryptSecret, encryptSecret } from "./crypto-service.js";
 import { vaultSession } from "./vault-session.js";
-import { INPUT_LIMITS, parseEntryId, parseEntryPayload } from "../lib/input-validation.js";
+import { INPUT_LIMITS, parseEntriesGroupPayload, parseEntryId, parseEntryPayload } from "../lib/input-validation.js";
 import { restoreLegacyEntries } from "../db/legacy-entry-writer.js";
 import { assertVaultStorage, isV2Vault } from "../db/vault-context.js";
-import { createV2Entry, deleteV2Entry, getV2Entry, listV2Entries, restoreV2Entries, updateV2Entry } from "./v2-vault-service.js";
+import { createV2Entry, deleteV2Entry, getV2Entry, listV2Entries, restoreV2Entries, setV2EntriesGroup, updateV2Entry } from "./v2-vault-service.js";
 
 type PasswordEntryRow = {
   id: string;
@@ -61,6 +61,8 @@ const updateEntryStatement = () => getDatabase().prepare(
    WHERE id = @id`
 );
 
+const getEntryGroupStatement = () => getDatabase().prepare("SELECT group_name FROM password_entries WHERE id = ?");
+const updateEntryGroupStatement = () => getDatabase().prepare("UPDATE password_entries SET group_name = @group_name, updated_at = @updated_at WHERE id = @id");
 const deleteEntryStatement = () => getDatabase().prepare("DELETE FROM password_entries WHERE id = ?");
 const countEntriesStatement = () => getDatabase().prepare("SELECT COUNT(*) AS count FROM password_entries");
 
@@ -197,6 +199,26 @@ export function deleteEntry(inputId: unknown) {
   return {
     success: true
   };
+}
+
+export function setEntriesGroup(input: unknown) {
+  if (isV2Vault()) return setV2EntriesGroup(input);
+  requireUnlockedVault();
+  const { ids, group } = parseEntriesGroupPayload(input);
+  const now = new Date().toISOString(), read = getEntryGroupStatement(), update = updateEntryGroupStatement();
+  // Only plain columns change, so the secrets and their change date stay untouched. An unknown ID rolls back every change.
+  const updatedCount = getDatabase().transaction(() => {
+    let count = 0;
+    for (const id of ids) {
+      const row = read.get(id) as Pick<PasswordEntryRow, "group_name"> | undefined;
+      if (!row) throw new HttpError(404, "エントリが見つかりません");
+      if (row.group_name === group) continue;
+      update.run({ id, group_name: group, updated_at: now });
+      count++;
+    }
+    return count;
+  })();
+  return { updatedCount };
 }
 
 function requireLegacyItem(input: unknown) {

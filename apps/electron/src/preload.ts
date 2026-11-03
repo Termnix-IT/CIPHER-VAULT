@@ -50,6 +50,7 @@ const passwordManagerApi: PasswordManagerDesktopApi = {
   createEntry: (payload: VaultEntryUpsertPayload, sessionId) => invoke("entries:create", sessionId, payload),
   updateEntry: (id: string, payload: VaultEntryUpsertPayload, sessionId) => invoke("entries:update", sessionId, id, payload),
   deleteEntry: (id: string, sessionId) => invoke("entries:delete", sessionId, id),
+  setEntriesGroup: (payload, sessionId) => invoke("entries:setGroup", sessionId, payload),
   generatePassword: (options: PasswordGenerationOptions, sessionId) => invoke("password:generate", sessionId, options),
   copyText: (value: string, sessionId) => invoke("clipboard:writeText", sessionId, value)
 };

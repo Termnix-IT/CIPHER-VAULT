@@ -1,4 +1,5 @@
-import type { PasswordEntryUpsertPayload, PasswordGenerationOptions } from "@password-manager/shared/types";
+import { UNGROUPED_GROUP_NAME } from "@password-manager/shared";
+import type { EntriesGroupPayload, PasswordEntryUpsertPayload, PasswordGenerationOptions } from "@password-manager/shared/types";
 import { HttpError } from "./errors.js";
 
 // Write limits do not apply to records already stored in a vault or v1 backup.
@@ -116,6 +117,24 @@ export function parseEntryId(value: unknown) {
   const id = text(value, "エントリID", INPUT_LIMITS.idBytes);
   if (!id || id.includes("\0")) throw new HttpError(400, "エントリIDの形式が正しくありません");
   return id;
+}
+
+export function parseEntriesGroupPayload(value: unknown): EntriesGroupPayload {
+  const input = parseRecord(value, ["ids", "group"]), rawIds = input.ids;
+  if (!Array.isArray(rawIds)) throw new HttpError(400, "対象の項目は配列で指定してください");
+  if (rawIds.length === 0) throw new HttpError(400, "対象の項目を1件以上選んでください");
+  if (rawIds.length > INPUT_LIMITS.entries) throw new HttpError(413, "対象の項目は10000件まで指定できます");
+  const ids = new Set<string>();
+  for (let index = 0; index < rawIds.length; index++) {
+    const descriptor = Object.getOwnPropertyDescriptor(rawIds, String(index));
+    if (!descriptor || !("value" in descriptor)) throw new HttpError(400, "対象の項目は配列で指定してください");
+    ids.add(parseEntryId(descriptor.value));
+  }
+  if (input.group === null) return { ids: [...ids], group: null };
+  const group = text(input.group, "グループ", INPUT_LIMITS.groupBytes).trim();
+  if (!group) throw new HttpError(400, "グループ名を入力してください");
+  if (group === UNGROUPED_GROUP_NAME) throw new HttpError(400, `「${UNGROUPED_GROUP_NAME}」はグループ名に使えません`);
+  return { ids: [...ids], group };
 }
 
 export function parseClipboardText(value: unknown) {

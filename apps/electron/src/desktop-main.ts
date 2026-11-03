@@ -56,6 +56,7 @@ type EntryServiceModule = {
     payload: VaultEntryUpsertPayload
   ) => import("@password-manager/shared/types").VaultEntry | Promise<import("@password-manager/shared/types").VaultEntry>;
   deleteEntry: (id: string) => { success: boolean };
+  setEntriesGroup: (payload: unknown) => { updatedCount: number } | Promise<{ updatedCount: number }>;
 };
 
 type PasswordServiceModule = {
@@ -263,6 +264,7 @@ function registerIpcHandlers(services: AppServices) {
   handleSession("entries:create", 1, services.entries.createEntry);
   handleSession("entries:update", 2, services.entries.updateEntry);
   handleSession("entries:delete", 1, services.entries.deleteEntry);
+  handleSession("entries:setGroup", 1, services.entries.setEntriesGroup);
   handleSession("password:generate", 1, services.password.generatePassword);
   handle("clipboard:writeText", 2, (id: unknown, value: unknown) => services.session.withVaultSession(id, (session) => {
     assertAvailable();

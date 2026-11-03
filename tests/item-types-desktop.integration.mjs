@@ -190,6 +190,110 @@ async function run() {
       await select(card.id);
       console.log("PASS actual financial form, separate secrets, added and removed extras, generation scope and safe summary");
 
+      const rowName = id => `.entry-row[data-entry-id="${id}"]`;
+      const ready = () => waitFor("!!document.querySelector('.cipher-dashboard[aria-busy=false]')");
+      const openMenu = async id => {
+        await evaluate(`(()=>{const r=document.querySelector(${JSON.stringify(rowName(id))}).getBoundingClientRect();document.querySelector(${JSON.stringify(rowName(id))}).dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:2,clientX:r.left+20,clientY:r.top+10}))})()`);
+        await waitFor("!!document.querySelector('.entry-menu')");
+      };
+      const menuItem = label => evaluate(`[...document.querySelectorAll('.entry-menu .app-menu-item')].find(b=>b.textContent.replace('✓','')===${JSON.stringify(label)}).click()`);
+      const entryGroup = async id => (await ipc("fetchEntries")).items.find(entry => entry.id === id).group;
+      const pickByName = name => evaluate(`[...document.querySelectorAll('.group-pick')].find(row=>row.querySelector('.group-pick-name').textContent===${JSON.stringify(name)}).querySelector('input').click()`);
+
+      await select(card.id);
+      await click(".sidebar-group-add"); await waitFor("!!document.querySelector('.group-dialog[open]')");
+      assert.equal(await evaluate("document.querySelector('.group-dialog button[type=submit]').disabled"), true);
+      await fill(".group-dialog input[name=groupName]", "グループなし");
+      await waitFor("document.querySelector('.group-dialog-hint').textContent.includes('使えません')");
+      await fill(".group-dialog input[name=groupName]", "UI Work");
+      assert.equal(await evaluate("document.querySelector('.group-dialog button[type=submit]').disabled"), true, "A group needs at least one item");
+      await pickByName(apiTitle); await pickByName(bankTitle);
+      await waitFor("document.querySelector('.group-dialog .dialog-footer-meta').textContent==='2件を選択'&&!document.querySelector('.group-dialog button[type=submit]').disabled");
+      assert.equal(await evaluate("document.querySelector('.group-dialog').textContent.includes('Synthetic group')"), true, "Each row shows the item's current group");
+      await click(".group-dialog button[type=submit]");
+      await waitFor("!document.querySelector('.group-dialog')&&[...document.querySelectorAll('.group-header-name')].some(h=>h.textContent==='UI Work')&&!!document.querySelector('.cipher-dashboard[aria-busy=false]')");
+      await waitFor("document.querySelector('.toast--copy')?.textContent==='「UI Work」に2件追加しました'");
+      assert.equal(await entryGroup(api.id), "UI Work", "A new group moves an item out of its previous group"); assert.equal(await entryGroup(bank.id), "UI Work");
+      assert.equal(await evaluate("document.querySelector('.entry-row--active').dataset.entryId"), card.id);
+      assert.equal(await evaluate("document.querySelector('.group-dialog')===null&&[...document.querySelectorAll('.group-header-name')].every(h=>h.textContent!=='Synthetic group')"), true, "An emptied group disappears");
+
+      await click(".sidebar-group-add"); await waitFor("!!document.querySelector('.group-dialog[open]')");
+      await fill(".group-dialog input[name=groupName]", "UI Work");
+      await waitFor("document.querySelector('.group-dialog-hint').textContent==='既存のグループに追加されます'");
+      await click('.group-dialog button[aria-label="閉じる"]'); await waitFor("!document.querySelector('.group-dialog')");
+
+      await openMenu(api.id);
+      assert.equal(await evaluate("document.querySelector('.entry-row--active').dataset.entryId"), card.id, "Right-click keeps the selection");
+      assert.equal(await evaluate("document.activeElement===document.querySelector('.entry-menu-add')"), true);
+      await menuItem("グループへ追加"); await waitFor("!!document.querySelector('.entry-menu-groups')");
+      assert.equal(await evaluate("document.querySelector('.entry-menu-groups [aria-checked=true]').textContent.includes('UI Work')"), true);
+      await menuItem("グループから削除");
+      await waitFor(`!document.querySelector('.entry-menu')&&!!document.querySelector('.cipher-dashboard[aria-busy=false]')`); await ready();
+      assert.equal(await entryGroup(api.id), null);
+
+      await openMenu(api.id);
+      assert.equal(await evaluate("[...document.querySelectorAll('.entry-menu .app-menu-item')].find(b=>b.textContent==='グループから削除').disabled"), true, "An ungrouped item has nothing to remove");
+      await menuItem("グループへ追加"); await waitFor("!!document.querySelector('.entry-menu-groups')");
+      await menuItem("UI Work"); await waitFor("!document.querySelector('.entry-menu')"); await ready();
+      assert.equal(await entryGroup(api.id), "UI Work");
+
+      await openMenu(card.id); await menuItem("グループへ追加"); await waitFor("!!document.querySelector('.entry-menu-groups')");
+      await menuItem("新しいグループ…"); await waitFor("!!document.querySelector('.group-dialog[open]')");
+      assert.equal(await evaluate("document.querySelector('.group-dialog .dialog-footer-meta').textContent"), "1件を選択", "The opened item starts checked");
+      assert.equal(await evaluate("document.querySelector('.group-pick').querySelector('input').checked&&document.querySelector('.group-pick-name').textContent"), cardTitle);
+      await fill(".group-dialog input[name=groupName]", "UI Cards"); await click(".group-dialog button[type=submit]");
+      await waitFor("!document.querySelector('.group-dialog')&&!!document.querySelector('.cipher-dashboard[aria-busy=false]')");
+      await waitFor(`[...document.querySelectorAll('.entry-view-fields *')].some(node=>node.textContent==='UI Cards')`);
+      assert.equal((await ipc("fetchEntry", card.id)).card.number, number, "Changing the group keeps the secret");
+
+      await openMenu(api.id);
+      await evaluate("document.querySelector('.entry-menu').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"); await waitFor("!document.querySelector('.entry-menu')");
+      await openMenu(api.id);
+      await evaluate("document.body.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))"); await waitFor("!document.querySelector('.entry-menu')");
+      await openMenu(api.id);
+      await evaluate("document.querySelector('.entry-list').dispatchEvent(new Event('scroll'))"); await waitFor("!document.querySelector('.entry-menu')");
+      await evaluate(`document.querySelector(${JSON.stringify(rowName(api.id))}).dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:0}))`);
+      await waitFor("!!document.querySelector('.entry-menu')");
+      assert.equal(await evaluate(`(()=>{const m=document.querySelector('.entry-menu').getBoundingClientRect(),r=document.querySelector(${JSON.stringify(rowName(api.id))}).getBoundingClientRect();return m.top>=r.bottom-1||m.bottom<=innerHeight})()`), true, "The menu key opens at the row");
+      await evaluate("document.querySelector('.entry-menu').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"); await waitFor("!document.querySelector('.entry-menu')");
+
+      // Unsaved edits are protected, and declining leaves both the form and the group as they were.
+      await click(".inspector-actions > button"); await waitFor("!!document.querySelector('.entry-editor--creditCard .editor-fields')");
+      await fillField("名義", "SYNTHETIC UNSAVED OWNER");
+      let prompts = [];
+      await evaluate("void(window.__prompts=[],window.confirm=message=>{window.__prompts.push(message);return false})");
+      await openMenu(api.id); await menuItem("グループから削除"); await delay(100);
+      assert.equal(await entryGroup(api.id), "UI Work"); assert.equal(await evaluate("!!document.querySelector('.entry-editor--creditCard .editor-fields')"), true);
+      prompts = await evaluate("window.__prompts"); assert.deepEqual(prompts, ["保存していない変更を破棄しますか？"]);
+      await evaluate("void(window.confirm=()=>true)");
+      await openMenu(api.id); await menuItem("グループから削除");
+      await waitFor("!!document.querySelector('.entry-view-fields')&&!!document.querySelector('.cipher-dashboard[aria-busy=false]')");
+      assert.equal(await entryGroup(api.id), null); assert.equal((await ipc("fetchEntry", card.id)).card.cardholder, "SYNTHETIC EDITED OWNER");
+
+      // Deleting another item keeps the open one; the red button deletes the open one after the same confirmation.
+      const created = async name => ipc("createEntry", { serviceName: name, loginId: "synthetic-delete", password: "synthetic-delete-secret" });
+      const firstDelete = await created("Synthetic Delete Menu"), secondDelete = await created("Synthetic Delete Button");
+      await evaluate("[...document.querySelectorAll('.app-menu-trigger')].find(button=>button.textContent==='ファイル').click()");
+      await waitFor("!!document.querySelector('#app-menu-file .app-menu-item')");
+      await evaluate("[...document.querySelectorAll('#app-menu-file .app-menu-item')].find(button=>button.textContent==='一覧を更新').click()");
+      await waitFor(`!!document.querySelector(${JSON.stringify(rowName(secondDelete.id))})`); await ready();
+      await evaluate("void(window.__prompts=[],window.confirm=message=>{window.__prompts.push(message);return false})");
+      await openMenu(firstDelete.id); await menuItem("項目削除"); await delay(50);
+      assert.ok((await ipc("fetchEntries")).items.some(entry => entry.id === firstDelete.id));
+      assert.deepEqual(await evaluate("window.__prompts"), ["「Synthetic Delete Menu」を削除しますか？元に戻せません。"]);
+      await evaluate("void(window.confirm=()=>true)");
+      await openMenu(firstDelete.id); await menuItem("項目削除");
+      await waitFor(`!document.querySelector(${JSON.stringify(rowName(firstDelete.id))})&&!!document.querySelector('.cipher-dashboard[aria-busy=false]')`);
+      assert.equal(await evaluate("document.querySelector('.entry-row--active').dataset.entryId"), card.id, "Deleting another item keeps the open one");
+      assert.equal(await evaluate("!!document.querySelector('.entry-view-fields')"), true);
+      await select(secondDelete.id);
+      assert.equal(await evaluate("[...document.querySelectorAll('.inspector-actions > button')].map(b=>[b.textContent,b.classList.contains('btn--danger')]).join()"), "編集,false,削除,true");
+      await click(".inspector-actions .btn--danger");
+      await waitFor(`!document.querySelector(${JSON.stringify(rowName(secondDelete.id))})&&!document.querySelector('.entry-view-fields')&&!!document.querySelector('.cipher-dashboard[aria-busy=false]')`);
+      assert.equal((await ipc("fetchEntries")).items.some(entry => entry.id === secondDelete.id), false);
+      await select(card.id);
+      console.log("PASS actual group dialog, right-click menu, unsaved-edit guard and red delete button");
+
       // A secret does not become searchable just because its detail was previously loaded.
       await fill(".search-input", editedApi); await waitFor("document.querySelectorAll('.entry-row').length===0");
       await fill(".search-input", ""); await waitFor("document.querySelectorAll('.entry-row').length>=2");

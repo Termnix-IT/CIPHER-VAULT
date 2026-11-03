@@ -3,7 +3,7 @@ import { CLIPBOARD_CLEAR_AFTER_MS } from "@password-manager/shared";
 import type { VaultEntry, VaultEntrySummary, VaultEntryUpsertPayload, VaultMaintenanceOperation, VaultStatus } from "@password-manager/shared/types";
 import {
   copyText, createEntry, deleteEntry, fetchEntries, fetchEntry, generatePassword,
-  lockVault, observeVaultStatus, recordVaultActivity, resetVault, setupVault, unlockVault, updateEntry
+  lockVault, observeVaultStatus, recordVaultActivity, resetVault, setEntriesGroup, setupVault, unlockVault, updateEntry
 } from "./lib/api";
 import { LockScreen } from "./pages/LockScreen";
 import { VaultDashboard, type CopyNotice } from "./pages/VaultDashboard";
@@ -193,13 +193,42 @@ export function App() {
     try {
       await deleteEntry(id);
       if (!isCurrent(epoch)) throw new VaultSessionChangedError();
-      setSelectedEntry(null); setIsEditingEntry(false); setHasUnsavedChanges(false);
+      // Deleting another item from the list leaves the open one as it is.
+      if (selectedEntry?.id === id) { setSelectedEntry(null); setIsEditingEntry(false); setHasUnsavedChanges(false); }
       await refreshEntries();
       if (!isCurrent(epoch)) throw new VaultSessionChangedError();
     } catch (error) {
       if (isCurrent(epoch)) setErrorMessage(error instanceof Error ? error.message : "削除できませんでした");
       throw error;
     } finally { if (isCurrent(epoch)) setIsDeletingEntry(false); }
+  }
+
+  async function handleSetEntriesGroup(ids: string[], group: string | null) {
+    const epoch = viewEpoch.current;
+    const openId = selectedEntry && ids.includes(selectedEntry.id) ? selectedEntry.id : null;
+    // The list and the open item are re-read after a failure too, because a v2 change can stop part way.
+    const reload = async () => {
+      await refreshEntries();
+      if (!openId || !isCurrent(epoch)) return;
+      const entry = await fetchEntry(openId);
+      if (isCurrent(epoch)) setSelectedEntry(entry);
+    };
+    setIsUpdatingEntry(true); setErrorMessage("");
+    // A form left open on this item would save its old group over the new one.
+    if (openId) { setIsEditingEntry(false); setHasUnsavedChanges(false); }
+    try {
+      const { updatedCount } = await setEntriesGroup({ ids, group });
+      if (!isCurrent(epoch)) throw new VaultSessionChangedError();
+      await reload();
+      if (!isCurrent(epoch)) throw new VaultSessionChangedError();
+      showNotice(group === null ? "グループから削除しました" : updatedCount ? `「${group}」に${updatedCount}件追加しました` : `すでに「${group}」に入っています`);
+    } catch (error) {
+      if (isCurrent(epoch)) {
+        setErrorMessage(error instanceof Error ? error.message : "グループを変更できませんでした");
+        await reload().catch(() => undefined);
+      }
+      throw error;
+    } finally { if (isCurrent(epoch)) setIsUpdatingEntry(false); }
   }
 
   async function handleGeneratePassword() {
@@ -227,6 +256,12 @@ export function App() {
   function clearCopyNotice() {
     window.clearTimeout(copyTimer.current);
     setCopyNotice(null);
+  }
+
+  function showNotice(text: string) {
+    window.clearTimeout(copyTimer.current);
+    setCopyNotice({ id: ++copyCount.current, text, clearsInMs: null });
+    copyTimer.current = window.setTimeout(() => setCopyNotice(null), 3000);
   }
 
   async function handleCopyToClipboard(value: string, label: string) {
@@ -317,6 +352,7 @@ export function App() {
           onEditingChange={setIsEditingEntry}
           onEditEntry={handleEditEntry}
           isGroupedView={isGroupedView}
+          onGroupedViewChange={setIsGroupedView}
           onDirtyChange={setHasUnsavedChanges}
           entries={entries}
           isLoading={isLoadingEntries}
@@ -332,6 +368,7 @@ export function App() {
           onSelectEntry={handleSelectEntry}
           onUpdateEntry={handleUpdateEntry}
           onDeleteEntry={handleDeleteEntry}
+          onSetEntriesGroup={handleSetEntriesGroup}
           onGeneratePassword={handleGeneratePassword}
           onCopyToClipboard={handleCopyToClipboard}
         />

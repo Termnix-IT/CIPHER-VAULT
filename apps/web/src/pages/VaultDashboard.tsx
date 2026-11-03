@@ -1,7 +1,10 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { UNGROUPED_GROUP_NAME as UNGROUPED } from "@password-manager/shared";
 import type { VaultEntry, VaultEntrySummary, VaultEntryType, VaultEntryUpsertPayload, VaultMaintenanceState } from "@password-manager/shared/types";
+import { EntryContextMenu } from "../components/EntryContextMenu";
 import { EntryEditor, entryTypeLabel } from "../components/EntryEditor";
-import { ChevronIcon, CloseIcon, PlusIcon, SearchIcon } from "../components/Icons";
+import { GroupDialog } from "../components/GroupDialog";
+import { ChevronIcon, CloseIcon, FolderPlusIcon, PlusIcon, SearchIcon } from "../components/Icons";
 
 export type CopyNotice = { id: number; text: string; clearsInMs: number | null };
 
@@ -16,6 +19,7 @@ type VaultDashboardProps = {
   onEditingChange: (editing: boolean) => void;
   onEditEntry: () => void;
   isGroupedView: boolean;
+  onGroupedViewChange: (grouped: boolean) => void;
   entries: VaultEntrySummary[];
   isLoading: boolean;
   isCreating: boolean;
@@ -31,11 +35,11 @@ type VaultDashboardProps = {
   onSelectEntry: (id: string) => Promise<void>;
   onUpdateEntry: (id: string, payload: VaultEntryUpsertPayload) => Promise<void>;
   onDeleteEntry: (id: string) => Promise<void>;
+  onSetEntriesGroup: (ids: string[], group: string | null) => Promise<void>;
   onGeneratePassword: () => Promise<string>;
   onCopyToClipboard: (value: string, label: string) => Promise<void>;
 };
 
-const UNGROUPED = "グループなし";
 const TYPE_FILTERS: { type: VaultEntryType; label: string }[] = [{ type: "login", label: "ログイン" }, { type: "apiKey", label: "APIキー" }, { type: "creditCard", label: "カード" }, { type: "financial", label: "銀行/証券" }];
 const KANA_ROWS = ["あ", "か", "さ", "た", "な", "は", "ま", "や", "ら", "わ"];
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -76,6 +80,9 @@ export function VaultDashboard(props: VaultDashboardProps) {
   const [typeFilter, setTypeFilter] = useState<VaultEntryType | "all">("all");
   const [sortOrder, setSortOrder] = useState<SortOrder>("name");
   const [savedNotice, setSavedNotice] = useState(false);
+  const [entryMenu, setEntryMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [groupDialogIds, setGroupDialogIds] = useState<string[] | null>(null);
+  const entryMenuRow = useRef<HTMLElement | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLElement>(null);
@@ -99,7 +106,14 @@ export function VaultDashboard(props: VaultDashboardProps) {
     }
     return [...result.entries()].sort(([a], [b]) => a === b ? 0 : a === UNGROUPED ? 1 : b === UNGROUPED ? -1 : a.localeCompare(b, "ja"));
   }, [filtered]);
+  const groupNames = useMemo(() => [...new Set(entries.map((entry) => entry.group ?? "").filter((group) => group && group !== UNGROUPED))]
+    .sort((a, b) => a.localeCompare(b, "ja")), [entries]);
+  const menuEntry = entryMenu && entries.find((entry) => entry.id === entryMenu.id);
   const busy = props.isCreating || props.isUpdating || props.isDeleting || props.isLoadingDetail || props.isGeneratingPassword;
+  const closeEntryMenu = useCallback((restoreFocus: boolean) => {
+    if (restoreFocus) entryMenuRow.current?.focus();
+    setEntryMenu(null);
+  }, []);
 
   useEffect(() => {
     if (!savedNotice) return;
@@ -177,15 +191,52 @@ export function VaultDashboard(props: VaultDashboardProps) {
     props.onEditingChange(false);
     props.onFormOpenChange(false);
   }
+  /** Asks before an action that would drop unsaved input, and leaves the form only when there was some. */
+  function confirmDiscard() {
+    if (!canDiscard()) return false;
+    if (props.hasUnsavedChanges) {
+      props.onDirtyChange(false);
+      props.onEditingChange(false);
+      props.onFormOpenChange(false);
+    }
+    return true;
+  }
+  function deleteTarget(target: Pick<VaultEntrySummary, "id" | "serviceName">) {
+    if (busy || !window.confirm(`「${target.serviceName}」を削除しますか？元に戻せません。`)) return;
+    // Deleting the item being edited already answers what happens to its edits.
+    if (!(props.isEditingEntry && selectedEntry?.id === target.id) && !confirmDiscard()) return;
+    void props.onDeleteEntry(target.id).catch(() => {});
+  }
   function deleteSelected() {
-    if (!selectedEntry || busy) return;
-    if (window.confirm(`「${selectedEntry.serviceName}」を削除しますか？元に戻せません。`)) void props.onDeleteEntry(selectedEntry.id).catch(() => {});
+    if (selectedEntry) deleteTarget(selectedEntry);
+  }
+  function setGroup(id: string, group: string | null) {
+    if (!busy && confirmDiscard()) void props.onSetEntriesGroup([id], group).catch(() => {});
+  }
+  function openGroupDialog(initialIds: string[]) {
+    if (!busy && confirmDiscard()) setGroupDialogIds(initialIds);
+  }
+  async function submitGroup(ids: string[], group: string) {
+    await props.onSetEntriesGroup(ids, group);
+    // Show the result: a search would hide the group headings, and the group could be collapsed.
+    setSearchTerm("");
+    setCollapsedGroups((current) => { const next = new Set(current); next.delete(group); return next; });
+    props.onGroupedViewChange(true);
+  }
+  function openEntryMenu(event: MouseEvent<HTMLButtonElement>, id: string) {
+    event.preventDefault();
+    if (busy) return;
+    // The menu key has no pointer position, so its menu opens under the row.
+    const rect = event.currentTarget.getBoundingClientRect(), fromPointer = event.button === 2;
+    entryMenuRow.current = event.currentTarget;
+    setEntryMenu({ id, x: fromPointer ? event.clientX : rect.left + 16, y: fromPointer ? event.clientY : rect.bottom });
   }
   function renderEntry(entry: VaultEntrySummary) {
     const active = !isFormOpen && selectedEntry?.id === entry.id;
     return <button key={entry.id} type="button" data-entry-id={entry.id}
-      className={`entry-row ${active ? "entry-row--active" : ""}`}
+      className={`entry-row ${active ? "entry-row--active" : ""} ${entryMenu?.id === entry.id ? "entry-row--menu" : ""}`}
       disabled={busy} aria-current={active ? "true" : undefined}
+      onContextMenu={(event) => openEntryMenu(event, entry.id)}
       onClick={() => {
         if (active) return;
         if (canDiscard()) { setSavedNotice(false); void props.onSelectEntry(entry.id); }
@@ -216,6 +267,7 @@ export function VaultDashboard(props: VaultDashboardProps) {
             {searchTerm && <button className="icon-btn" type="button" aria-label="検索をクリア" onClick={() => setSearchTerm("")}><CloseIcon /></button>}
           </div>
           <button className="btn sidebar-add" type="button" aria-label="新しい項目" title="新しい項目" disabled={busy || isFormOpen} onClick={openCreate}><PlusIcon /></button>
+          <button className="btn sidebar-group-add" type="button" aria-label="新しいグループ" title="新しいグループ" disabled={busy || entries.length === 0} onClick={() => openGroupDialog([])}><FolderPlusIcon /></button>
         </div>
         {presentTypes.length > 1 && <div className="list-filter" role="group" aria-label="種類で絞り込み">
           <button type="button" aria-pressed={activeType === "all"} onClick={() => setTypeFilter("all")}>すべて</button>
@@ -255,7 +307,10 @@ export function VaultDashboard(props: VaultDashboardProps) {
             <span className="inspector-saved" role="status">{savedNotice ? "保存しました" : ""}</span>
           </p>}
         </div>
-        {selectedEntry && !isFormOpen && !props.isEditingEntry && <div className="inspector-actions"><button className="btn" type="button" disabled={busy} onClick={props.onEditEntry}>編集</button></div>}
+        {selectedEntry && !isFormOpen && !props.isEditingEntry && <div className="inspector-actions">
+          <button className="btn" type="button" disabled={busy} onClick={props.onEditEntry}>編集</button>
+          <button className="btn btn--danger" type="button" disabled={busy} onClick={deleteSelected}>削除</button>
+        </div>}
       </div>}
       {props.isLoadingDetail ? <p className="empty-state-text" role="status">開いています…</p> : isFormOpen || selectedEntry ?
         <EntryEditor key={isFormOpen ? "new" : selectedEntry!.id}
@@ -283,5 +338,9 @@ export function VaultDashboard(props: VaultDashboardProps) {
         </p>}
       </div>
     </section>
+    {entryMenu && menuEntry && <EntryContextMenu key={menuEntry.id} entry={menuEntry} x={entryMenu.x} y={entryMenu.y} groupNames={groupNames} onClose={closeEntryMenu}
+      onAddToGroup={(group) => setGroup(menuEntry.id, group)} onNewGroup={() => openGroupDialog([menuEntry.id])}
+      onRemoveFromGroup={() => setGroup(menuEntry.id, null)} onDelete={() => deleteTarget(menuEntry)} />}
+    {groupDialogIds && <GroupDialog entries={entries} groupNames={groupNames} initialIds={groupDialogIds} onSubmit={submitGroup} onClose={() => setGroupDialogIds(null)} />}
   </div>;
 }

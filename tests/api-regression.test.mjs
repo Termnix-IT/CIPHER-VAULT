@@ -312,6 +312,39 @@ test("entry validation rejects invalid fields without inserting data; new vault 
   assert.equal(entries.getEntryById(created.id).password, "secret");
 });
 
+test("legacy group changes touch only plain columns, roll back unknown IDs and stay behind the session", async () => {
+  await freshVault();
+  const first = entries.createEntry({ serviceName: "Group A", loginId: "a", password: "synthetic-group-a" });
+  const second = entries.createEntry({ serviceName: "Group B", loginId: "b", password: "synthetic-group-b", group: "Old" });
+  const row = id => database.prepare("SELECT encrypted_password, group_name, updated_at, password_changed_at FROM password_entries WHERE id = ?").get(id);
+  const before = row(first.id);
+  database.prepare("UPDATE password_entries SET updated_at = '2020-01-01T00:00:00.000Z' WHERE id = ?").run(first.id);
+  assert.deepEqual(entries.setEntriesGroup({ ids: [first.id, second.id, first.id], group: " Work " }), { updatedCount: 2 });
+  const after = row(first.id);
+  assert.equal(after.group_name, "Work"); assert.equal(after.encrypted_password, before.encrypted_password);
+  assert.equal(after.password_changed_at, before.password_changed_at); assert.notEqual(after.updated_at, "2020-01-01T00:00:00.000Z");
+  assert.equal(row(second.id).group_name, "Work"); assert.equal(entries.getEntryById(first.id).password, "synthetic-group-a");
+
+  const settled = row(first.id).updated_at;
+  database.prepare("UPDATE password_entries SET updated_at = '2020-01-01T00:00:00.000Z' WHERE id = ?").run(first.id);
+  assert.deepEqual(entries.setEntriesGroup({ ids: [first.id], group: "Work" }), { updatedCount: 0 });
+  assert.equal(row(first.id).updated_at, "2020-01-01T00:00:00.000Z", "An unchanged group keeps the update date");
+  assert.notEqual(settled, "2020-01-01T00:00:00.000Z");
+
+  assert.throws(() => entries.setEntriesGroup({ ids: [first.id, "missing"], group: "Other" }), { statusCode: 404 });
+  assert.equal(row(first.id).group_name, "Work", "An unknown ID must roll back the earlier rows");
+
+  const response = await apiRequest("/entries/group", { method: "POST", body: JSON.stringify({ ids: [first.id], group: null }) });
+  assert.equal(response.status, 200); assert.deepEqual(await response.json(), { updatedCount: 1 });
+  assert.equal(row(first.id).group_name, null);
+  assert.equal(await rawRequest("/entries/group", "POST", { "Content-Type": "application/json", Origin: "http://evil.example" }, JSON.stringify({ ids: [first.id], group: "Evil" })), 403);
+  assert.equal((await apiRequest("/entries/group", { method: "POST", headers: { "X-Cipher-Vault-Session": "stale-session" }, body: JSON.stringify({ ids: [first.id], group: "Stale" }) })).status, 409);
+  vault.lockVault();
+  assert.throws(() => entries.setEntriesGroup({ ids: [first.id], group: "Locked" }), { statusCode: 423 });
+  assert.equal((await apiRequest("/entries/group", { method: "POST", body: JSON.stringify({ ids: [first.id], group: "Locked" }) })).status, 423);
+  assert.equal(row(first.id).group_name, null);
+});
+
 test("legacy verifier upgrades only after authentication and preserves encrypted entries", async () => {
   vault.resetVault({ confirmation: "RESET_ALL_DATA" });
   const password = "legacy-test-password";
@@ -572,7 +605,7 @@ test("HTTP and direct services reject the same malformed contracts without chang
   await freshVault();
   const status = vault.getVaultStatus();
   const metadata = store.getVaultMetadata();
-  const actions = { createEntry: entries.createEntry, generatePassword, exportBackup: backup.exportBackup,
+  const actions = { createEntry: entries.createEntry, setEntriesGroup: entries.setEntriesGroup, generatePassword, exportBackup: backup.exportBackup,
     restoreBackup: backup.restoreBackup, unlockVault: vault.unlockVault, resetVault: vault.resetVault };
   for (const item of invalidContractCases()) {
     await assert.rejects(async () => actions[item.operation](item.payload), { statusCode: item.status, message: item.message });
