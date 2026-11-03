@@ -78,6 +78,7 @@ export function listV2Entries() {
       const base = { id, serviceName, tags, group, updatedAt };
       if (entry.type === "apiKey") items.push({ ...base, type: "apiKey" });
       else if (entry.type === "creditCard") items.push({ ...base, type: "creditCard", cardLast4: entry.card.number.slice(-4) });
+      else if (entry.type === "financial") items.push({ ...base, type: "financial" });
       else items.push({ ...base, loginId: entry.loginId });
     }
     items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
@@ -91,6 +92,8 @@ function fields(payload: VaultEntryUpsertPayload) {
     apiKey: { key: payload.apiKey.key, keyId: payload.apiKey.keyId ?? "", expiresOn: payload.apiKey.expiresOn || null } };
   if ("type" in payload && payload.type === "creditCard") return { ...base, type: "creditCard" as const,
     card: { number: payload.card.number, cardholder: payload.card.cardholder ?? "", expiryMonth: payload.card.expiryMonth || null, securityCode: payload.card.securityCode ?? "" } };
+  if ("type" in payload && payload.type === "financial") return { ...base, type: "financial" as const,
+    financial: { loginId: payload.financial.loginId.trim(), loginPassword: payload.financial.loginPassword, tradingPassword: payload.financial.tradingPassword ?? "", extraSecrets: payload.financial.extraSecrets ?? [] } };
   const login = payload as import("@password-manager/shared/types").PasswordEntryUpsertPayload;
   return { ...base, loginId: login.loginId.trim(), password: login.password };
 }

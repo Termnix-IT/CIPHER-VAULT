@@ -27,7 +27,9 @@ type AppMenuProps = {
 };
 
 export function AppMenu(props: AppMenuProps) {
-  const selectedLogin = props.selectedEntry?.type === "apiKey" || props.selectedEntry?.type === "creditCard" ? null : props.selectedEntry as PasswordEntry | null;
+  const selected = props.selectedEntry;
+  const selectedLogin = selected?.type === "financial" ? { loginId: selected.financial.loginId, password: selected.financial.loginPassword }
+    : selected?.type === "apiKey" || selected?.type === "creditCard" ? null : selected as PasswordEntry | null;
   const [opened, setOpened] = useState<MenuName | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const triggerRefs = useRef<Partial<Record<MenuName, HTMLButtonElement | null>>>({});

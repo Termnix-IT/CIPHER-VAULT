@@ -15,7 +15,7 @@ export function verifyBackupRecovery(content: string, passphrase: Buffer, active
 export async function verifyBackupRecovery(content: string, passphrase: Buffer, active: () => void, options?: { allowTyped: true }) {
   active();
   // Legacy migration still accepts only its established v1 recovery artifact.
-  if (options?.allowTyped && parseVaultBackup(content).version === 2) return verifyTypedBackupRecovery(content, passphrase, active);
+  if (options?.allowTyped && parseVaultBackup(content).version !== 1) return verifyTypedBackupRecovery(content, passphrase, active);
   let backupKey: Buffer | undefined, scratchKey: Buffer | undefined, password: Buffer | undefined;
   let scratch: ReturnType<typeof createMemoryDatabase> | undefined;
   let entries: ReturnType<typeof decodeBackupV1> | undefined;

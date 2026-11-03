@@ -106,7 +106,7 @@ async function run() {
 
     if (phase === "legacy") {
       await click(".sidebar-add");
-      for (const type of ["apiKey", "creditCard"]) {
+      for (const type of ["apiKey", "creditCard", "financial"]) {
         await choose(type); await waitFor("!!document.querySelector('.entry-migration-notice')");
         assert.equal(await evaluate("document.querySelector('.entry-editor button[type=submit]').disabled"), true);
         assert.equal(await evaluate("document.querySelector('.editor-fields')===null"), true);
@@ -164,6 +164,32 @@ async function run() {
       assert.equal(await secretAbsent(number), true); assert.equal(await secretAbsent(securityCode), true);
       console.log("PASS actual card form, separate two-activation reveals, synthetic clipboard and selection/edit reset");
 
+      const bankTitle = "Synthetic Bank UI", bankId = "synthetic-contract-id", bankLogin = "  SYNTHETIC_BANK_LOGIN  ", bankTrading = "SYNTHETIC_BANK_TRADING", bankExtra = "SYNTHETIC_BANK_EXTRA", editedTrading = "SYNTHETIC_BANK_TRADING_EDITED";
+      await newItem("financial");
+      await fillField("名前", bankTitle); await fillField("ログインID", bankId); await fillField("ログインパスワード", bankLogin); await fillField("取引パスワード", bankTrading);
+      await click(".editor-more button"); await waitFor("!!document.querySelector('.editor-extra-secret')");
+      await fill(".editor-extra-secret input:not([type=password])", "第2暗証番号"); await fill(".editor-extra-secret input[type=password]", bankExtra);
+      await checkLayout("financial-form");
+      assert.equal(await evaluate("document.querySelectorAll('.editor-fields .btn--small').length"), 1, "Only the login password offers generation");
+      await saved(bankTitle); await checkLayout("financial-detail");
+      const bank = (await ipc("fetchEntries")).items.find(entry => entry.serviceName === bankTitle);
+      assert.equal(bank.type, "financial"); assert.equal(Object.hasOwn(bank, "financial"), false); assert.equal(Object.hasOwn(bank, "loginId"), false);
+      assert.deepEqual((await ipc("fetchEntry", bank.id)).financial, { loginId: bankId, loginPassword: bankLogin, tradingPassword: bankTrading, extraSecrets: [{ label: "第2暗証番号", value: bankExtra }] });
+      assert.equal(await evaluate(`document.querySelector('.entry-row--active').textContent.includes('銀行/証券')&&!document.querySelector('.entry-list').textContent.includes(${JSON.stringify(bankId)})`), true);
+      assert.equal(await evaluate("[...document.querySelectorAll('.list-filter button')].map(button=>button.textContent).join()"), "すべて,ログイン,APIキー,カード,銀行/証券");
+      await reveal("ログインパスワード", bankLogin); await reveal("取引パスワード", bankTrading); await reveal("第2暗証番号", bankExtra);
+      await click(revealButton("取引パスワード", true)); assert.equal(await secretAbsent(bankTrading), true); assert.equal(await secretAbsent(bankExtra), false, "Hiding one field must not change another field's visibility");
+      await copy("ログインパスワード", bankLogin); await copy("取引パスワード", bankTrading); await copy("第2暗証番号", bankExtra);
+      await click(".inspector-actions > button"); await waitFor("!!document.querySelector('.entry-editor--financial .editor-fields')");
+      assert.equal(await evaluate("[...document.querySelectorAll('.editor-fields input[autocomplete=\"new-password\"]')].every(input=>input.type==='password')"), true);
+      await fillField("取引パスワード", editedTrading); await saved(bankTitle);
+      assert.equal((await ipc("fetchEntry", bank.id)).financial.tradingPassword, editedTrading); assert.equal(await secretAbsent(editedTrading), true);
+      await click(".inspector-actions > button"); await waitFor("!!document.querySelector('.editor-extra-secret')");
+      await click('.editor-extra-secret button[aria-label="第2暗証番号を削除"]'); await waitFor("!document.querySelector('.editor-extra-secret')");
+      await saved(bankTitle); assert.deepEqual((await ipc("fetchEntry", bank.id)).financial.extraSecrets, []);
+      await select(card.id);
+      console.log("PASS actual financial form, separate secrets, added and removed extras, generation scope and safe summary");
+
       // A secret does not become searchable just because its detail was previously loaded.
       await fill(".search-input", editedApi); await waitFor("document.querySelectorAll('.entry-row').length===0");
       await fill(".search-input", ""); await waitFor("document.querySelectorAll('.entry-row').length>=2");
@@ -174,7 +200,7 @@ async function run() {
       await waitFor("!!document.querySelector('#app-menu-file .app-menu-item')");
       await evaluate("[...document.querySelectorAll('#app-menu-file .app-menu-item')].find(button=>button.textContent==='ロック').click()");
       await waitFor("!!document.querySelector('.cipher-form input[type=password]')&&document.querySelector('.entry-editor')===null");
-      for (const secret of [apiSecret, editedApi, number, securityCode]) {
+      for (const secret of [apiSecret, editedApi, number, securityCode, bankLogin, bankTrading, editedTrading, bankExtra]) {
         assert.equal(await secretAbsent(secret), true);
         assert.equal(await evaluate(`[...document.querySelectorAll('input,textarea')].every(input=>!input.value.includes(${JSON.stringify(secret)}))`), true);
       }

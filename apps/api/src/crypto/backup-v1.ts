@@ -4,7 +4,8 @@ import { HttpError } from "../lib/errors.js";
 import { INPUT_LIMITS, parseEntryPayload, parseRecord } from "../lib/input-validation.js";
 
 const KDF = "scrypt-N131072-r8-p1";
-const aad = (version: 1 | 2) => Buffer.from(`CIPHER-VAULT:${version}:${KDF}:aes-256-gcm`);
+export type BackupVersion = 1 | 2 | 3;
+const aad = (version: BackupVersion) => Buffer.from(`CIPHER-VAULT:${version}:${KDF}:aes-256-gcm`);
 export type BackupEnvelopeV1 = { salt: Buffer; iv: Buffer; tag: Buffer; data: Buffer };
 
 export function deriveBackupKey(passphrase: string | Buffer, salt: Buffer): Promise<Buffer> {
@@ -45,7 +46,7 @@ export function validateBackupEntries(value: unknown): PasswordEntry[] {
 export function encodeBackupV1(entries: PasswordEntry[], key: Buffer, salt: Buffer): string {
   return encodeBackupVersion(entries, key, salt, 1);
 }
-export function encodeBackupVersion(entries: readonly unknown[], key: Buffer, salt: Buffer, version: 1 | 2): string {
+export function encodeBackupVersion(entries: readonly unknown[], key: Buffer, salt: Buffer, version: BackupVersion): string {
   if (entries.length > INPUT_LIMITS.entries) throw new HttpError(400, "バックアップは10000件まで対応しています");
   const plaintext = Buffer.from(JSON.stringify({ version, entries }));
   try {
@@ -61,7 +62,7 @@ export function encodeBackupVersion(entries: readonly unknown[], key: Buffer, sa
 export function parseBackupV1(content: string): BackupEnvelopeV1 {
   return parseBackupVersion(content, 1);
 }
-export function parseBackupVersion(content: string, version: 1 | 2): BackupEnvelopeV1 {
+export function parseBackupVersion(content: string, version: BackupVersion): BackupEnvelopeV1 {
   try {
     if (typeof content !== "string" || Buffer.byteLength(content) > INPUT_LIMITS.backupFileBytes) throw new Error("oversized file");
     const envelope = parseRecord(JSON.parse(content), ["format", "version", "kdf", "cipher", "salt", "iv", "tag", "data"]);
@@ -76,7 +77,7 @@ export function decodeBackupV1(envelope: BackupEnvelopeV1, key: Buffer): Passwor
   try { return validateBackupEntries(decodeBackupVersion(envelope, key, 1)); }
   catch { throw new HttpError(400, "パスフレーズが違うか、バックアップファイルが破損しています"); }
 }
-export function decodeBackupVersion(envelope: BackupEnvelopeV1, key: Buffer, version: 1 | 2): unknown {
+export function decodeBackupVersion(envelope: BackupEnvelopeV1, key: Buffer, version: BackupVersion): unknown {
   let plaintext: Buffer | undefined, partial: Buffer | undefined, tail: Buffer | undefined;
   try {
     const decipher = createDecipheriv("aes-256-gcm", key, envelope.iv, { authTagLength: 16 });

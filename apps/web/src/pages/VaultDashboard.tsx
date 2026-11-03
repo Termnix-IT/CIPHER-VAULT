@@ -36,7 +36,7 @@ type VaultDashboardProps = {
 };
 
 const UNGROUPED = "グループなし";
-const TYPE_FILTERS: { type: VaultEntryType; label: string }[] = [{ type: "login", label: "ログイン" }, { type: "apiKey", label: "APIキー" }, { type: "creditCard", label: "カード" }];
+const TYPE_FILTERS: { type: VaultEntryType; label: string }[] = [{ type: "login", label: "ログイン" }, { type: "apiKey", label: "APIキー" }, { type: "creditCard", label: "カード" }, { type: "financial", label: "銀行/証券" }];
 const KANA_ROWS = ["あ", "か", "さ", "た", "な", "は", "ま", "や", "ら", "わ"];
 const DAY_MS = 24 * 60 * 60 * 1000;
 type SortOrder = "name" | "updated";
@@ -66,7 +66,7 @@ function sections(items: VaultEntrySummary[], label: (entry: VaultEntrySummary) 
 }
 
 function entrySubtitle(entry: VaultEntrySummary) {
-  return entry.type === "creditCard" ? `•••• ${entry.cardLast4}` : entry.type === "apiKey" ? "APIキー" : entry.loginId;
+  return entry.type === "creditCard" ? `•••• ${entry.cardLast4}` : entry.type === "apiKey" || entry.type === "financial" ? entryTypeLabel(entry.type) : entry.loginId;
 }
 
 export function VaultDashboard(props: VaultDashboardProps) {

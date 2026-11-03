@@ -2,9 +2,9 @@ import type { PasswordEntry, VaultEntry } from "@password-manager/shared/types";
 import { HttpError } from "../lib/errors.js";
 import { INPUT_LIMITS } from "../lib/input-validation.js";
 import { validateAdditionalEntry } from "../lib/vault-entry-validation.js";
-import { decodeBackupVersion, encodeBackupVersion, parseBackupVersion, validateBackupEntries, type BackupEnvelopeV1 } from "./backup-v1.js";
+import { decodeBackupVersion, encodeBackupVersion, parseBackupVersion, validateBackupEntries, type BackupEnvelopeV1, type BackupVersion } from "./backup-v1.js";
 
-export type VaultBackupEnvelope = BackupEnvelopeV1 & { version: 1 | 2 };
+export type VaultBackupEnvelope = BackupEnvelopeV1 & { version: BackupVersion };
 export function validateVaultEntries(input: unknown): VaultEntry[] {
   if (!Array.isArray(input) || input.length > INPUT_LIMITS.entries) throw new HttpError(400, "バックアップの項目が正しくありません");
   const ids = new Set<string>();
@@ -19,19 +19,21 @@ export function validateVaultEntries(input: unknown): VaultEntry[] {
 }
 export function encodeVaultBackup(entries: VaultEntry[], key: Buffer, salt: Buffer): string {
   validateVaultEntries(entries);
-  return encodeBackupVersion(entries, key, salt, entries.some(entry => entry.type === "apiKey" || entry.type === "creditCard") ? 2 : 1);
+  // The lowest version that can hold these entries, so an older app reports an unsupported file instead of a wrong passphrase.
+  const version = entries.some(entry => entry.type === "financial") ? 3 : entries.some(entry => entry.type === "apiKey" || entry.type === "creditCard") ? 2 : 1;
+  return encodeBackupVersion(entries, key, salt, version);
 }
 export function parseVaultBackup(content: string): VaultBackupEnvelope {
   try {
     if (typeof content !== "string" || Buffer.byteLength(content) > INPUT_LIMITS.backupFileBytes) throw new Error();
     const version: unknown = JSON.parse(content)?.version;
-    if (version !== 1 && version !== 2) throw new Error();
+    if (version !== 1 && version !== 2 && version !== 3) throw new Error();
     return { ...parseBackupVersion(content, version), version };
   } catch { throw new HttpError(400, "未対応または破損したバックアップファイルです"); }
 }
 export function decodeVaultBackup(envelope: VaultBackupEnvelope, key: Buffer): VaultEntry[] {
   try {
-    if (envelope.version !== 1 && envelope.version !== 2) throw new Error();
+    if (envelope.version !== 1 && envelope.version !== 2 && envelope.version !== 3) throw new Error();
     const entries = decodeBackupVersion(envelope, key, envelope.version);
     return envelope.version === 1 ? validateBackupEntries(entries) as PasswordEntry[] : validateVaultEntries(entries);
   } catch { throw new HttpError(400, "パスフレーズが違うか、バックアップファイルが破損しています"); }

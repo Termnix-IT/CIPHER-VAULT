@@ -26,7 +26,7 @@ export type PasswordEntryUpsertPayload = {
   group?: string;
 };
 
-export type VaultEntryType = "login" | "apiKey" | "creditCard";
+export type VaultEntryType = "login" | "apiKey" | "creditCard" | "financial";
 type AdditionalEntrySummary = Omit<PasswordEntrySummary, "type" | "loginId"> & { loginId?: never };
 type AdditionalEntry = Omit<PasswordEntry, "type" | "loginId" | "password" | "passwordChangedAt"> & {
   loginId?: never; password?: never; passwordChangedAt?: never;
@@ -40,12 +40,18 @@ export type CreditCardEntry = AdditionalEntry & {
   type: "creditCard";
   card: { number: string; cardholder: string; expiryMonth: string | null; securityCode: string };
 };
-export type VaultEntry = PasswordEntry | ApiKeyEntry | CreditCardEntry;
+export type FinancialExtraSecret = { label: string; value: string };
+export type FinancialEntry = AdditionalEntry & {
+  type: "financial";
+  financial: { loginId: string; loginPassword: string; tradingPassword: string; extraSecrets: FinancialExtraSecret[] };
+};
+export type VaultEntry = PasswordEntry | ApiKeyEntry | CreditCardEntry | FinancialEntry;
 export type VaultEntrySummary = PasswordEntrySummary | (AdditionalEntrySummary & { type: "apiKey" }) |
-  (AdditionalEntrySummary & { type: "creditCard"; cardLast4: string });
+  (AdditionalEntrySummary & { type: "creditCard"; cardLast4: string }) | (AdditionalEntrySummary & { type: "financial" });
 export type VaultEntryUpsertPayload = PasswordEntryUpsertPayload |
   (AdditionalEntryPayload & { type: "apiKey"; apiKey: { key: string; keyId?: string; expiresOn?: string } }) |
-  (AdditionalEntryPayload & { type: "creditCard"; card: { number: string; cardholder?: string; expiryMonth?: string; securityCode?: string } });
+  (AdditionalEntryPayload & { type: "creditCard"; card: { number: string; cardholder?: string; expiryMonth?: string; securityCode?: string } }) |
+  (AdditionalEntryPayload & { type: "financial"; financial: { loginId: string; loginPassword: string; tradingPassword?: string; extraSecrets?: FinancialExtraSecret[] } });
 
 export type PasswordGenerationOptions = {
   length?: number;

@@ -22,7 +22,7 @@ export async function verifyTypedBackupRecovery(content: string, passphrase: Buf
   let success = false;
   try {
     active(); const envelope = parseVaultBackup(content);
-    if (envelope.version !== 2) throw new LegacyPreflightError("BACKUP_MISMATCH");
+    if (envelope.version === 1) throw new LegacyPreflightError("BACKUP_MISMATCH");
     backupKey = await deriveBackupKey(passphrase, envelope.salt); active();
     entries = decodeVaultBackup(envelope, backupKey);
     scratchKey = createRootKey(); password = randomBytes(32);

@@ -144,7 +144,7 @@ function decodeUtf8(value: Buffer) {
 export function validateEntryPlaintext(plaintext: Buffer, expectedId: string) {
   try {
     const decoded = JSON.parse(decodeUtf8(plaintext));
-    if (decoded?.type === "apiKey" || decoded?.type === "creditCard") { validateAdditionalEntry(decoded, expectedId); return; }
+    if (decoded?.type === "apiKey" || decoded?.type === "creditCard" || decoded?.type === "financial") { validateAdditionalEntry(decoded, expectedId); return; }
     const value = record(decoded, ["id", "serviceName", "loginId", "password", "notes", "url", "tags", "group", "createdAt", "updatedAt", "passwordChangedAt"]);
     if (value.id !== expectedId) invalid();
     for (const field of ["serviceName", "loginId", "password", "notes", "url"]) if (!unicodeText(value[field])) invalid();

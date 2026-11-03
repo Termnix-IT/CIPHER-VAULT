@@ -22,6 +22,9 @@ const root = fs.mkdtempSync(path.join(fs.realpathSync(tmpdir()), "cipher-vault-i
 const secret = "  synthetic-api-secret-🔑\n", code = "007", number = "4111111111111111", passphrase = compatibility.backupV1.passphrase;
 const api = () => ({ type: "apiKey", serviceName: "Synthetic API", url: "https://user:synthetic@example.test/path?private=canary", apiKey: { key: secret, keyId: "private-id-canary", expiresOn: "2029-12-31" }, tags: ["api"], group: "Synthetic" });
 const card = () => ({ type: "creditCard", serviceName: "Synthetic Card", card: { number: "4111-1111 1111 1111", cardholder: "SYNTHETIC OWNER", expiryMonth: "2029-12", securityCode: code } });
+const loginSecret = "  synthetic-bank-login-🔑 ", tradingSecret = " synthetic-bank-trading ", extraSecret = " synthetic-bank-extra ";
+const bank = () => ({ type: "financial", serviceName: "Synthetic Bank", url: "https://bank.example.test/", financial: { loginId: " private-contract-canary ", loginPassword: loginSecret, tradingPassword: tradingSecret, extraSecrets: [{ label: " 第2暗証番号 ", value: extraSecret }] } });
+const schemaVersion = () => { const db = new Database(getVaultStoragePath(), { readonly: true }); try { return db.pragma("user_version", { simple: true }); } finally { db.close(); } };
 let sequence = 0;
 before(async () => { await createMigratedFixture(base); });
 async function open() { const dir = path.join(root, `case-${++sequence}`); fs.cpSync(base, dir, { recursive: true }); maintenance.openApplicationVault({ dataDirectory: dir }); await vault.unlockVault({ masterPassword: v2Password }); return dir; }
@@ -51,6 +54,42 @@ test("typed CRUD encrypts every field, keeps credentials exact, redacts summarie
   entries.deleteEntry(key.id); assert.throws(() => entries.getEntryById(key.id), { statusCode: 404 });
 });
 
+test("financial CRUD keeps each secret exact, redacts summaries and raises the old-app marker for good", async () => {
+  await open(); assert.equal(schemaVersion(), 1);
+  const created = await entries.createEntry(bank());
+  assert.deepEqual(created.financial, { loginId: "private-contract-canary", loginPassword: loginSecret, tradingPassword: tradingSecret, extraSecrets: [{ label: "第2暗証番号", value: extraSecret }] });
+  assert.equal(Object.hasOwn(created, "loginId"), false); assert.equal(Object.hasOwn(created, "password"), false); assert.equal(Object.hasOwn(created, "passwordChangedAt"), false);
+  assert.equal(schemaVersion(), 3);
+  const list = entries.listEntries().items, summary = list.find(item => item.id === created.id);
+  assert.deepEqual(Object.keys(summary).sort(), ["group", "id", "serviceName", "tags", "type", "updatedAt"]); assert.equal(summary.type, "financial");
+  for (const value of [loginSecret, tradingSecret, extraSecret, "private-contract-canary", "第2暗証番号"]) assert.equal(JSON.stringify(list).includes(value), false);
+  const bytes = fs.readFileSync(getVaultStoragePath());
+  for (const value of [loginSecret, tradingSecret, extraSecret, "private-contract-canary", "第2暗証番号", "Synthetic Bank"]) assert.equal(bytes.includes(Buffer.from(value)), false);
+  const updated = await entries.updateEntry(created.id, { ...bank(), financial: { loginId: "changed", loginPassword: "replacement-exact" } });
+  assert.deepEqual(updated.financial, { loginId: "changed", loginPassword: "replacement-exact", tradingPassword: "", extraSecrets: [] });
+  await assert.rejects(entries.updateEntry(created.id, card()), { statusCode: 400 }); await assert.rejects(entries.updateEntry(created.id, { serviceName: "x", loginId: "x", password: "x" }), { statusCode: 400 });
+  // A lesser kind saved afterwards must not reopen the vault to apps that cannot read the financial entry.
+  await entries.createEntry(api()); assert.equal(schemaVersion(), 3);
+  await entries.createEntry({ serviceName: "Synthetic Login", loginId: "login", password: "login-secret" }); assert.equal(schemaVersion(), 3);
+  vault.lockVault(); await vault.unlockVault({ masterPassword: v2Password });
+  assert.equal(entries.getEntryById(created.id).financial.loginPassword, "replacement-exact");
+  entries.deleteEntry(created.id); assert.equal(schemaVersion(), 3);
+});
+
+test("financial input is rejected before nonce reservation", async () => {
+  await open(); const beforeUses = usage(); let touched = false;
+  const financial = bank().financial, withFinancial = patch => ({ ...bank(), financial: { ...financial, ...patch } });
+  const accessor = Object.defineProperty({ label: "x" }, "value", { enumerable: true, get() { touched = true; return "x"; } });
+  const extras = count => Array.from({ length: count }, (_value, index) => ({ label: `extra-${index}`, value: "x" }));
+  const cases = [{ ...bank(), password: "private" }, { ...bank(), financial: undefined }, withFinancial({ pin: "1234" }), withFinancial({ loginId: "  " }), withFinancial({ loginPassword: "" }),
+    withFinancial({ loginPassword: "x".repeat(65537) }), withFinancial({ tradingPassword: 1234 }), withFinancial({ tradingPassword: "\ud800" }), withFinancial({ extraSecrets: {} }), withFinancial({ extraSecrets: extras(9) }),
+    withFinancial({ extraSecrets: [accessor] }), withFinancial({ extraSecrets: [{ label: "x" }] }), withFinancial({ extraSecrets: [{ label: "  ", value: "x" }] }), withFinancial({ extraSecrets: [{ label: "x", value: "" }] }),
+    withFinancial({ extraSecrets: [{ label: "x", value: "y", hint: "z" }] }), withFinancial({ extraSecrets: [{ label: "x", value: "y" }, { label: " x ", value: "z" }] }), withFinancial({ extraSecrets: [{ label: "取引パスワード", value: "y" }] })];
+  for (const value of cases) assert.throws(() => entries.createEntry(value));
+  assert.equal(touched, false); assert.equal(usage(), beforeUses); assert.equal(schemaVersion(), 1);
+  assert.equal(parseVaultEntryPayload(withFinancial({ extraSecrets: extras(8) })).financial.extraSecrets.length, 8);
+});
+
 test("invalid nested input is rejected before nonce reservation without evaluating accessors", async () => {
   await open(); const beforeUses = usage(); let touched = false;
   const accessor = Object.defineProperty({}, "key", { enumerable: true, get() { touched = true; return secret; } });
@@ -68,7 +107,7 @@ test("legacy storage refuses new kinds without altering existing records", async
   const dir = path.join(root, `legacy-${++sequence}`); maintenance.openApplicationVault({ dataDirectory: dir });
   await vault.setupVault({ masterPassword: "synthetic-legacy-master" });
   const file = getVaultStoragePath(), original = fs.readFileSync(file);
-  for (const payload of [api(), card()]) assert.throws(() => entries.createEntry(payload), { statusCode: 409 });
+  for (const payload of [api(), card(), bank()]) assert.throws(() => entries.createEntry(payload), { statusCode: 409 });
   assert.equal(entries.listEntries().items.length, 0); assert.deepEqual(fs.readFileSync(file), original);
 });
 
@@ -97,8 +136,30 @@ test("mixed encrypted backup roundtrips all kinds into a differently keyed vault
   assert.deepEqual(fs.readFileSync(getVaultStoragePath()), original); assert.equal(entries.listEntries().items.length, 0);
 });
 
+test("a backup with financial entries uses version 3, roundtrips exactly and keeps the marker on restore", async () => {
+  await open(); await entries.createEntry(api()); await entries.createEntry(bank());
+  const expected = entries.listEntries().items.map(item => entries.getEntryById(item.id));
+  const exported = await backup.exportBackup({ passphrase }); assert.equal(JSON.parse(exported.content).version, 3);
+  for (const value of [loginSecret, tradingSecret, extraSecret, "private-contract-canary"]) assert.equal(exported.content.includes(value), false);
+  const changedVersion = JSON.parse(exported.content); changedVersion.version = 2;
+  const badEnvelope = parseVaultBackup(JSON.stringify(changedVersion)), badKey = await deriveBackupKey(passphrase, badEnvelope.salt);
+  try { assert.throws(() => decodeVaultBackup(badEnvelope, badKey)); } finally { badKey.fill(0); }
+  maintenance.closeApplicationVault();
+  const target = path.join(root, `target-${++sequence}`); await createMigratedFixture(target); maintenance.openApplicationVault({ dataDirectory: target }); await vault.unlockVault({ masterPassword: v2Password });
+  for (const item of entries.listEntries().items) entries.deleteEntry(item.id);
+  await backup.restoreBackup({ passphrase, content: exported.content });
+  assert.deepEqual(new Map(entries.listEntries().items.map(item => [item.id, entries.getEntryById(item.id)])), new Map(expected.map(item => [item.id, item])));
+  assert.equal(schemaVersion(), 3);
+  maintenance.closeApplicationVault(); await maintenance.waitForVaultMaintenance();
+  const legacy = path.join(root, `legacy-restore-${++sequence}`); maintenance.openApplicationVault({ dataDirectory: legacy });
+  await vault.setupVault({ masterPassword: "synthetic-legacy-restore-master" });
+  const original = fs.readFileSync(getVaultStoragePath());
+  await assert.rejects(backup.restoreBackup({ passphrase, content: exported.content }), { statusCode: 409 });
+  assert.deepEqual(fs.readFileSync(getVaultStoragePath()), original); assert.equal(entries.listEntries().items.length, 0);
+});
+
 test("audit checks only logins in a mixed vault", async () => {
-  await open(); await entries.createEntry(api()); await entries.createEntry(card());
+  await open(); await entries.createEntry(api()); await entries.createEntry(card()); await entries.createEntry(bank());
   assert.equal((await auditVault()).total, compatibility.legacy.entries.length);
 });
 

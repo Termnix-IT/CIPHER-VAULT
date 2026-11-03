@@ -24,7 +24,9 @@ const additional = [
   { ...common, id: "00000000-0000-4000-8000-000000000002", type: "apiKey", serviceName: "Synthetic API",
     apiKey: { key: "  synthetic-api-secret  ", keyId: "synthetic-key-id", expiresOn: "2029-12-31" } },
   { ...common, id: "00000000-0000-4000-8000-000000000003", type: "creditCard", serviceName: "Synthetic Card",
-    card: { number: "4111111111111111", cardholder: "SYNTHETIC OWNER", expiryMonth: "2029-12", securityCode: "123" } }
+    card: { number: "4111111111111111", cardholder: "SYNTHETIC OWNER", expiryMonth: "2029-12", securityCode: "123" } },
+  { ...common, id: "00000000-0000-4000-8000-000000000004", type: "financial", serviceName: "Synthetic Bank",
+    financial: { loginId: "synthetic-contract", loginPassword: "  synthetic-login-secret  ", tradingPassword: "synthetic-trading-secret", extraSecrets: [{ label: "第2暗証番号", value: "synthetic-extra-secret" }] } }
 ];
 const expected = [...compatibility.legacy.entries, ...additional], asMap = entries => new Map(entries.map(entry => [entry.id, entry]));
 let context, sourceKey, sequence = 0; const sessions = [];
@@ -60,7 +62,7 @@ after(() => {
 test("mixed backups prove actual independently keyed v2 restore, preserve input ordering and clean cancelled scratch storage", async () => {
   const entries = [...expected].reverse(), salt = crypto.randomBytes(16), key = await deriveBackupKey(passphrase, salt); let content;
   try { content = encodeVaultBackup(entries, key, salt); } finally { key.fill(0); }
-  assert.equal(JSON.parse(content).version, 2);
+  assert.equal(JSON.parse(content).version, 3);
   await assert.rejects(verifyBackupRecovery(content, Buffer.from(passphrase), () => {}), { statusCode: 400 });
   const created = [], create = fs.mkdtempSync;
   mock.method(fs, "mkdtempSync", (...args) => { const directory = create(...args); if (path.basename(directory).startsWith("cipher-vault-typed-recovery-")) created.push(directory); return directory; });
@@ -73,12 +75,18 @@ test("mixed backups prove actual independently keyed v2 restore, preserve input 
   assert.equal(created.length, 2); assert.equal(fs.existsSync(created[1]), false);
 });
 
-test("mixed rekey preserves login, API and card fields and changes only the selected vault", async () => {
+test("a vault marked by a newer app is refused instead of being opened or repaired", () => {
+  const dir = fixture(), db = new Database(source(dir));
+  try { assert.equal(db.pragma("user_version", { simple: true }), 3); db.pragma("user_version = 4"); } finally { db.close(); }
+  assert.throws(() => openV2Store(source(dir), context), { code: "INVALID_STORE" });
+});
+
+test("mixed rekey preserves login, API, card and financial fields and changes only the selected vault", async () => {
   const dir = fixture(), before = hash(source(dir)), result = await replaceV2Vault(dir, context, input(), owner());
   assert.equal(hash(source(dir)), before); assert.deepEqual(asMap(await read(result.files.database, result.target, newPassword)), asMap(expected));
-  assert.equal(JSON.parse(fs.readFileSync(result.files.backup, "utf8")).version, 2);
-  assert.equal(JSON.parse(fs.readFileSync(result.files.targetBackup, "utf8")).version, 2);
-  const db = new Database(result.files.database, { readonly: true }); try { assert.equal(db.pragma("user_version", { simple: true }), 2); } finally { db.close(); }
+  assert.equal(JSON.parse(fs.readFileSync(result.files.backup, "utf8")).version, 3);
+  assert.equal(JSON.parse(fs.readFileSync(result.files.targetBackup, "utf8")).version, 3);
+  const db = new Database(result.files.database, { readonly: true }); try { assert.equal(db.pragma("user_version", { simple: true }), 3); } finally { db.close(); }
   await assert.rejects(read(result.files.database, result.target, v2Password), { code: "AUTHENTICATION_FAILED" });
 });
 

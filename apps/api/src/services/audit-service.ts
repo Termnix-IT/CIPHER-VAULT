@@ -23,7 +23,7 @@ export async function auditVault(): Promise<SecurityAudit> {
   if (busy) throw new HttpError(409, "監査の完了を待ってください");
   const session = getVaultSession();
   const now = Date.now();
-  const rows = isV2Vault() ? listEntries().items.filter(summary => summary.type !== "apiKey" && summary.type !== "creditCard").map(summary => {
+  const rows = isV2Vault() ? listEntries().items.filter(summary => summary.type !== "apiKey" && summary.type !== "creditCard" && summary.type !== "financial").map(summary => {
     const entry = getEntryById(summary.id) as PasswordEntry;
     return { id: entry.id, service_name: entry.serviceName, login_id: entry.loginId, encrypted_password: "",
       password: entry.password, url: entry.url, updated_at: entry.updatedAt, password_changed_at: entry.passwordChangedAt };

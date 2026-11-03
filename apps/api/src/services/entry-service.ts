@@ -202,11 +202,11 @@ export function deleteEntry(inputId: unknown) {
 function requireLegacyItem(input: unknown) {
   const descriptor = input && typeof input === "object" ? Object.getOwnPropertyDescriptor(input, "type") : undefined;
   if (descriptor && "value" in descriptor && descriptor.value !== undefined && descriptor.value !== "login")
-    throw new HttpError(409, "APIキー・カードの保存には新しい形式への移行が必要です。保管庫の管理から移行してください");
+    throw new HttpError(409, "APIキー・カード・銀行/証券の保存には新しい形式への移行が必要です。保管庫の管理から移行してください");
 }
 export function restoreEntriesIntoEmptyVault(entries: VaultEntry[]) {
   if (isV2Vault()) return restoreV2Entries(entries);
   const session = requireUnlockedVault();
-  if (entries.some(entry => entry.type === "apiKey" || entry.type === "creditCard")) throw new HttpError(409, "このバックアップの復元には新しい形式への移行が必要です");
+  if (entries.some(entry => entry.type === "apiKey" || entry.type === "creditCard" || entry.type === "financial")) throw new HttpError(409, "このバックアップの復元には新しい形式への移行が必要です");
   return restoreLegacyEntries(getDatabase(), entries as PasswordEntry[], encryptSecret, () => { requireUnlockedVault(session); });
 }

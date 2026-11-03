@@ -1,8 +1,12 @@
-import type { ApiKeyEntry, CreditCardEntry, VaultEntryUpsertPayload } from "@password-manager/shared/types";
+import type { ApiKeyEntry, CreditCardEntry, FinancialEntry, FinancialExtraSecret, VaultEntryUpsertPayload } from "@password-manager/shared/types";
 import { HttpError } from "./errors.js";
 import { INPUT_LIMITS, jsonSize, parseEntryPayload, parseRecord, text } from "./input-validation.js";
 
 const commonFields = ["serviceName", "notes", "url", "tags", "group"];
+const financialFields = ["loginId", "loginPassword", "tradingPassword", "extraSecrets"];
+// Extra secrets are identified by label on screen, so they must not collide with a fixed row's label.
+const fixedFinancialLabels = ["ログインID", "ログインパスワード", "取引パスワード", "URL"];
+const detailField = (type: unknown) => type === "apiKey" ? "apiKey" : type === "financial" ? "financial" : "card";
 function invalid(): never { throw new HttpError(400, "項目の形式が正しくありません"); }
 function string(value: unknown, label: string, limit: number) {
   const result = text(value, label, limit);
@@ -34,18 +38,40 @@ function common(input: Record<string, unknown>, stored: boolean) {
   }
   return { serviceName, notes, url, group, tags };
 }
+function extraSecrets(input: unknown): FinancialExtraSecret[] {
+  const raw = input ?? [];
+  if (!Array.isArray(raw) || raw.length > INPUT_LIMITS.financialExtraSecrets) invalid();
+  const labels = new Set(fixedFinancialLabels), result: FinancialExtraSecret[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const descriptor = Object.getOwnPropertyDescriptor(raw, String(i));
+    if (!descriptor || !("value" in descriptor)) invalid();
+    const item = parseRecord(descriptor.value, ["label", "value"]);
+    const label = string(item.label, "追加の秘密の名前", INPUT_LIMITS.financialLabelBytes).trim();
+    const value = string(item.value, "追加の秘密", INPUT_LIMITS.passwordBytes);
+    if (!label || !value.length) invalid();
+    if (labels.has(label)) throw new HttpError(400, `「${label}」は名前に使えないか、すでに使われています`);
+    labels.add(label); result.push({ label, value });
+  }
+  return result;
+}
 export function parseVaultEntryPayload(input: unknown, stored = false): VaultEntryUpsertPayload {
-  const value = parseRecord(input, [...commonFields, "loginId", "password", "type", "apiKey", "card"]);
+  const value = parseRecord(input, [...commonFields, "loginId", "password", "type", "apiKey", "card", "financial"]);
   if (value.type === undefined) return parseEntryPayload(input, stored ? "backup" : "write");
   if (value.type === "login") {
     const { type: _type, ...login } = parseRecord(input, [...commonFields, "loginId", "password", "type"]);
     return parseEntryPayload(login, stored ? "backup" : "write");
   }
-  if (value.type !== "apiKey" && value.type !== "creditCard") invalid();
-  const parsed = parseRecord(input, [...commonFields, "type", value.type === "apiKey" ? "apiKey" : "card"]);
+  if (value.type !== "apiKey" && value.type !== "creditCard" && value.type !== "financial") invalid();
+  const parsed = parseRecord(input, [...commonFields, "type", detailField(value.type)]);
   const metadata = common(parsed, stored);
   let result: VaultEntryUpsertPayload;
-  if (value.type === "apiKey") {
+  if (value.type === "financial") {
+    const financial = parseRecord(parsed.financial, financialFields);
+    const loginId = string(financial.loginId, "ログインID", INPUT_LIMITS.loginIdBytes);
+    const loginPassword = string(financial.loginPassword, "ログインパスワード", INPUT_LIMITS.passwordBytes);
+    if (!loginId.trim() || !loginPassword.length) invalid(); // Preserve the exact credentials; never trim or normalize them.
+    result = { ...metadata, type: "financial", financial: { loginId, loginPassword, tradingPassword: string(financial.tradingPassword ?? "", "取引パスワード", INPUT_LIMITS.passwordBytes), extraSecrets: extraSecrets(financial.extraSecrets) } };
+  } else if (value.type === "apiKey") {
     const apiKey = parseRecord(parsed.apiKey, ["key", "keyId", "expiresOn"]);
     const key = string(apiKey.key, "キー／トークン", INPUT_LIMITS.passwordBytes);
     if (!key.length) invalid(); // Preserve the exact credential; never trim or normalize it.
@@ -61,15 +87,23 @@ export function parseVaultEntryPayload(input: unknown, stored = false): VaultEnt
   jsonSize(result, stored ? INPUT_LIMITS.backupPlaintextBytes : INPUT_LIMITS.requestBytes);
   return result;
 }
-export function validateAdditionalEntry(input: unknown, expectedId?: string): ApiKeyEntry | CreditCardEntry {
-  const value = parseRecord(input, ["id", "type", ...commonFields, "createdAt", "updatedAt", "apiKey", "card"]);
-  if (value.type !== "apiKey" && value.type !== "creditCard") invalid();
-  parseRecord(input, ["id", "type", ...commonFields, "createdAt", "updatedAt", value.type === "apiKey" ? "apiKey" : "card"]);
+export function validateAdditionalEntry(input: unknown, expectedId?: string): ApiKeyEntry | CreditCardEntry | FinancialEntry {
+  const value = parseRecord(input, ["id", "type", ...commonFields, "createdAt", "updatedAt", "apiKey", "card", "financial"]);
+  if (value.type !== "apiKey" && value.type !== "creditCard" && value.type !== "financial") invalid();
+  parseRecord(input, ["id", "type", ...commonFields, "createdAt", "updatedAt", detailField(value.type)]);
   if (typeof value.id !== "string" || !/^[0-9a-f-]{36}$/i.test(value.id) || (expectedId !== undefined && value.id !== expectedId)) invalid();
   for (const field of ["serviceName", "notes", "url"]) if (typeof value[field] !== "string") invalid();
   if (!(value.group === null || typeof value.group === "string") || !Array.isArray(value.tags)) invalid();
   const validDate = (v: unknown): v is string => typeof v === "string" && Number.isFinite(Date.parse(v)) && new Date(v).toISOString() === v;
   if (!validDate(value.createdAt) || !validDate(value.updatedAt) || value.createdAt > value.updatedAt) invalid();
+  if (value.type === "financial") {
+    const financial = parseRecord(value.financial, financialFields);
+    for (const field of ["loginId", "loginPassword", "tradingPassword"]) if (typeof financial[field] !== "string") invalid();
+    if (!Array.isArray(financial.extraSecrets)) invalid();
+    const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...payload } = value;
+    parseVaultEntryPayload({ ...payload, group: value.group ?? "" }, true);
+    return input as FinancialEntry;
+  }
   const detail = value.type === "apiKey" ? parseRecord(value.apiKey, ["key", "keyId", "expiresOn"]) : parseRecord(value.card, ["number", "cardholder", "expiryMonth", "securityCode"]);
   const dateField = value.type === "apiKey" ? "expiresOn" : "expiryMonth";
   if (!(detail[dateField] === null || (typeof detail[dateField] === "string" && detail[dateField] !== ""))) invalid();

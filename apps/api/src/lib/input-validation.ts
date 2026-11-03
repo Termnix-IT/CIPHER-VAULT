@@ -9,6 +9,7 @@ export const INPUT_LIMITS = Object.freeze({
   serviceNameBytes: 1024, loginIdBytes: 4096, passwordBytes: 64 * 1024,
   notesBytes: 256 * 1024, urlBytes: 8192, groupBytes: 1024,
   tags: 100, tagBytes: 256, entries: 10000,
+  financialExtraSecrets: 8, financialLabelBytes: 256,
   backupFileBytes: 16 * 1024 * 1024, backupPlaintextBytes: 11 * 1024 * 1024
 });
 
