@@ -9,6 +9,7 @@ import { LockScreen } from "./pages/LockScreen";
 import { VaultDashboard, type CopyNotice } from "./pages/VaultDashboard";
 import { AppMenu } from "./components/AppMenu";
 import { VaultSessionChangedError } from "./lib/vault-client-session";
+import { applyDesignMode, readDesignMode, saveDesignMode, type DesignMode } from "./lib/design-mode";
 import { VaultMaintenance } from "./components/VaultMaintenance";
 import { LockIcon } from "./components/Icons";
 
@@ -38,6 +39,7 @@ export function App() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isEditingEntry, setIsEditingEntry] = useState(false);
   const [isGroupedView, setIsGroupedView] = useState(false);
+  const [designMode, setDesignMode] = useState<DesignMode>(readDesignMode);
   const statusRef = useRef<VaultStatus | null>(null);
   const maintenanceRequired = vaultStatus?.maintenance?.state !== undefined && vaultStatus.maintenance.state !== "ready";
   useEffect(() => { if (maintenanceRequired) setMaintenanceOpened(true); }, [maintenanceRequired]);
@@ -284,6 +286,12 @@ export function App() {
     }
   }
 
+  function handleDesignModeChange(mode: DesignMode) {
+    setDesignMode(mode);
+    applyDesignMode(mode);
+    saveDesignMode(mode);
+  }
+
   function handleOpenCreateForm() {
     if (isFormOpen || isCreatingEntry || isUpdatingEntry || isDeletingEntry || isLoadingEntryDetail) return;
     if (hasUnsavedChanges && !window.confirm("保存していない変更を破棄して、新しい項目を作りますか？")) return;
@@ -320,6 +328,8 @@ export function App() {
     onNewEntry={handleOpenCreateForm}
     onEditEntry={handleEditEntry}
     onGroupedViewChange={setIsGroupedView}
+    designMode={designMode}
+    onDesignModeChange={handleDesignModeChange}
     vaultFormat={vaultStatus?.maintenance?.format ?? "unknown"}
     onSelectEntry={handleSelectEntry}
     onCopy={handleCopyToClipboard}

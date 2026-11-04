@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { PasswordEntry, VaultEntry, VaultMaintenanceOperation, VaultMaintenanceState } from "@password-manager/shared/types";
+import type { DesignMode } from "../lib/design-mode";
 import { AppInfo } from "./AppInfo";
 import { VaultTools } from "./VaultTools";
 
@@ -15,6 +16,8 @@ type AppMenuProps = {
   isFormOpen: boolean;
   isEditingEntry: boolean;
   isGroupedView: boolean;
+  designMode: DesignMode;
+  onDesignModeChange: (mode: DesignMode) => void;
   vaultFormat: VaultMaintenanceState["format"];
   onRefresh: () => Promise<void>;
   onLock: () => Promise<void>;
@@ -100,7 +103,11 @@ export function AppMenu(props: AppMenuProps) {
             ])}
             {group("view", "表示", [
               { label: "すべて", disabled, selected: !props.isGroupedView, action: () => props.onGroupedViewChange(false) },
-              { label: "グループ別", disabled, selected: props.isGroupedView, action: () => props.onGroupedViewChange(true) }
+              { label: "グループ別", disabled, selected: props.isGroupedView, action: () => props.onGroupedViewChange(true) },
+              "separator",
+              // The design is not vault data, so it stays available on the lock screen.
+              { label: "シンプルデザイン", selected: props.designMode === "simple", action: () => props.onDesignModeChange("simple") },
+              { label: "ルミナスデザイン", selected: props.designMode === "luminous", action: () => props.onDesignModeChange("luminous") }
             ])}
             {group("tools", "ツール", [
               { label: "パスワードの点検", disabled: toolsDisabled, action: () => openTool("audit") },

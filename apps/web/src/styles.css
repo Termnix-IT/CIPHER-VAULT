@@ -42,6 +42,9 @@
   --radius: 3px;
   --radius-lg: 6px;
   --ease: cubic-bezier(.2, .75, .25, 1);
+  /* Matches the native caption buttons in desktop-main.ts, so it does not change with the design. */
+  --titlebar-bg: #121416;
+  --shell-bg: var(--bg);
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -131,7 +134,7 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 /* The unused area remains draggable; menu controls are excluded. */
 .app-titlebar {
   height: 38px; display: flex; padding: 0 148px 0 8px; flex-shrink: 0;
-  border-bottom: 1px solid var(--border); background: var(--bg);
+  border-bottom: 1px solid var(--border); background: var(--titlebar-bg);
   position: relative; z-index: 20; user-select: none; -webkit-app-region: drag;
 }
 .app-titlebar-spacer { flex: 1; min-width: 0; }
@@ -177,7 +180,7 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
   border-radius: var(--radius-lg); background: var(--raised); color: var(--accent);
 }
 .lock-mark svg { width: 24px; height: 24px; }
-.unlock-veil { position: fixed; z-index: 20; background: var(--bg); pointer-events: none; animation: unlock-fade 240ms var(--ease) 220ms both; }
+.unlock-veil { position: fixed; z-index: 20; background: var(--shell-bg); background-attachment: fixed; pointer-events: none; animation: unlock-fade 240ms var(--ease) 220ms both; }
 .unlock-veil .lock-mark { position: absolute; margin: 0; animation: unlock-grow 240ms var(--ease) 220ms both; }
 .unlock-veil .lock-mark path { animation: unlock-shackle 200ms var(--ease) both; }
 @keyframes unlock-shackle { to { transform: translateY(-3px); } }
@@ -478,6 +481,79 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .app-info-actions { display: flex; gap: 12px; flex-wrap: wrap; }
 .app-info-actions:empty { display: none; }
 .app-info-note { padding-top: 12px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-dim); }
+
+/* =============================
+   LUMINOUS DESIGN
+   Light stays on the backdrop, the selection and primary actions; text always sits on opaque panels.
+   The simple design is the base above, so this block only overrides it.
+   ============================= */
+@property --flow-1 { syntax: "<color>"; inherits: true; initial-value: #6bb3ad; }
+@property --flow-2 { syntax: "<color>"; inherits: true; initial-value: #8fd0e0; }
+/* The change is too slow to see between steps, so 5 updates a second look smooth and avoid repainting every frame. */
+@keyframes luminous-flow {
+  0%, 100% { --flow-1: #6bb3ad; --flow-2: #8fd0e0; }
+  33.333% { --flow-1: #8fd0e0; --flow-2: #b9c8f7; }
+  66.667% { --flow-1: #b9c8f7; --flow-2: #6bb3ad; }
+}
+:root[data-design="luminous"] {
+  animation: luminous-flow 60s steps(100) infinite;
+  --bg: #0d1014;
+  --surface: #151a1f;
+  --raised: #1c2228;
+  --hover: #232a31;
+  --selected: linear-gradient(90deg, color-mix(in srgb, var(--flow-1) 28%, transparent), color-mix(in srgb, var(--flow-2) 8%, transparent));
+  --selected-badge: rgba(107, 179, 173, .32);
+  --border: #262d34;
+  --border-strong: #36404a;
+  --text: #e8ecef;
+  --text-dim: #a3adb6;
+  --text-faint: #7a848e;
+  --accent-hover: #8fd0e0;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --accent-gradient: linear-gradient(100deg, var(--flow-1), var(--flow-2));
+  --glow: 0 2px 12px color-mix(in srgb, var(--flow-1) 35%, transparent);
+  --shell-bg:
+    radial-gradient(circle at 85% 0, color-mix(in srgb, var(--flow-1) 20%, transparent), transparent 55%),
+    radial-gradient(circle at 10% 100%, color-mix(in srgb, var(--flow-2) 10%, transparent), transparent 50%),
+    #0d1014;
+}
+[data-design="luminous"] .app-shell { background: var(--shell-bg); }
+
+[data-design="luminous"] .btn--primary { background: var(--accent-gradient); border-color: transparent; box-shadow: var(--glow); }
+[data-design="luminous"] .btn--primary:hover:not(:disabled) { background: var(--accent-gradient); border-color: transparent; filter: brightness(1.08); }
+[data-design="luminous"] .field-input:focus,
+[data-design="luminous"] .form-input:focus,
+[data-design="luminous"] .form-textarea:focus,
+[data-design="luminous"] .search-box:focus-within { box-shadow: 0 0 0 3px var(--accent-soft); }
+[data-design="luminous"] .list-filter button { border-radius: 12px; }
+[data-design="luminous"] .list-filter button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+[data-design="luminous"] .tag-chip { border-radius: 12px; }
+
+[data-design="luminous"] .cipher-dashboard { gap: 8px; padding: 8px; }
+[data-design="luminous"] .vault-sidebar,
+[data-design="luminous"] .vault-detail { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+/* Panels nearly cover the backdrop on this screen, so the detail panel carries its own light. */
+[data-design="luminous"] .vault-detail {
+  background:
+    radial-gradient(circle at 100% 0, color-mix(in srgb, var(--flow-1) 12%, transparent), transparent 50%),
+    radial-gradient(circle at 0 100%, color-mix(in srgb, var(--flow-2) 6%, transparent), transparent 45%),
+    var(--surface);
+}
+[data-design="luminous"] .entry-row { width: calc(100% - 12px); margin-inline: 6px; border-radius: var(--radius); }
+[data-design="luminous"] .entry-highlight { left: 6px; right: 6px; border-radius: var(--radius); box-shadow: inset 2px 0 0 var(--flow-1); }
+[data-design="luminous"] .entry-list-content:not(.entry-list-content--highlighted) .entry-row--active { box-shadow: inset 2px 0 0 var(--flow-1); }
+
+[data-design="luminous"] .lock-panel { border-radius: 16px; box-shadow: 0 16px 48px rgba(0, 0, 0, .45), 0 0 48px rgba(107, 179, 173, .08); }
+[data-design="luminous"] .lock-mark { background: var(--accent-soft); }
+[data-design="luminous"] .app-menu-popup,
+[data-design="luminous"] .toast { border-radius: var(--radius-lg); }
+[data-design="luminous"] .app-menu-item { border-radius: var(--radius); }
+[data-design="luminous"] .vault-tool-dialog,
+[data-design="luminous"] .app-info-dialog { border-radius: 16px; }
+[data-design="luminous"] .audit-urgent button,
+[data-design="luminous"] .file-drop,
+[data-design="luminous"] .entry-migration-notice { border-radius: var(--radius-lg); }
 
 /* =============================
    NARROW WINDOWS
