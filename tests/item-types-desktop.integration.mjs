@@ -200,6 +200,8 @@ async function run() {
       const entryGroup = async id => (await ipc("fetchEntries")).items.find(entry => entry.id === id).group;
       const pickByName = name => evaluate(`[...document.querySelectorAll('.group-pick')].find(row=>row.querySelector('.group-pick-name').textContent===${JSON.stringify(name)}).querySelector('input').click()`);
 
+      // A hidden window produces no frames, so a closed <dialog> never receives its close event and stays mounted.
+      window.showInactive();
       await select(card.id);
       await click(".sidebar-group-add"); await waitFor("!!document.querySelector('.group-dialog[open]')");
       assert.equal(await evaluate("document.querySelector('.group-dialog button[type=submit]').disabled"), true);
@@ -292,6 +294,7 @@ async function run() {
       await waitFor(`!document.querySelector(${JSON.stringify(rowName(secondDelete.id))})&&!document.querySelector('.entry-view-fields')&&!!document.querySelector('.cipher-dashboard[aria-busy=false]')`);
       assert.equal((await ipc("fetchEntries")).items.some(entry => entry.id === secondDelete.id), false);
       await select(card.id);
+      window.hide();
       console.log("PASS actual group dialog, right-click menu, unsaved-edit guard and red delete button");
 
       // A secret does not become searchable just because its detail was previously loaded.
