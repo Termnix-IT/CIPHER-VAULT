@@ -89,19 +89,19 @@ export function VaultMaintenance({ status, requested, opened, onClose }: { statu
     <header className="vault-tool-heading"><h2 id="maintenance-title">{titles[operation]}</h2>
       {!required && !processing && <button className="icon-btn" type="button" aria-label="閉じる" onClick={close}><CloseIcon /></button>}</header>
     <div className="dialog-body">
-      {unavailable ? <p role="alert">復旧に必要な情報が見つかりません。アプリを終了し、保管庫のファイルはそのまま残してください。</p>
+      {unavailable ? <p role="alert" className="maintenance-lead">復旧に必要な情報が見つかりません。アプリを終了し、保管庫のファイルはそのまま残してください。</p>
         : processing ? <div role="status" className="maintenance-progress"><span className="spinner" aria-hidden="true" />変更しています。終わるまで閉じずにお待ちください。</div>
         : lockedResult ? (message ? null : <p className="maintenance-lead">続けるには、閉じて保管庫を開き直してください。</p>)
         : <form id="maintenance-form" ref={form} onSubmit={event => void submit(event)}>
           <p className="maintenance-lead">{leads[operation]}</p>
           <div className="maintenance-fields">
-            <label className="vault-tool-field maintenance-wide">{recover ? "変更前のマスターパスワード" : "今のマスターパスワード"}
+            <label className="vault-tool-field">{recover ? "変更前のマスターパスワード" : "今のマスターパスワード"}
               <input ref={firstInput} type="password" autoComplete="current-password" maxLength={1048576} value={fields.master} onChange={e => setFields({ ...fields, master: e.target.value })} /></label>
             <label className="vault-tool-field">{recover ? "変更時に決めたマスターパスワード" : "新しいマスターパスワード"}
               <input type="password" autoComplete="new-password" minLength={12} maxLength={1048576} required placeholder="12文字以上" value={fields.next} onChange={e => setFields({ ...fields, next: e.target.value })} /></label>
             <label className="vault-tool-field">もう一度入力
               <input type="password" autoComplete="new-password" minLength={12} maxLength={1048576} required value={fields.nextConfirm} onChange={e => setFields({ ...fields, nextConfirm: e.target.value })} /></label>
-            <label className={`vault-tool-field ${recover ? "maintenance-wide" : ""}`}>復旧用パスワード
+            <label className="vault-tool-field">復旧用パスワード
               <input type="password" autoComplete={recover ? "off" : "new-password"} minLength={12} maxLength={1024} required placeholder={recover ? undefined : "12文字以上"} value={fields.backup} onChange={e => setFields({ ...fields, backup: e.target.value })} /></label>
             {!recover && <label className="vault-tool-field">もう一度入力
               <input type="password" autoComplete="new-password" minLength={12} maxLength={1024} required value={fields.backupConfirm} onChange={e => setFields({ ...fields, backupConfirm: e.target.value })} /></label>}

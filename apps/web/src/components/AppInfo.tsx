@@ -42,16 +42,25 @@ export function AppInfo({ hasUnsavedChanges, isSaving, renderTrigger, onClose }:
   return <>
     {renderTrigger ? renderTrigger(open) : <button className="btn" onClick={open}>バージョンと更新</button>}
     <dialog className="app-info-dialog" ref={dialogRef} aria-labelledby="app-info-title" onClose={onClose}>
-      <div className="app-info-heading">
-        <img src="./icon.png" alt="" width="64" height="64" />
-        <div><h2 id="app-info-title">CIPHER VAULT</h2>{state && <p>バージョン {state.currentVersion}</p>}</div>
+      <header className="vault-tool-heading">
+        <h2 id="app-info-title">バージョンと更新</h2>
         <button className="icon-btn" type="button" aria-label="閉じる" onClick={close}><CloseIcon /></button>
-      </div>
-      <div className="app-info-update" aria-live="polite">
-        {stateText && <p className="app-info-state">{stateText}</p>}
-        {status === "downloading" && <><progress aria-label="ダウンロードの進み具合" max="100" value={state?.progress ?? 0} /><p className="form-notice">ダウンロード中 {Math.floor(state?.progress ?? 0)}%</p></>}
+      </header>
+      <div className="dialog-body app-info-update" aria-live="polite">
+        <dl>
+          <div className="tool-row"><dt>アプリ</dt><dd>CIPHER VAULT</dd></div>
+          {state && <div className="tool-row"><dt>バージョン</dt><dd className="mono">{state.currentVersion}</dd></div>}
+          {stateText && <div className="tool-row"><dt>更新</dt><dd>{stateText}</dd></div>}
+          {status === "downloading" && <div className="tool-row"><dt>ダウンロード</dt><dd className="app-info-progress">
+            <progress aria-label="ダウンロードの進み具合" max="100" value={state?.progress ?? 0} /><span className="mono">{Math.floor(state?.progress ?? 0)}%</span>
+          </dd></div>}
+        </dl>
         {releaseNotes && <details><summary>変更内容</summary><pre>{releaseNotes}</pre></details>}
         {(error || state?.message) && <p className="form-error" role="alert">{error || state?.message}</p>}
+        {isSaving && status === "downloaded" && <p className="vault-tool-note">保存が終わると更新できます</p>}
+        <p className="vault-tool-note">更新の確認ではGitHubに接続します。保管庫の中身は送りません。</p>
+      </div>
+      <footer className="dialog-footer">
         <div className="app-info-actions">
           {api && status && ["idle", "current", "error"].includes(status) && <button className="btn" onClick={() => void run(api.checkForUpdates)}>更新を確認</button>}
           {api && status === "available" && <button className="btn btn--primary" onClick={() => void run(api.downloadUpdate)}>ダウンロード</button>}
@@ -63,9 +72,7 @@ export function AppInfo({ hasUnsavedChanges, isSaving, renderTrigger, onClose }:
           </>}
           {api && status === "unsupported" && <button className="btn" onClick={() => void run(api.openReleasePage)}>ダウンロードページを開く</button>}
         </div>
-        {isSaving && status === "downloaded" && <p className="form-notice">保存が終わると更新できます</p>}
-        <p className="app-info-note">更新の確認ではGitHubに接続します。保管庫の中身は送りません。</p>
-      </div>
+      </footer>
     </dialog>
   </>;
 }

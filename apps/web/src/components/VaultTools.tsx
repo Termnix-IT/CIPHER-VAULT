@@ -95,8 +95,12 @@ export function VaultTools({ entryCount, disabled, onRefresh, onSelect, renderTr
 
   const visibleItems = audit?.items.filter((item) => !filter || item.issues.includes(filter)) ?? [];
   const urgentCount = audit?.items.filter((item) => item.issues.some((issue) => URGENT.includes(issue))).length ?? 0;
-  const filterButton = (issue: AuditIssue, content: ReactNode) => <button key={issue} type="button" aria-pressed={filter === issue}
-    onClick={() => setFilter(filter === issue ? null : issue)}>{content}</button>;
+  const filterButton = (issue: AuditIssue) => <button key={issue} type="button" aria-pressed={filter === issue}
+    onClick={() => setFilter(filter === issue ? null : issue)}>
+    <span>{labels[issue]}</span><span className={`audit-count ${audit?.counts[issue] && URGENT.includes(issue) ? "audit-count--urgent" : ""}`}>{audit?.counts[issue]}</span>
+  </button>;
+  const auditSummary = !audit || audit.total === 0 ? ""
+    : urgentCount ? `${audit.total}件中 ${urgentCount}件に直したい点があります` : `${audit.total}件すべて、直したい点はありません`;
 
   return <>
     {renderTrigger ? renderTrigger(open) : <>
@@ -108,55 +112,48 @@ export function VaultTools({ entryCount, disabled, onRefresh, onSelect, renderTr
       onClose={() => { clearSecrets(); setAudit(null); onClose?.(); }}>
       <header className="vault-tool-heading">
         <h2 id="vault-tool-title">{panel === "audit" ? "パスワードの点検" : "バックアップ"}</h2>
+        {panel === "backup" && <div className="segmented dialog-tabs" role="tablist" aria-label="バックアップの操作">
+          <button type="button" role="tab" aria-selected={backupTab === "export"} disabled={busy} onClick={() => switchBackupTab("export")}>書き出す</button>
+          <button type="button" role="tab" aria-selected={backupTab === "restore"} disabled={busy} onClick={() => switchBackupTab("restore")}>読み込む</button>
+        </div>}
+        {panel === "audit" && <p className="audit-score"><strong>{audit?.score ?? "—"}</strong><small> / 100</small></p>}
         <button className="icon-btn" type="button" aria-label="閉じる" disabled={busy} onClick={() => dialog.current?.close()}><CloseIcon /></button>
       </header>
       {panel === "audit" ? <>
-        <div className="dialog-body">
-          <div className="audit-score">
-            <strong>{audit?.score ?? "—"}<small> / 100</small></strong>
-            <p>{!audit ? (busy ? "点検しています…" : "")
-              : audit.total === 0 ? "項目を保存すると点検できます"
-              : urgentCount ? `${audit.total}件中 ${urgentCount}件に直したい点があります` : `${audit.total}件すべて、直したい点はありません`}</p>
+        {audit && audit.total > 0 ? <div className="audit-panes">
+          <div className="audit-filters">
+            <button type="button" aria-pressed={filter === null} onClick={() => setFilter(null)}>
+              <span>すべて</span><span className="audit-count">{audit.items.length}</span>
+            </button>
+            <p className="audit-filter-label">直したほうがいい</p>
+            <div aria-label="直したほうがいい項目で絞り込み">{URGENT.map(filterButton)}</div>
+            <p className="audit-filter-label">余裕があれば見直す</p>
+            <div aria-label="見直し項目で絞り込み">{REVIEW.map(filterButton)}</div>
           </div>
-          {audit && audit.total > 0 && <>
-            <p className="dialog-section-label">直したほうがいい</p>
-            <div className="audit-urgent" aria-label="直したほうがいい項目で絞り込み">
-              {URGENT.map((issue) => filterButton(issue, <>
-                <span>{labels[issue]}</span><strong className={audit.counts[issue] ? "" : "audit-zero"}>{audit.counts[issue]}</strong>
-              </>))}
-            </div>
-            <p className="dialog-section-label">余裕があれば見直す</p>
-            <div className="audit-review" aria-label="見直し項目で絞り込み">
-              {REVIEW.map((issue) => filterButton(issue, <>{labels[issue]}<span>{audit.counts[issue]}</span></>))}
-            </div>
-            <div className="audit-results">
-              {visibleItems.map((item) => <div className="audit-row" key={item.id}>
-                <div><div>{item.serviceName}</div><p className="audit-reasons">{item.issues.map((issue) => labels[issue]).join(" · ")}</p></div>
-                <button className="btn btn--small" type="button" onClick={() => { dialog.current?.close(); void onSelect(item.id); }}>開く</button>
-              </div>)}
-              {visibleItems.length === 0 && <p className="audit-empty">{filter ? "当てはまる項目はありません" : "見直す項目はありません"}</p>}
-            </div>
+          <div className="audit-results">
+            {visibleItems.map((item) => <div className="audit-row" key={item.id}>
+              <div><div>{item.serviceName}</div><p className="audit-reasons">{item.issues.map((issue) => labels[issue]).join(" · ")}</p></div>
+              <button className="btn btn--small" type="button" onClick={() => { dialog.current?.close(); void onSelect(item.id); }}>開く</button>
+            </div>)}
+            {visibleItems.length === 0 && <p className="audit-empty">{filter ? "当てはまる項目はありません" : "見直す項目はありません"}</p>}
             <details className="vault-tool-details"><summary>スコアの決め方</summary>
               <p>推測されやすいパスワードや使い回しが多いほど、点数が下がります。</p>
               <p>1年以上変更していないパスワード、URLなし、1年以上更新していない項目は、点数に影響しません。</p>
               {audit.unknownPasswordAgeCount > 0 && <p>パスワードを変えた日がわからない項目が{audit.unknownPasswordAgeCount}件あります。次に変えた日から記録します。</p>}
               <p>流出したパスワードかどうかは確認していません。100点でも安全とは限りません。</p>
             </details>
-          </>}
+          </div>
+        </div> : <div className="dialog-body">
+          <p className="vault-tool-note">{busy ? "点検しています…" : audit ? "項目を保存すると点検できます" : ""}</p>
           {error && <p role="alert" className="form-error">{error}</p>}
-        </div>
+        </div>}
         <footer className="dialog-footer dialog-footer--split">
-          <span className="dialog-footer-meta">{audit ? `${new Date(audit.checkedAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} に点検` : ""}</span>
+          <span className="dialog-footer-meta">{audit ? `${new Date(audit.checkedAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} に点検${auditSummary && ` · ${auditSummary}`}` : ""}</span>
           <button className="btn" type="button" disabled={busy} onClick={() => void scan()}>もう一度点検</button>
         </footer>
       </> : <>
         <div className="dialog-body">
-          <div className="segmented dialog-tabs" role="tablist" aria-label="バックアップの操作">
-            <button type="button" role="tab" aria-selected={backupTab === "export"} disabled={busy} onClick={() => switchBackupTab("export")}>書き出す</button>
-            <button type="button" role="tab" aria-selected={backupTab === "restore"} disabled={busy} onClick={() => switchBackupTab("restore")}>読み込む</button>
-          </div>
           {backupTab === "export" ? <form id="backup-export" onSubmit={(event) => { event.preventDefault(); void saveBackup(); }}>
-            <p className="vault-tool-lead">すべての項目を、1つのファイルに暗号化して保存します。</p>
             <label className="vault-tool-field">バックアップ用パスワード
               <input type="password" autoComplete="new-password" minLength={12} maxLength={1024} required disabled={busy} placeholder="12文字以上"
                 value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label>
@@ -164,7 +161,7 @@ export function VaultTools({ entryCount, disabled, onRefresh, onSelect, renderTr
               <input type="password" autoComplete="new-password" maxLength={1024} required disabled={busy}
                 value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>
             <p className="vault-tool-note">読み込むときに必要です。ファイルとは別の場所に控えてください。</p>
-          </form> : entryCount > 0 ? <p className="vault-tool-lead">読み込めるのは、項目が1件もない保管庫だけです。</p>
+          </form> : entryCount > 0 ? <p className="vault-tool-note">読み込めるのは、項目が1件もない保管庫だけです。</p>
             : <form id="backup-restore" onSubmit={(event) => { event.preventDefault(); void restore(); }}>
               <label className="file-drop">
                 <FileIcon />{file ? file.name : ".cvault ファイルを選ぶ"}
@@ -178,11 +175,12 @@ export function VaultTools({ entryCount, disabled, onRefresh, onSelect, renderTr
           {message && <p role="status" className="vault-tool-message">{message}</p>}
           {error && <p role="alert" className="form-error">{error}</p>}
         </div>
-        {(backupTab === "export" || entryCount === 0) && <footer className="dialog-footer">
+        <footer className="dialog-footer dialog-footer--split">
+          <span className="dialog-footer-meta">{backupTab === "export" ? "すべての項目を、1つのファイルに暗号化して保存します" : ""}</span>
           {backupTab === "export"
             ? <button className="btn btn--primary" type="submit" form="backup-export" disabled={busy}>{entryCount}件を書き出す</button>
-            : <button className="btn btn--primary" type="submit" form="backup-restore" disabled={busy || !file || restorePassphrase.length < 12}>読み込む</button>}
-        </footer>}
+            : <button className="btn btn--primary" type="submit" form="backup-restore" disabled={busy || entryCount > 0 || !file || restorePassphrase.length < 12}>読み込む</button>}
+        </footer>
       </>}
     </dialog>
   </>;
