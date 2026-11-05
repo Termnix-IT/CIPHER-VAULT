@@ -218,3 +218,40 @@ fn v2_entry_reproduces_bytes_and_binds_identity_revision_and_purpose() {
     assert_eq!(open_v2_entry(&root, &envelope, vault, key_id, entry_id, revision + 1).unwrap_err(), CryptoError::ContextMismatch);
     assert_eq!(open_v2_entry(&[0u8; 32], &envelope, vault, key_id, entry_id, revision).unwrap_err(), CryptoError::Authentication);
 }
+
+#[test]
+fn legacy_sealing_reproduces_the_stored_bytes() {
+    let fixture = fixture();
+    let legacy = &fixture["legacy"];
+    let key = hex::decode(s(&legacy["keyHex"])).unwrap();
+    let mut compared = 0;
+    for row in legacy["rows"].as_array().unwrap() {
+        let entry = legacy["entries"].as_array().unwrap().iter().find(|entry| entry["id"] == row["id"]).unwrap();
+        for (payload, plaintext) in [(&row["encrypted_password"], &entry["password"]), (&row["encrypted_notes"], &entry["notes"])] {
+            let Some(payload) = payload.as_str() else { continue };
+            let iv = &decode_base64(payload, None).unwrap()[..12];
+            assert_eq!(seal_legacy_secret(&key, iv, s(plaintext).as_bytes()).unwrap(), payload);
+            compared += 1;
+        }
+    }
+    assert!(compared >= 2);
+}
+
+#[test]
+fn v2_sealing_reproduces_the_stored_bytes_and_opens_again() {
+    let fixture = fixture();
+    let v2 = &fixture["draftV2"];
+    let root = hex::decode(s(&v2["rootKeyHex"])).unwrap();
+    let (vault_id, key_id, entry_id) = (s(&v2["vaultId"]), s(&v2["keyId"]), s(&v2["entryId"]));
+    let revision = v2["revision"].as_u64().unwrap();
+    let plaintext = s(&v2["entryPlaintext"]).as_bytes();
+    let envelope = seal_v2_entry(&root, &b64(&v2["entryIv"]), plaintext, vault_id, key_id, entry_id, revision).unwrap();
+    let parsed: Value = serde_json::from_str(&envelope).unwrap();
+    assert_eq!(parsed["data"], v2["entryData"]);
+    assert_eq!(parsed["tag"], v2["entryTag"]);
+    assert_eq!(parsed["iv"], v2["entryIv"]);
+    assert_eq!(&*open_v2_entry(&root, &envelope, vault_id, key_id, entry_id, revision).unwrap(), plaintext);
+    // The revision is authenticated, so a replayed envelope cannot pass as a newer one.
+    let moved = envelope.replace(&format!("\"revision\":{revision}"), &format!("\"revision\":{}", revision + 1));
+    assert_eq!(open_v2_entry(&root, &moved, vault_id, key_id, entry_id, revision + 1), Err(CryptoError::Authentication));
+}

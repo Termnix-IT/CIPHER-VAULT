@@ -1,11 +1,14 @@
-//! Read-only Tauri prototype. It opens only the file named by CIPHER_VAULT_POC_DB and
-//! has no default location, so it cannot reach a real vault by accident.
+//! Tauri prototype. It opens only the file named by CIPHER_VAULT_POC_DB and has no default
+//! location, so it cannot reach a real vault by accident. It is read-only unless
+//! CIPHER_VAULT_POC_WRITE=1 is also set, and even then it refuses real data directories.
 //!
 //! The `e2e` feature exists for automated UI checks only. It keeps the debugging port available,
-//! replaces the clipboard with a fake one and reports events on stdout. Never distribute it.
+//! replaces the clipboard with a fake one, reports events on stdout and can crash on request.
+//! Never distribute it.
 
 mod clipboard;
 mod clock;
+mod entry_input;
 mod os_events;
 mod vault;
 #[cfg_attr(feature = "e2e", allow(dead_code))]
@@ -16,6 +19,7 @@ mod windows_clipboard;
 
 use clipboard::ExpiringClipboard;
 use os_events::{OsEvent, PowerGuard};
+use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::webview::NewWindowResponse;
@@ -24,6 +28,7 @@ use vault::{Vault, VaultStatus};
 use zeroize::Zeroizing;
 
 const DATABASE_VARIABLE: &str = "CIPHER_VAULT_POC_DB";
+const WRITE_VARIABLE: &str = "CIPHER_VAULT_POC_WRITE";
 const MAX_CLIPBOARD_BYTES: usize = 1024 * 1024;
 const WATCHDOG_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -145,6 +150,47 @@ async fn clipboard_write(core: State<'_, SharedCore>, session_id: String, value:
     .map_err(|_| "クリップボードへコピーできませんでした".to_string())?
 }
 
+/// Saving waits for the disk, so it must not run on the UI thread. The OS state is checked again at
+/// every step inside, so that a screen lock during a save stops it.
+async fn run_write(core: &SharedCore, action: impl FnOnce(&Vault, &dyn Fn() -> Result<(), String>) -> Result<Value, String> + Send + 'static) -> Result<Value, String> {
+    let core = Arc::clone(core);
+    tauri::async_runtime::spawn_blocking(move || action(&core.vault, &|| core.assert_available()))
+        .await
+        .map_err(|_| "保管庫の保存に失敗しました".to_string())?
+}
+
+// The inputs stay untyped here so that a wrong type gets the app's message, and so that a
+// deserialization error can never repeat a secret value back to the page.
+#[tauri::command]
+async fn entries_create(core: State<'_, SharedCore>, session_id: String, payload: Value) -> Result<Value, String> {
+    run_write(&core, move |vault, guard| vault.create_entry(&session_id, &payload, guard)).await
+}
+
+#[tauri::command]
+async fn entries_update(core: State<'_, SharedCore>, session_id: String, id: Value, payload: Value) -> Result<Value, String> {
+    run_write(&core, move |vault, guard| vault.update_entry(&session_id, &id, &payload, guard)).await
+}
+
+#[tauri::command]
+async fn entries_delete(core: State<'_, SharedCore>, session_id: String, id: Value) -> Result<Value, String> {
+    run_write(&core, move |vault, guard| vault.delete_entry(&session_id, &id, guard)).await
+}
+
+#[tauri::command]
+async fn entries_set_group(core: State<'_, SharedCore>, session_id: String, payload: Value) -> Result<Value, String> {
+    run_write(&core, move |vault, guard| vault.set_entries_group(&session_id, &payload, guard)).await
+}
+
+#[tauri::command]
+fn password_generate(core: State<'_, SharedCore>, session_id: String, options: Value) -> Result<Value, String> {
+    core.assert_available()?;
+    core.vault.require_unlocked(&session_id)?;
+    let result = entry_input::generate_password(&options)?;
+    core.assert_available()?;
+    core.vault.require_unlocked(&session_id)?;
+    Ok(result)
+}
+
 fn is_application_url(url: &Url) -> bool {
     matches!((url.scheme(), url.host_str()), ("http", Some("tauri.localhost")) | ("tauri", Some("localhost")))
 }
@@ -174,7 +220,9 @@ fn main() {
     let Some(path) = std::env::var_os(DATABASE_VARIABLE) else {
         fail_startup(&format!("Set {DATABASE_VARIABLE} to a COPY of a vault database. This prototype has no default location."));
     };
-    let vault = Vault::open(std::path::Path::new(&path)).unwrap_or_else(|message| fail_startup(&message));
+    let path = std::path::Path::new(&path);
+    let writable = std::env::var_os(WRITE_VARIABLE).is_some_and(|value| value == "1");
+    let vault = if writable { Vault::open_writable(path) } else { Vault::open(path) }.unwrap_or_else(|message| fail_startup(&message));
     let core: SharedCore = Arc::new(Core { vault, clipboard: ExpiringClipboard::new(clipboard_port()), power: PowerGuard::default() });
 
     let listener = Arc::clone(&core);
@@ -193,10 +241,13 @@ fn main() {
 
     let app = tauri::Builder::default()
         .manage(Arc::clone(&core))
-        .invoke_handler(tauri::generate_handler![vault_status, vault_unlock, vault_lock, vault_activity, entries_list, entries_get, clipboard_write])
+        .invoke_handler(tauri::generate_handler![
+            vault_status, vault_unlock, vault_lock, vault_activity, entries_list, entries_get, entries_create, entries_update, entries_delete, entries_set_group, password_generate, clipboard_write
+        ])
         .setup(|app| {
+            let title = if app.state::<SharedCore>().vault.is_writable() { "CIPHER VAULT (Tauri PoC / writable)" } else { "CIPHER VAULT (Tauri PoC / read-only)" };
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("CIPHER VAULT (Tauri PoC / read-only)")
+                .title(title)
                 .inner_size(880.0, 780.0)
                 .min_inner_size(780.0, 680.0)
                 .initialization_script(include_str!("desktop-api.js"))

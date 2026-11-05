@@ -1,8 +1,8 @@
 //! Verification-only reimplementation of the CIPHER VAULT crypto formats.
 //!
-//! This crate answers one question: can Rust read the data the TypeScript app
-//! has already written? It is not used by the application. It covers the byte
-//! formats only, not storage, sessions, nonce reservation or migration.
+//! This crate answers one question: can Rust read and write the data of the
+//! TypeScript app? Only the prototype uses it, never the application. It covers
+//! the byte formats only, not storage, sessions, nonce reservation or migration.
 
 use aes_gcm::aead::{Aead, KeyInit, Nonce, Payload};
 use aes_gcm::Aes256Gcm;
@@ -123,11 +123,33 @@ pub fn open(key: &[u8], iv: &[u8], tag: &[u8], ciphertext: &[u8], aad: &[u8]) ->
 /// Encrypts with a caller-chosen IV so tests can compare bytes with fixed vectors.
 /// Reusing an IV under one key breaks AES-GCM: real writers need the app's nonce reservation.
 pub fn seal_with_fixed_iv_for_test(key: &[u8], iv: &[u8], plaintext: &[u8], aad: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
+    seal(key, iv, plaintext, aad)
+}
+
+fn seal(key: &[u8], iv: &[u8], plaintext: &[u8], aad: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
     let mut sealed = cipher(key)?
         .encrypt(&nonce(iv)?, Payload { msg: plaintext, aad })
         .map_err(|_| CryptoError::Authentication)?;
     let tag = sealed.split_off(sealed.len() - TAG_BYTES);
     Ok((sealed, tag))
+}
+
+/// Legacy DB column layout. The caller supplies a fresh random IV for every call.
+pub fn seal_legacy_secret(key: &[u8], iv: &[u8], plaintext: &[u8]) -> Result<String> {
+    let (ciphertext, tag) = seal(key, iv, plaintext, b"")?;
+    Ok(STANDARD.encode([iv, &tag, &ciphertext].concat()))
+}
+
+/// Seals one v2 entry into its stored JSON envelope. The IV must already be durably reserved
+/// in `vault_nonces`: without that, a crash could lead to reusing it under the same key.
+pub fn seal_v2_entry(root: &[u8], iv: &[u8], plaintext: &[u8], vault_id: &str, key_id: &str, entry_id: &str, revision: u64) -> Result<String> {
+    let entry_key = derive_v2_purpose_key(root, vault_id, V2_ENTRY_INFO)?;
+    let (ciphertext, tag) = seal(&entry_key, iv, plaintext, &v2_entry_aad(vault_id, key_id, entry_id, revision))?;
+    Ok(json!({
+        "cryptoVersion": 2, "cipher": CIPHER, "vaultId": vault_id, "keyId": key_id, "entryId": entry_id, "revision": revision,
+        "iv": STANDARD.encode(iv), "tag": STANDARD.encode(tag), "data": STANDARD.encode(ciphertext)
+    })
+    .to_string())
 }
 
 /// Canonical Base64 only. Node's `Buffer.from(value, "base64")` also accepts malformed

@@ -3,13 +3,15 @@ name = "cipher-vault-tauri-poc"
 version = "0.0.0"
 edition = "2024"
 publish = false
-description = "Read-only prototype that runs the existing React UI on Tauri. Not a release of CIPHER VAULT."
+description = "Prototype that runs the existing React UI on Tauri. Not a release of CIPHER VAULT."
 
 [build-dependencies]
 tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 cipher-vault-crypto-compat = { path = "../rust-crypto-compat" }
+getrandom = "0.4"
 rusqlite = { version = "0.41", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -37,7 +39,7 @@ zeroize = { version = "1", features = ["serde"] }
 windows = { version = "0.62", features = ["Win32_Security", "Win32_System_StationsAndDesktops", "Win32_System_Threading"] }
 
 [features]
-# Automated UI checks only: debugging port, fake clipboard, events on stdout. Never distribute it.
+# Automated UI checks only: debugging port, fake clipboard, events on stdout, crash on request. Never distribute it.
 e2e = []
 
 [profile.dev]

@@ -1,5 +1,7 @@
-//! Read-only vault access for the prototype, mirroring apps/api/src/services for these paths only.
-//! It never writes, so a legacy raw verifier stays as it is instead of being upgraded on unlock.
+//! Vault access for the prototype, mirroring apps/api/src/services for these paths only. Writes are
+//! in `writes` and need write mode. Unlocking never writes, so a legacy raw verifier stays as it is.
+
+mod writes;
 
 use crate::clock::Stamp;
 use cipher_vault_crypto_compat::{self as crypto, CryptoError, Secret};
@@ -103,6 +105,9 @@ pub struct Vault {
     connection: Mutex<Connection>,
     session: Mutex<Session>,
     unlocking: AtomicBool,
+    writable: bool,
+    writing: AtomicBool,
+    faulted: AtomicBool,
 }
 
 fn storage_error<E>(_: E) -> String {
@@ -188,7 +193,19 @@ impl Vault {
         connection.pragma_update(None, "query_only", true).map_err(|_| "DBを読取専用で開けません")?;
         let application_id: i64 = connection.pragma_query_value(None, "application_id", |row| row.get(0)).map_err(|_| "DBを読み取れません")?;
         let format = if application_id == V2_APPLICATION_ID { inspect_v2(&connection)? } else { inspect_legacy(&connection)? };
-        Ok(Self { format, connection: Mutex::new(connection), session: Mutex::new(Session::new()), unlocking: AtomicBool::new(false) })
+        Ok(Self::assemble(format, connection, false))
+    }
+
+    fn assemble(format: Format, connection: Connection, writable: bool) -> Self {
+        Self { format, connection: Mutex::new(connection), session: Mutex::new(Session::new()), unlocking: AtomicBool::new(false), writable, writing: AtomicBool::new(false), faulted: AtomicBool::new(false) }
+    }
+
+    pub fn is_writable(&self) -> bool {
+        self.writable
+    }
+
+    fn require_healthy(&self) -> Result<(), String> {
+        if self.faulted.load(Ordering::SeqCst) { Err(writes::STORAGE_FAILED.into()) } else { Ok(()) }
     }
 
     pub fn status(&self) -> VaultStatus {
@@ -212,6 +229,7 @@ impl Vault {
 
     /// Runs `action` with the key, then rechecks that the session is still the same one.
     fn with_key<T>(&self, session_id: &str, action: impl FnOnce(&[u8]) -> Result<T, String>) -> Result<T, String> {
+        self.require_healthy()?;
         let key = {
             let mut session = self.session.lock().unwrap();
             session.expire(Stamp::now());
@@ -229,6 +247,7 @@ impl Vault {
         if password.is_empty() || password.len() > MAX_PASSWORD_BYTES {
             return Err("マスターパスワードの形式が正しくありません".into());
         }
+        self.require_healthy()?;
         self.require_generation(session_id)?;
         // One KDF at a time, and later requests are refused rather than queued with their passwords.
         if self.unlocking.swap(true, Ordering::SeqCst) {
@@ -422,10 +441,10 @@ mod tests {
     const SCHEMA: &str = include_str!("../../../apps/api/src/db/schema.sql");
     const FIXTURE: &str = include_str!("../../../tests/fixtures/crypto-compatibility.json");
 
-    struct TemporaryDatabase(PathBuf);
+    pub(super) struct TemporaryDatabase(pub(super) PathBuf);
 
     impl TemporaryDatabase {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             let directory = std::env::temp_dir().join(format!("cipher-vault-tauri-poc-{}", Uuid::new_v4()));
             std::fs::create_dir(&directory).unwrap();
             Self(directory.join("vault.db"))
@@ -440,15 +459,15 @@ mod tests {
         }
     }
 
-    fn fixture() -> Value {
+    pub(super) fn fixture() -> Value {
         serde_json::from_str(FIXTURE).unwrap()
     }
 
-    fn s(value: &Value) -> &str {
+    pub(super) fn s(value: &Value) -> &str {
         value.as_str().unwrap()
     }
 
-    fn legacy_database(hmac_verifier: bool, modern_columns: bool) -> (TemporaryDatabase, Value) {
+    pub(super) fn legacy_database(hmac_verifier: bool, modern_columns: bool) -> (TemporaryDatabase, Value) {
         let fixture = fixture();
         let legacy = fixture["legacy"].clone();
         let database = TemporaryDatabase::new();
