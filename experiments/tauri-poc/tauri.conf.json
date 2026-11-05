@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "CIPHER VAULT Tauri PoC",
+  "version": "0.0.0",
+  "identifier": "com.lugep.ciphervault.tauripoc",
+  "build": {
+    "frontendDist": "../../apps/web/dist"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "capabilities": [],
+      "freezePrototype": true,
+      "csp": "default-src 'none'; base-uri 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; worker-src 'none'; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": ["../../build/icon.ico"]
+  }
+}

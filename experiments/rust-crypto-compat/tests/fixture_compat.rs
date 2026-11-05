@@ -49,6 +49,12 @@ fn legacy_kdf_pins_salt_text_unicode_form_and_both_verifiers() {
 
     assert_eq!(legacy_verifier(&key).unwrap(), s(&legacy["verifier"]));
     assert_eq!(STANDARD.encode(&*key), s(&legacy["metadata"]["passwordVerifier"]));
+
+    assert!(verify_legacy_key(&key, s(&legacy["verifier"]), false));
+    assert!(verify_legacy_key(&key, s(&legacy["metadata"]["passwordVerifier"]), true));
+    assert!(!verify_legacy_key(&key, s(&legacy["metadata"]["passwordVerifier"]), false));
+    assert!(!verify_legacy_key(&nfc_key, s(&legacy["verifier"]), false));
+    assert!(!verify_legacy_key(&nfc_key, s(&legacy["metadata"]["passwordVerifier"]), true));
 }
 
 fn scrypt_with_decoded_salt(password: &str, salt_text: &str) -> Secret {

@@ -12,6 +12,7 @@ packages/shared/src/*.d.ts
 release/
 dist-desktop/
 target/
+experiments/tauri-poc/gen/
 docs/private/*
 !docs/private/README.md
 .claude/

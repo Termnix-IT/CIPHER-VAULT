@@ -50,7 +50,7 @@ WebはHTTP → サービス → SQLite、Electronはpreload → IPC → 同じ�
 
 個別ビルドは `build:shared` / `build:web` / `build:api` / `build:electron`。API監視起動は `npm --workspace apps/api run dev:watch`。
 
-`experiments/rust-crypto-compat/` はRust移行を判断するための検証専用crateで、アプリからは使わない。暗号形式を変更したときは `cargo test --manifest-path experiments/rust-crypto-compat/Cargo.toml` も確認する。
+`experiments/rust-crypto-compat/` はRust移行を判断するための検証専用crateで、アプリからは使わない。暗号形式を変更したときは `cargo test --manifest-path experiments/rust-crypto-compat/Cargo.toml` も確認する。`experiments/tauri-poc/` は同じ判断のための読取専用の試作で、配布しない。手順は [開発・配布手順](docs/開発・配布手順.md#変更に応じた検証) を参照する。
 
 ## 検証とデータ保護
 

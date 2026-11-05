@@ -12,6 +12,7 @@ use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use serde_json::{Map, Value, json};
 use sha2::Sha256;
+use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
 pub type Secret = Zeroizing<Vec<u8>>;
@@ -65,6 +66,21 @@ pub fn legacy_verifier(key: &[u8]) -> Result<String> {
     let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(key).map_err(|_| CryptoError::Kdf)?;
     mac.update(VERIFIER_LABEL);
     Ok(STANDARD.encode(mac.finalize().into_bytes()))
+}
+
+/// Constant-time check of a stored verifier. Before v0.2.1 the verifier was the raw key.
+pub fn verify_legacy_key(key: &[u8], verifier: &str, raw_verifier: bool) -> bool {
+    let Ok(expected) = STANDARD.decode(verifier) else {
+        return false;
+    };
+    if raw_verifier {
+        return key.ct_eq(&expected).into();
+    }
+    let Ok(mut mac) = <Hmac<Sha256> as KeyInit>::new_from_slice(key) else {
+        return false;
+    };
+    mac.update(VERIFIER_LABEL);
+    mac.verify_slice(&expected).is_ok()
 }
 
 /// HKDF-SHA256 with the 16 UUID bytes as salt and a per-purpose info string.

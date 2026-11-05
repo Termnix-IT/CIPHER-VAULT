@@ -1,0 +1,33 @@
+[package]
+name = "cipher-vault-tauri-poc"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Read-only prototype that runs the existing React UI on Tauri. Not a release of CIPHER VAULT."
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+cipher-vault-crypto-compat = { path = "../rust-crypto-compat" }
+rusqlite = { version = "0.41", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# custom-protocol serves the embedded web build, so the Tauri CLI is not needed.
+tauri = { version = "2.12", features = ["custom-protocol"] }
+uuid = { version = "1", features = ["v4"] }
+zeroize = { version = "1", features = ["serde"] }
+
+[profile.dev]
+opt-level = 3
+
+[profile.test]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true
+
+# A standalone crate: never joins a parent workspace.
+[workspace]
