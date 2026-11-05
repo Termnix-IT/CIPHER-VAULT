@@ -24,7 +24,8 @@
     setupVault: readOnly, resetVault: readOnly, runVaultMaintenance: readOnly,
     createEntry: readOnly, updateEntry: readOnly, deleteEntry: readOnly, setEntriesGroup: readOnly,
     exportBackup: readOnly, restoreBackup: readOnly, auditVault: readOnly,
-    generatePassword: readOnly, copyText: readOnly
+    generatePassword: readOnly,
+    copyText: (value, sessionId) => call("clipboard_write", { sessionId, value })
   };
   Object.defineProperty(window, "passwordManager", { value: Object.freeze(api) });
 })();

@@ -1,14 +1,35 @@
-// Drives the built prototype on synthetic vaults through the WebView2 debugging port, then reports
-// the checks as JSON. The port is opened only by this script's environment, for this test process.
-// Usage: node verify-ui.mjs <exe> <sample.json from create-sample-vault.mjs> <screenshot-directory>
-import { spawn } from "node:child_process";
+// Drives the prototype's `e2e` build on synthetic vaults through the WebView2 debugging port, then
+// reports the checks as JSON. That build uses a fake clipboard, so the real clipboard is untouched.
+// OS events are simulated by sending the same window messages Windows sends; the PC is never locked
+// or suspended. The normal build is only checked for its debugging port staying closed.
+// Usage: node verify-ui.mjs <e2e-exe> <sample.json from create-sample-vault.mjs> <screenshot-directory> <normal-exe>
+import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-const [exe, samplePath, screenshotDirectory] = process.argv.slice(2);
-if (!exe || !samplePath || !screenshotDirectory) throw new Error("Usage: node verify-ui.mjs <exe> <sample.json> <screenshot-directory>");
+const [exe, samplePath, screenshotDirectory, normalExe] = process.argv.slice(2);
+if (!exe || !samplePath || !screenshotDirectory || !normalExe) throw new Error("Usage: node verify-ui.mjs <e2e-exe> <sample.json> <screenshot-directory> <normal-exe>");
 const sample = JSON.parse(readFileSync(samplePath, "utf8"));
+const CLIPBOARD_CLEAR_AFTER_MS = 30_000;
+const WM_POWERBROADCAST = 0x218, WM_WTSSESSION_CHANGE = 0x2b1;
+const OS_SCENARIOS = [
+  { name: "screenLock", away: [WM_WTSSESSION_CHANGE, 7], awayReason: "screen-lock", back: [WM_WTSSESSION_CHANGE, 8], backReason: "screen-unlock" },
+  { name: "suspend", away: [WM_POWERBROADCAST, 4], awayReason: "suspend", back: [WM_POWERBROADCAST, 7], backReason: "resume" },
+  { name: "suspendAutomaticResume", away: [WM_POWERBROADCAST, 4], awayReason: "suspend", back: [WM_POWERBROADCAST, 0x12], backReason: "resume" }
+];
+
+function powershell(script) {
+  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8" });
+  if (result.status !== 0) throw new Error(`PowerShell failed: ${result.stderr}`);
+  return result.stdout.trim();
+}
+
+function sendOsMessage(window, [message, wparam]) {
+  powershell(`Add-Type -Namespace E2E -Name Win32 -MemberDefinition '[DllImport("user32.dll")] public static extern System.IntPtr SendMessageW(System.IntPtr window, uint message, System.IntPtr wparam, System.IntPtr lparam);'
+    [void][E2E.Win32]::SendMessageW([IntPtr][long]${Number(window)}, ${message}, [IntPtr]${wparam}, [IntPtr]0)`);
+}
 if (sample.testOnly !== true) throw new Error("Refusing data that is not marked as a synthetic sample");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const digest = (file) => createHash("sha256").update(readFileSync(file)).digest("hex");
@@ -66,11 +87,133 @@ async function screenshot(page, name) {
   writeFileSync(path.join(screenshotDirectory, `${name}.png`), Buffer.from(data, "base64"));
 }
 
+const lockScreenShown = (page) => page.evaluate(`!!document.querySelector('input[aria-label="マスターパスワード"]')`);
+const fetchStatus = (page) => page.evaluate("window.passwordManager.fetchVaultStatus()");
+const copy = (page, sessionId) => page.evaluate(`window.passwordManager.copyText("synthetic-clipboard-value", ${JSON.stringify(sessionId)}).then(() => "copied", (error) => error.message)`);
+
+async function unlockThroughScreen(page, password) {
+  await until("lock screen", () => lockScreenShown(page));
+  // The screen polls the session every second, and a stale session id would be refused.
+  await sleep(1500);
+  await submitPassword(page, password);
+  await until("unlocked screen", async () => !(await lockScreenShown(page)) && (await fetchStatus(page)).isUnlocked);
+  return (await fetchStatus(page)).sessionId;
+}
+
+async function checkOsScenario(page, events, window, password, scenario) {
+  const sessionId = await unlockThroughScreen(page, password);
+  const result = { copied: await copy(page, sessionId) };
+  await until("clipboard write report", () => events.includes("clipboard-write"));
+  const mark = events.length;
+  sendOsMessage(window, scenario.away);
+  // Sending the message blocks this process, so the reports are read only after it returns.
+  await until("OS event reports", () => events.slice(mark).includes("clipboard-clear"));
+  result.events = events.slice(mark);
+  const away = await fetchStatus(page);
+  result.awayStatus = { isUnlocked: away.isUnlocked, lockReason: away.lockReason };
+  await until("lock screen while away", () => lockScreenShown(page));
+  result.unlockWhileAway = await page.evaluate(`window.passwordManager.unlockVault({ masterPassword: ${JSON.stringify(password)} }, ${JSON.stringify(away.sessionId)}).then(() => "unlocked", (error) => error.message)`);
+  result.copyWhileAway = await copy(page, away.sessionId);
+  result.readAfterLock = await page.evaluate(`window.passwordManager.fetchEntries(${JSON.stringify(sessionId)}).then(() => "readable", (error) => error.message)`);
+  sendOsMessage(window, scenario.back);
+  const back = await fetchStatus(page);
+  result.backStatus = { isUnlocked: back.isUnlocked, lockReason: back.lockReason };
+
+  assert.equal(result.copied, "copied");
+  assert.deepEqual(result.events, [`vault-locked ${scenario.awayReason}`, "clipboard-clear"], "the key goes first, then the clipboard");
+  assert.deepEqual(result.awayStatus, { isUnlocked: false, lockReason: scenario.awayReason });
+  for (const refused of [result.unlockWhileAway, result.copyWhileAway, result.readAfterLock]) assert.match(refused, /画面ロック・スリープ中/);
+  assert.deepEqual(result.backStatus, { isUnlocked: false, lockReason: scenario.backReason }, "returning never unlocks by itself");
+  return result;
+}
+
+async function checkOsIntegration(page, events, password, child) {
+  const window = events.find((event) => event.startsWith("os-window ")).split(" ")[1];
+  const checks = { webviewSettings: events.find((event) => event.startsWith("webview-settings ")) };
+  for (const scenario of OS_SCENARIOS) checks[scenario.name] = await checkOsScenario(page, events, window, password, scenario);
+
+  const sessionId = await unlockThroughScreen(page, password);
+  checks.oversizedCopy = await page.evaluate(`window.passwordManager.copyText("x".repeat(1024 * 1024 + 1), ${JSON.stringify(sessionId)}).then(() => "copied", (error) => error.message)`);
+  checks.staleSessionCopy = await copy(page, "stale-session");
+
+  // The real deadline, while the vault stays unlocked: the watchdog must clear it without the page.
+  let mark = events.length;
+  const copiedAt = Date.now();
+  checks.expiryCopy = await copy(page, sessionId);
+  await until("clipboard expiry", () => events.slice(mark).includes("clipboard-clear"), CLIPBOARD_CLEAR_AFTER_MS + 5000);
+  checks.expiryAfterMs = Date.now() - copiedAt;
+  checks.unlockedAfterExpiry = (await fetchStatus(page)).isUnlocked;
+
+  mark = events.length;
+  checks.exitCopy = await copy(page, (await fetchStatus(page)).sessionId);
+  powershell(`[void](Get-Process -Id ${child.pid}).CloseMainWindow()`);
+  await until("process exit", () => child.exitCode !== null);
+  await until("exit reports", () => events.includes("exit-complete"));
+  checks.exitEvents = events.slice(mark).filter((event) => event !== "clipboard-write");
+
+  assert.equal(checks.webviewSettings, "webview-settings autofill=false autosave=false accelerators=false");
+  assert.equal(checks.oversizedCopy, "コピーする内容が大きすぎます");
+  assert.notEqual(checks.staleSessionCopy, "copied");
+  assert.ok(checks.expiryAfterMs >= CLIPBOARD_CLEAR_AFTER_MS && checks.expiryAfterMs < CLIPBOARD_CLEAR_AFTER_MS + 3000, `cleared after ${checks.expiryAfterMs} ms`);
+  assert.equal(checks.unlockedAfterExpiry, true);
+  assert.deepEqual(checks.exitEvents, ["vault-locked window-closed", "clipboard-clear", "exit-complete"]);
+  return checks;
+}
+
+function startE2eBuild(database, port) {
+  const events = [];
+  const child = spawn(exe, [], { stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, CIPHER_VAULT_POC_DB: database,
+    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --remote-allow-origins=*` } });
+  let buffered = "";
+  child.stdout.setEncoding("utf8").on("data", (chunk) => {
+    const lines = (buffered + chunk).split("\n");
+    buffered = lines.pop();
+    for (const line of lines) if (line.startsWith("e2e-event ")) events.push(line.slice("e2e-event ".length).trim());
+  });
+  return { child, events };
+}
+
+// A crashed page cannot be trusted to lock anything, so the native side must do it.
+async function checkRendererCrash({ database, password }, port) {
+  const { child, events } = startE2eBuild(database, port);
+  try {
+    const page = await connect(port);
+    const sessionId = await unlockThroughScreen(page, password);
+    assert.equal(await copy(page, sessionId), "copied");
+    const mark = events.length;
+    page.send("Page.crash").catch(() => undefined);
+    await until("renderer crash reports", () => events.slice(mark).includes("clipboard-clear"));
+    const result = events.slice(mark).filter((event) => event !== "clipboard-write");
+    assert.deepEqual(result, ["vault-locked renderer-gone", "clipboard-clear"]);
+    page.close();
+    return result;
+  } finally {
+    child.kill();
+    await sleep(800);
+  }
+}
+
+async function checkNormalBuildKeepsPortClosed(database, port) {
+  const child = spawn(normalExe, [], { stdio: "ignore", env: { ...process.env, CIPHER_VAULT_POC_DB: database,
+    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --remote-allow-origins=*` } });
+  try {
+    await until("normal build window", () => powershell(`(Get-Process -Id ${child.pid}).MainWindowHandle`) !== "0", 30000);
+    await sleep(3000);
+    const commandLines = JSON.parse(powershell(`ConvertTo-Json -InputObject @(Get-CimInstance Win32_Process -Filter "ParentProcessId=${child.pid} AND Name='msedgewebview2.exe'" | ForEach-Object CommandLine)`));
+    const portOpen = await fetch(`http://127.0.0.1:${port}/json`).then(() => true, () => false);
+    const result = { webviewProcesses: commandLines.length, argumentReachedWebview: commandLines.some((line) => line.includes("remote-debugging-port")), portOpen };
+    assert.deepEqual(result, { webviewProcesses: 1, argumentReachedWebview: false, portOpen: false });
+    return result;
+  } finally {
+    child.kill();
+    await sleep(800);
+  }
+}
+
 async function runVault(format, port) {
   const { database, password } = sample[format];
   const before = digest(database), checks = {};
-  const child = spawn(exe, [], { stdio: "ignore", env: { ...process.env, CIPHER_VAULT_POC_DB: database,
-    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --remote-allow-origins=*` } });
+  const { child, events } = startE2eBuild(database, port);
   let page;
   try {
     page = await connect(port);
@@ -118,12 +261,18 @@ async function runVault(format, port) {
     await sleep(300);
     checks.apiImmutable = await page.evaluate(`(() => { try { window.passwordManager.fetchEntries = null; } catch {} return typeof window.passwordManager.fetchEntries; })()`);
 
+    checks.copyButton = await page.evaluate(`(() => { const button = [...document.querySelectorAll("button")].find((node) => /コピー/.test(node.textContent + (node.getAttribute("aria-label") ?? ""))); button?.click(); return button ? "clicked" : "absent"; })()`);
+    await sleep(500);
+    checks.copyButtonWrote = events.includes("clipboard-write");
+    const clearsBeforeLock = events.filter((event) => event === "clipboard-clear").length;
     const lockedStatus = await page.evaluate(`window.passwordManager.lockVault(${JSON.stringify(status.sessionId)})`);
     checks.lockReason = lockedStatus.lockReason;
+    checks.manualLockClearedClipboard = events.filter((event) => event === "clipboard-clear").length === clearsBeforeLock + 1;
     await until("lock screen after locking", () => page.evaluate(`!!document.querySelector('input[aria-label="マスターパスワード"]')`));
     checks.readAfterLock = await page.evaluate(`window.passwordManager.fetchEntries(${JSON.stringify(lockedStatus.sessionId)}).then(() => "readable", (error) => error.message)`);
     checks.listClearedFromScreen = !(await page.evaluate(`document.body.innerText.includes(${JSON.stringify(list.items[0].serviceName)})`));
     await screenshot(page, `${format}-4-locked`);
+    checks.osIntegration = await checkOsIntegration(page, events, password, child);
     checks.consoleMessages = [...new Set(page.messages)];
   } catch (error) {
     if (page) {
@@ -141,5 +290,10 @@ async function runVault(format, port) {
   return checks;
 }
 
-const results = { legacy: await runVault("legacy", 9331), v2: await runVault("v2", 9332) };
+const results = {
+  legacy: await runVault("legacy", 9331),
+  v2: await runVault("v2", 9332),
+  rendererCrash: await checkRendererCrash(sample.v2, 9334),
+  normalBuild: await checkNormalBuildKeepsPortClosed(sample.v2.database, 9333)
+};
 console.log(JSON.stringify(results, null, 2));

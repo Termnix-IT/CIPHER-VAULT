@@ -1,6 +1,7 @@
 //! Read-only vault access for the prototype, mirroring apps/api/src/services for these paths only.
 //! It never writes, so a legacy raw verifier stays as it is instead of being upgraded on unlock.
 
+use crate::clock::Stamp;
 use cipher_vault_crypto_compat::{self as crypto, CryptoError, Secret};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde::Serialize;
@@ -8,7 +9,7 @@ use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::Duration;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -22,18 +23,6 @@ const CHANGED: &str = "保管庫の状態が変わりました。もう一度操
 const WRONG_PASSWORD: &str = "マスターパスワードが正しくありません";
 const NOT_FOUND: &str = "エントリが見つかりません";
 const BROKEN: &str = "保管庫の検証に失敗しました";
-
-#[derive(Clone, Copy)]
-struct Stamp {
-    monotonic: Instant,
-    wall: SystemTime,
-}
-
-impl Stamp {
-    fn now() -> Self {
-        Self { monotonic: Instant::now(), wall: SystemTime::now() }
-    }
-}
 
 struct Session {
     key: Option<Secret>,
@@ -69,17 +58,12 @@ impl Session {
             return;
         }
         // A wall clock moving backwards could otherwise extend the deadline.
-        let Ok(wall_elapsed) = now.wall.duration_since(self.activity.wall) else {
+        let Some(elapsed) = self.activity.elapsed_at(now).filter(|_| now.wall >= self.observed.wall) else {
             self.lock("clock-change");
             return;
         };
-        if now.wall < self.observed.wall {
-            self.lock("clock-change");
-            return;
-        }
         self.observed = now;
-        // Wall time covers suspend, when the monotonic clock may pause.
-        if now.monotonic.duration_since(self.activity.monotonic).max(wall_elapsed) >= IDLE_TIMEOUT {
+        if elapsed >= IDLE_TIMEOUT {
             self.lock("idle");
         }
     }
@@ -106,6 +90,12 @@ pub struct VaultStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     lock_reason: Option<&'static str>,
     maintenance: Maintenance,
+}
+
+impl VaultStatus {
+    pub fn is_unlocked(&self) -> bool {
+        self.is_unlocked
+    }
 }
 
 pub struct Vault {
@@ -279,6 +269,26 @@ impl Vault {
         self.require_generation(session_id)?;
         self.session.lock().unwrap().lock("manual");
         Ok(self.status())
+    }
+
+    /// A lock the app decided on, such as an OS event. It also cancels an unlock in progress,
+    /// because the session id changes even when the vault is already locked.
+    pub fn lock_for(&self, reason: &'static str) {
+        self.session.lock().unwrap().lock(reason);
+    }
+
+    /// Checks the session without reading anything. A locked vault reports that first,
+    /// like VaultSession.requireUnlocked.
+    pub fn require_unlocked(&self, session_id: &str) -> Result<(), String> {
+        let mut session = self.session.lock().unwrap();
+        session.expire(Stamp::now());
+        if session.key.is_none() {
+            return Err(LOCKED.into());
+        }
+        if session.id != session_id {
+            return Err(CHANGED.into());
+        }
+        Ok(())
     }
 
     pub fn record_activity(&self, session_id: &str) -> Result<VaultStatus, String> {
@@ -573,6 +583,39 @@ mod tests {
         // Like VaultSession.requireUnlocked, "locked" takes priority over a stale session id.
         assert_eq!(vault.list_entries(&session).unwrap_err(), LOCKED);
         assert_eq!(vault.record_activity(&locked.session_id).unwrap_err(), LOCKED);
+    }
+
+    #[test]
+    fn an_os_lock_during_key_derivation_cancels_the_unlock() {
+        let (database, v2) = v2_database();
+        let vault = std::sync::Arc::new(Vault::open(&database.0).unwrap());
+        let id = vault.status().session_id;
+        let password = s(&v2["masterPassword"]).to_string();
+        let unlocking = {
+            let vault = std::sync::Arc::clone(&vault);
+            std::thread::spawn(move || vault.unlock(&id, password.as_bytes()).map(|_| ()))
+        };
+        // The v2 KDF takes about 200 ms, far longer than this delay.
+        std::thread::sleep(Duration::from_millis(20));
+        vault.lock_for("suspend");
+        assert_eq!(unlocking.join().unwrap().unwrap_err(), CHANGED);
+        let status = vault.status();
+        assert!(!status.is_unlocked);
+        assert_eq!(status.lock_reason, Some("suspend"));
+    }
+
+    #[test]
+    fn an_os_lock_destroys_the_key_and_the_session_must_be_unlocked_again() {
+        let (database, legacy) = legacy_database(true, true);
+        let vault = Vault::open(&database.0).unwrap();
+        let id = vault.status().session_id;
+        let session = vault.unlock(&id, s(&legacy["password"]).as_bytes()).unwrap().session_id;
+        assert_eq!(vault.require_unlocked(&session), Ok(()));
+        assert_eq!(vault.require_unlocked("stale").unwrap_err(), CHANGED);
+        vault.lock_for("screen-lock");
+        assert_eq!(vault.require_unlocked(&session).unwrap_err(), LOCKED);
+        assert_eq!(vault.list_entries(&session).unwrap_err(), LOCKED);
+        assert!(vault.session.lock().unwrap().key.is_none());
     }
 
     #[test]
