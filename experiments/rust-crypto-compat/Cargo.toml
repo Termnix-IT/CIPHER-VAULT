@@ -1,0 +1,27 @@
+[package]
+name = "cipher-vault-crypto-compat"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Verification-only check that Rust reproduces the CIPHER VAULT crypto formats. Not used by the application."
+
+[dependencies]
+aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc", "zeroize"] }
+base64 = "0.23"
+hex = "0.4"
+hkdf = "0.13"
+hmac = "0.13"
+scrypt = { version = "0.12", default-features = false }
+serde_json = "1"
+sha2 = "0.11"
+zeroize = "1"
+
+# scrypt with N=2^17 takes far too long without optimization.
+[profile.dev]
+opt-level = 3
+
+[profile.test]
+opt-level = 3
+
+# A standalone crate: never joins a parent workspace.
+[workspace]

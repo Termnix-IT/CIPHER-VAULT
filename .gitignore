@@ -11,6 +11,7 @@ packages/shared/src/*.d.ts
 *.log
 release/
 dist-desktop/
+target/
 docs/private/*
 !docs/private/README.md
 .claude/
