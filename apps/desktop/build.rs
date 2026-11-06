@@ -16,6 +16,7 @@ const COMMANDS: &[&str] = &[
     "password_generate",
     "backup_export",
     "backup_restore",
+    "vault_audit",
 ];
 
 fn main() {

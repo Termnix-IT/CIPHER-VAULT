@@ -31,7 +31,8 @@
             "allow-entries-set-group",
             "allow-password-generate",
             "allow-backup-export",
-            "allow-backup-restore"
+            "allow-backup-restore",
+            "allow-vault-audit"
           ]
         }
       ],

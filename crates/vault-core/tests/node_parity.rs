@@ -96,6 +96,7 @@ impl Engine for RustEngine {
             "generate" => vault.generate_password(arg(0), arg(1)),
             "exportBackup" => vault.export_backup(arg(0), arg(1)),
             "restoreBackup" => vault.restore_backup(arg(0), arg(1)),
+            "audit" => vault.audit_vault(arg(0)),
             "decodeBackup" => decode_backup(args[0].as_str().unwrap(), args[1].as_str().unwrap()),
             other => panic!("unknown method {other}"),
         };
@@ -287,6 +288,12 @@ fn compare(kind: &str, scenario: &Scenario) {
 
     let rust = run(&mut RustEngine(Vault::open(&rust_directory).unwrap()), &rust_directory, scenario);
     let node = run(&mut NodeEngine::start(&node_directory), &node_directory, scenario);
+    // PARITY_SHOW=1 prints the Rust answers, to see what a passing scenario actually compared.
+    if std::env::var_os("PARITY_SHOW").is_some() {
+        for (label, answer) in &rust {
+            eprintln!("{kind} | {label}: {answer}");
+        }
+    }
     assert_eq!(rust.len(), node.len());
     let differences: Vec<String> = rust
         .iter()
@@ -616,4 +623,55 @@ fn backups_written_by_each_engine_open_in_the_other() {
     let (node_file, node_entries) = &written[1];
     assert_eq!(node_engine.call("decodeBackup", &[rust_file.clone(), passphrase.clone()]), json!({ "ok": { "version": 3, "entries": rust_entries } }));
     assert_eq!(rust.call("decodeBackup", &[node_file.clone(), passphrase.clone()]), json!({ "ok": { "version": 3, "entries": node_entries } }));
+}
+
+// ---- The audit
+
+#[test]
+#[ignore = "needs Node.js and the built API: npm run test:rust-parity"]
+fn audits_of_a_legacy_vault_answer_as_the_node_services_do() {
+    let files = backup_files();
+    let mut scenario = Scenario::default();
+    scenario
+        .session("audit", vec![])
+        .session("setup", vec![json!({ "masterPassword": PASSWORD })])
+        .session("audit", vec![])
+        .call("audit with another session", "audit", vec![json!("another-session")])
+        .session("restoreBackup", vec![backup_payload(&files, "audit")])
+        .session("audit", vec![])
+        .session("create", vec![login()])
+        .session("audit", vec![])
+        .session("lock", vec![])
+        .session("audit", vec![]);
+    compare("empty", &scenario);
+
+    let password = node(&["prepare", "legacy", TemporaryDirectory::new().0.join("probe").to_str().unwrap()])["password"].clone();
+    let mut existing = Scenario::default();
+    existing.session("unlock", vec![json!({ "masterPassword": password })]).session("audit", vec![]);
+    compare("legacy", &existing);
+}
+
+#[test]
+#[ignore = "needs Node.js and the built API: npm run test:rust-parity"]
+fn audits_of_a_v2_vault_answer_as_the_node_services_do() {
+    let password = node(&["prepare", "v2", TemporaryDirectory::new().0.join("probe").to_str().unwrap()])["password"].clone();
+    let files = backup_files();
+    let mut scenario = Scenario::default();
+    scenario
+        .session("unlock", vec![json!({ "masterPassword": password })])
+        .session("list", vec![])
+        .session("audit", vec![])
+        .session("create", vec![login()]);
+    for item in additional_items() {
+        scenario.session("create", vec![item]);
+    }
+    scenario.session("audit", vec![]);
+    for index in 0..6 {
+        scenario.session("delete", vec![entry(index)]);
+    }
+    scenario
+        .session("audit", vec![])
+        .session("restoreBackup", vec![backup_payload(&files, "audit")])
+        .session("audit", vec![]);
+    compare("v2", &scenario);
 }

@@ -255,6 +255,12 @@ impl LegacyDatabase {
         statement.query_map([], entry_row)?.collect()
     }
 
+    /// Every entry in table order, as a SELECT without ORDER BY returns them in the app.
+    pub fn all(&self) -> rusqlite::Result<Vec<EntryRow>> {
+        let mut statement = self.connection.prepare(ENTRY_SELECT)?;
+        statement.query_map([], entry_row)?.collect()
+    }
+
     pub fn get(&self, id: &str) -> rusqlite::Result<Option<EntryRow>> {
         self.connection.query_row(&format!("{ENTRY_SELECT} WHERE id = ?1"), [id], entry_row).optional()
     }

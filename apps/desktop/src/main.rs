@@ -1,6 +1,6 @@
 //! CIPHER VAULT on Tauri. It shows the existing React screen from `apps/web` and replaces
 //! `apps/electron` and the Node services step by step. The vault commands run the Rust core in
-//! `crates/vault-core`; maintenance, the audit, the clipboard and updates are not ported yet.
+//! `crates/vault-core`; maintenance, the clipboard and updates are not ported yet.
 //!
 //! The `e2e` feature exists for automated checks only. It keeps the WebView2 debugging port
 //! available and reports events on stdout. Never distribute it.
@@ -122,6 +122,11 @@ async fn backup_restore(vault: State<'_, Shared>, session_id: Option<Value>, pay
     run(vault, move |vault| vault.restore_backup(session_id.as_ref(), payload.as_ref())).await
 }
 
+#[tauri::command]
+async fn vault_audit(vault: State<'_, Shared>, session_id: Option<Value>) -> Result<Value, String> {
+    run(vault, move |vault| vault.audit_vault(session_id.as_ref())).await
+}
+
 /// The bundled screen only. Tauri serves it as http://tauri.localhost on Windows.
 pub(crate) fn is_application_url(url: &Url) -> bool {
     matches!((url.scheme(), url.host_str()), ("http", Some("tauri.localhost")) | ("tauri", Some("localhost")))
@@ -186,7 +191,8 @@ fn main() {
             entries_set_group,
             password_generate,
             backup_export,
-            backup_restore
+            backup_restore,
+            vault_audit
         ])
         .setup(|app| {
             let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))

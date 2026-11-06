@@ -1,7 +1,7 @@
 // Checks the Tauri app in apps/desktop through its `e2e` build: it refuses to start without a test
 // folder or on a folder holding real data, the screen sets up, adds to, locks and unlocks a vault
 // in a temporary folder through the Rust core, saves a backup and restores it into the emptied
-// vault, and the window keeps refusing outside connections, navigation, new windows, downloads it
+// vault, audits it, and the window keeps refusing outside connections, navigation, new windows, downloads it
 // did not make and ungranted commands. Only synthetic passwords are used.
 // Usage: node scripts/verify-tauri-shell.mjs <e2e-exe> <screenshot-directory>
 import assert from "node:assert/strict";
@@ -194,6 +194,17 @@ try {
   result.restoreIntoFullVault = await settle(page, `window.passwordManager.restoreBackup({ passphrase: ${JSON.stringify(BACKUP_PASSPHRASE)}, content: ${JSON.stringify(backupFile)} }, ${JSON.stringify(restoredSession)})`);
   assert.deepEqual(result.restoreIntoFullVault, { error: "復元できるのは空の保管庫のみです" });
 
+  // ---- The audit, through the screen. The generated password is strong and unique, and the entry has no URL.
+  await menu(page, "ツール", "パスワードの点検");
+  await until("the audit", () => page.evaluate(`document.querySelector(".audit-score strong")?.textContent === "100"`));
+  result.audit = await page.evaluate(`window.passwordManager.auditVault(${JSON.stringify(restoredSession)})`);
+  assert.equal(result.audit.total, 1);
+  assert.deepEqual(result.audit.counts, { weak: 0, duplicate: 0, oldPassword: 0, missingUrl: 1, staleEntry: 0 });
+  assert.equal(JSON.stringify(result.audit).includes(generated), false, "the audit never carries a password");
+  result.audit = { score: result.audit.score, total: result.audit.total, counts: result.audit.counts };
+  await screenshot(page, screenshotDirectory, "tauri-shell-audit");
+  await click(page, 'button[aria-label="閉じる"]');
+
   result.notPorted = await settle(page, `window.passwordManager.copyText("x", ${JSON.stringify((await status(page)).sessionId)})`);
   assert.deepEqual(result.notPorted, { error: NOT_PORTED });
 
@@ -207,7 +218,7 @@ try {
   assert.ok(result.outsideFetch.error, "an outside connection must fail");
   result.ungrantedCommand = await settle(page, `window.__TAURI_INTERNALS__.invoke("plugin:window|set_title", { label: "main", value: "changed" })`);
   assert.ok(result.ungrantedCommand.error, "a command no capability grants must be refused");
-  result.unknownCommand = await settle(page, `window.__TAURI_INTERNALS__.invoke("vault_audit", {})`);
+  result.unknownCommand = await settle(page, `window.__TAURI_INTERNALS__.invoke("vault_maintenance", {})`);
   assert.ok(result.unknownCommand.error);
   result.newWindow = await page.evaluate(`window.open("https://example.test/") === null`);
 

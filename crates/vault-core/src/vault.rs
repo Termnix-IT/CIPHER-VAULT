@@ -7,6 +7,7 @@
 //! write lock, the data directory must still select the same file; otherwise the vault fails
 //! closed until the app restarts, as in the TypeScript app.
 
+use crate::audit;
 use crate::backup;
 use crate::crypto::{self, CryptoError, Secret};
 use crate::error::{self, Result, VaultError, changed, context_failed, not_found};
@@ -20,6 +21,7 @@ use crate::unlock_guard::UnlockGuard;
 use crate::v2::{StoreError, V2Store};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use chrono::Utc;
 use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -69,6 +71,22 @@ pub struct Vault {
     failed: AtomicBool,
     writing: AtomicBool,
     backing_up: AtomicBool,
+    auditing: AtomicBool,
+}
+
+/// Holds a one-at-a-time flag until dropped, also when the work fails.
+struct Busy<'a>(&'a AtomicBool);
+
+impl<'a> Busy<'a> {
+    fn claim(flag: &'a AtomicBool) -> Option<Self> {
+        (!flag.swap(true, Ordering::SeqCst)).then_some(Self(flag))
+    }
+}
+
+impl Drop for Busy<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 fn random_bytes<const N: usize>() -> Result<Zeroizing<[u8; N]>> {
@@ -151,7 +169,7 @@ impl Vault {
         let mut session = Session::new(clock());
         session.lock(LockReason::Manual);
         let session = Mutex::new(session);
-        Ok(Self { root, storage, session, guard: UnlockGuard::default(), clock, failed: AtomicBool::new(false), writing: AtomicBool::new(false), backing_up: AtomicBool::new(false) })
+        Ok(Self { root, storage, session, guard: UnlockGuard::default(), clock, failed: AtomicBool::new(false), writing: AtomicBool::new(false), backing_up: AtomicBool::new(false), auditing: AtomicBool::new(false) })
     }
 
     fn now(&self) -> Stamp {
@@ -777,16 +795,7 @@ impl Vault {
     /// unlocked by the same session once the slow key derivation is done.
     fn with_backup_key<T>(&self, passphrase: &str, salt: &[u8], action: impl FnOnce(&Secret) -> Result<T>) -> Result<T> {
         self.require_unlocked_vault(None)?;
-        if self.backing_up.swap(true, Ordering::SeqCst) {
-            return Err(VaultError::conflict("バックアップ処理の完了を待ってください"));
-        }
-        struct Release<'a>(&'a AtomicBool);
-        impl Drop for Release<'_> {
-            fn drop(&mut self) {
-                self.0.store(false, Ordering::SeqCst);
-            }
-        }
-        let _release = Release(&self.backing_up);
+        let _busy = Busy::claim(&self.backing_up).ok_or_else(|| VaultError::conflict("バックアップ処理の完了を待ってください"))?;
         let session = self.require_unlocked(None)?;
         let key = crypto::derive_strong_key(passphrase.as_bytes(), salt).map_err(|_| VaultError::new(500, KDF_FAILED))?;
         self.require_unlocked_vault(None)?;
@@ -869,6 +878,72 @@ impl Vault {
             Ok(())
         })?;
         Ok(json!({ "restoredCount": entries.len() }))
+    }
+
+    /// auditVault in audit-service.ts: the logins are scored in this process, and the result holds
+    /// no secrets. The vault must stay with the same session while the audit runs.
+    pub fn audit_vault(&self, session_id: Option<&Value>) -> Result<Value> {
+        self.with_session(session_id, |_| {
+            self.require_unlocked_vault(None)?;
+            let _busy = Busy::claim(&self.auditing).ok_or_else(|| VaultError::conflict("監査の完了を待ってください"))?;
+            let session = self.require_unlocked(None)?;
+            let now = Utc::now().timestamp_millis();
+            let rows = self.audit_rows(&session)?;
+            let result = audit::assess(&rows, now, || {
+                if self.require_unlocked_vault(None)? != session {
+                    return Err(VaultError::conflict("保管庫の状態が変わりました。もう一度解析してください"));
+                }
+                Ok(())
+            })?;
+            self.require_unlocked_vault(Some(&session))?;
+            Ok(result)
+        })
+    }
+
+    /// The logins to audit: in list order for v2, and in table order for the legacy format. API
+    /// keys, cards and bank accounts are left out, as their secrets are not passwords.
+    fn audit_rows(&self, session: &str) -> Result<Vec<audit::Row>> {
+        if self.v2().is_some() {
+            let list = self.entry_list()?;
+            let logins = list["items"].as_array().into_iter().flatten().filter(|summary| !matches!(summary["type"].as_str(), Some("apiKey" | "creditCard" | "financial")));
+            return logins
+                .map(|summary| {
+                    let mut entry = self.entry(Some(&summary["id"]))?;
+                    let text = |field: &str| entry[field].as_str().map(str::to_string);
+                    let (id, service_name, login_id, url, updated_at, password_changed_at) =
+                        (text("id"), text("serviceName"), text("loginId"), text("url"), text("updatedAt"), text("passwordChangedAt"));
+                    let password = match entry["password"].take() {
+                        Value::String(password) => Zeroizing::new(password),
+                        _ => Zeroizing::new(String::new()),
+                    };
+                    Ok(audit::Row {
+                        id: id.unwrap_or_default(),
+                        service_name: service_name.unwrap_or_default(),
+                        login_id: login_id.unwrap_or_default(),
+                        password,
+                        url,
+                        updated_at: updated_at.unwrap_or_default(),
+                        password_changed_at,
+                    })
+                })
+                .collect();
+        }
+        let database = self.legacy().ok_or_else(|| self.fail())?;
+        let rows = database.lock().unwrap().all().map_err(|_| self.fail())?;
+        let key = self.key(session)?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(audit::Row {
+                    password: Self::open_legacy(&key, &row.encrypted_password)?,
+                    id: row.id,
+                    service_name: row.service_name,
+                    login_id: row.login_id,
+                    url: row.url,
+                    updated_at: row.updated_at,
+                    password_changed_at: row.password_changed_at,
+                })
+            })
+            .collect()
     }
 
     #[cfg(test)]

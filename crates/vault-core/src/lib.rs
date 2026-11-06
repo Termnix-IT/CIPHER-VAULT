@@ -1,6 +1,7 @@
 //! The CIPHER VAULT core for the Rust app. It follows the TypeScript services in apps/api, which
 //! stay the reference until the Rust app replaces them, and returns the same results and messages.
 
+pub mod audit;
 pub mod backup;
 pub mod crypto;
 pub mod error;

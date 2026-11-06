@@ -21,6 +21,8 @@ sha2 = "0.11"
 subtle = "2"
 uuid = { version = "1", features = ["v4"] }
 zeroize = "1"
+# Password strength for the audit. The app uses zxcvbn-ts; docs/設計.md lists the differences.
+zxcvbn = { version = "3.1", default-features = false }
 
 # File identity (volume, index, link count) for the same path checks the TypeScript services make.
 [target.'cfg(windows)'.dependencies]

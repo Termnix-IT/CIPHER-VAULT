@@ -56,6 +56,7 @@ async function serve() {
   const { generatePassword } = await import(`${base}services/password-service.js`);
   const session = await import(`${base}services/vault-session.js`);
   const backup = await import(`${base}services/backup-service.js`);
+  const audit = await import(`${base}services/audit-service.js`);
   maintenance.openApplicationVault();
   // handleControl and handleSession in desktop-main.ts, without the quit and power checks.
   const control = (action) => (sessionId, payload) => { session.vaultSession.requireGeneration(sessionId); return action(payload); };
@@ -76,6 +77,7 @@ async function serve() {
     generate: scoped(generatePassword),
     exportBackup: scoped(backup.exportBackup),
     restoreBackup: scoped(backup.restoreBackup),
+    audit: scoped(audit.auditVault),
     decodeBackup: decodeBackup
   };
   for await (const line of createInterface({ input: process.stdin })) {
@@ -98,7 +100,8 @@ async function decodeBackup(content, passphrase) {
   try { return { version: envelope.version, entries: decodeVaultBackup(envelope, key) }; } finally { key.fill(0); }
 }
 
-/** One file of each version, with fixed ids and dates so both engines restore the same entries. */
+/** One file of each version, with fixed ids and dates so both engines restore the same entries.
+ *  The audit file holds logins with every audit issue; both strength scorers agree on its passwords. */
 async function backups() {
   const { randomBytes } = await import("node:crypto");
   const { deriveBackupKey } = await import(`${base}crypto/backup-v1.js`);
@@ -112,8 +115,18 @@ async function backups() {
   const apiKey = { id: "aaaaaaaa-0000-4000-8000-000000000003", type: "apiKey", serviceName: "Restored key", ...common, apiKey: { key: "synthetic-restored-key", keyId: "", expiresOn: null } };
   const financial = { id: "aaaaaaaa-0000-4000-8000-000000000004", type: "financial", serviceName: "Restored bank", ...common,
     financial: { loginId: "bank", loginPassword: "synthetic-restored-bank", tradingPassword: "", extraSecrets: [] } };
+  const audited = (index, fields) => ({ id: `bbbbbbbb-0000-4000-8000-00000000000${index}`, serviceName: `Audit ${index}`, loginId: `audit-user-${index}`,
+    notes: "", url: "https://example.test/", tags: [], group: null, ...dates, passwordChangedAt: "2026-01-15T00:00:00.000Z", ...fields });
+  const old = { createdAt: "2024-01-01T00:00:00.000Z", updatedAt: "2024-02-01T00:00:00.000Z" };
+  const audit = [
+    audited(1, { password: "password1" }),
+    audited(2, { password: "synthetic-shared-audit-password", url: "", createdAt: "2024-01-01T00:00:00.000Z", passwordChangedAt: "2024-01-15T00:00:00.000Z" }),
+    audited(3, { password: "synthetic-shared-audit-password", url: "", ...old, passwordChangedAt: null }),
+    audited(4, { password: "kV9#mP2$wL7!qR4zT8" }),
+    audited(5, { serviceName: "Audit service", loginId: "auditservice", password: "auditservice2024" })
+  ];
   const files = { passphrase };
-  for (const [name, entries] of [["v1", [login, second]], ["v2", [login, apiKey]], ["v3", [login, apiKey, financial]]]) {
+  for (const [name, entries] of [["v1", [login, second]], ["v2", [login, apiKey]], ["v3", [login, apiKey, financial]], ["audit", audit]]) {
     const salt = randomBytes(16), key = await deriveBackupKey(passphrase, salt);
     try { files[name] = encodeVaultBackup(entries, key, salt); } finally { key.fill(0); }
   }
