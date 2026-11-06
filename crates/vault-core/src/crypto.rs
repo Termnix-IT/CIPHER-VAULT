@@ -231,7 +231,7 @@ pub fn open_backup(content: &str, passphrase: &[u8]) -> Result<Secret> {
     Ok(plaintext)
 }
 
-fn v2_header<'a>(envelope: &'a Map<String, Value>) -> Result<(&'a str, &'a str)> {
+fn v2_header(envelope: &Map<String, Value>) -> Result<(&str, &str)> {
     require(number(envelope, "cryptoVersion")? == 2 && text(envelope, "cipher")? == CIPHER)?;
     Ok((text(envelope, "vaultId")?, text(envelope, "keyId")?))
 }

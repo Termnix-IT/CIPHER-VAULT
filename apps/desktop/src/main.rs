@@ -1,20 +1,27 @@
 //! CIPHER VAULT on Tauri. It shows the existing React screen from `apps/web` and replaces
-//! `apps/electron` and the Node services step by step. Until the vault services move here, the
-//! screen can read the vault status command only, which reports that the vault is not available.
+//! `apps/electron` and the Node services step by step. The vault commands run the Rust core in
+//! `crates/vault-core`; maintenance, backup, audit, the clipboard and updates are not ported yet.
 //!
 //! The `e2e` feature exists for automated checks only. It keeps the WebView2 debugging port
 //! available and reports events on stdout. Never distribute it.
 
 #![cfg_attr(not(feature = "e2e"), windows_subsystem = "windows")]
 
+mod data_directory;
 #[cfg_attr(feature = "e2e", allow(dead_code))]
 mod webview_hardening;
 
+use cipher_vault_core::{LockReason, Vault};
+use serde_json::Value;
+use std::sync::Arc;
+use std::time::Duration;
 use tauri::webview::NewWindowResponse;
-use tauri::{Url, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Manager, State, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
-/// Shown until the vault services are ported, so a build of this stage cannot be mistaken for the app.
-const NOT_PORTED: &str = "この版では保管庫をまだ開けません。現行のアプリを使ってください";
+type Shared = Arc<Vault>;
+
+/// How often the idle limit is checked. The screen asks for the status every second as well.
+const EXPIRY_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Reports events to the automated checks. Prints nothing in a normal build.
 fn trace(_event: &str) {
@@ -27,9 +34,81 @@ fn trace(_event: &str) {
     }
 }
 
+/// Runs a vault call off the async runtime, since unlocking derives a key for about a second. The
+/// screen sees only the message, as the Electron preload passes it on.
+async fn run(vault: State<'_, Shared>, action: impl FnOnce(&Vault) -> cipher_vault_core::error::Result<Value> + Send + 'static) -> Result<Value, String> {
+    let vault = Arc::clone(&vault);
+    tauri::async_runtime::spawn_blocking(move || action(&vault))
+        .await
+        .map_err(|_| "処理に失敗しました".to_string())?
+        .map_err(|error| error.message)
+}
+
+// The arguments follow the Electron preload. They stay JSON values that the core checks itself, so
+// a missing or malformed argument gets the same answer as in the Electron app.
 #[tauri::command]
-fn vault_status() -> Result<serde_json::Value, String> {
-    Err(NOT_PORTED.to_string())
+async fn vault_status(vault: State<'_, Shared>) -> Result<Value, String> {
+    run(vault, |vault| vault.status()).await
+}
+
+#[tauri::command]
+async fn vault_activity(vault: State<'_, Shared>, session_id: Option<Value>) -> Result<Value, String> {
+    run(vault, move |vault| vault.record_activity(session_id.as_ref())).await
+}
+
+#[tauri::command]
+async fn vault_setup(vault: State<'_, Shared>, session_id: Option<Value>, payload: Option<Value>) -> Result<Value, String> {
+    run(vault, move |vault| vault.setup(session_id.as_ref(), payload.as_ref())).await
+}
+
+#[tauri::command]
+async fn vault_unlock(vault: State<'_, Shared>, session_id: Option<Value>, payload: Option<Value>) -> Result<Value, String> {
+    run(vault, move |vault| vault.unlock(session_id.as_ref(), payload.as_ref())).await
+}
+
+#[tauri::command]
+async fn vault_lock(vault: State<'_, Shared>, session_id: Option<Value>) -> Result<Value, String> {
+    run(vault, move |vault| vault.lock(session_id.as_ref())).await
+}
+
+#[tauri::command]
+async fn vault_reset(vault: State<'_, Shared>, session_id: Option<Value>, payload: Option<Value>) -> Result<Value, String> {
+    run(vault, move |vault| vault.reset(session_id.as_ref(), payload.as_ref())).await
+}
+
+#[tauri::command]
+async fn entries_list(vault: State<'_, Shared>, session_id: Option<Value>) -> Result<Value, String> {
+    run(vault, move |vault| vault.list_entries(session_id.as_ref())).await
+}
+
+#[tauri::command]
+async fn entries_get(vault: State<'_, Shared>, session_id: Option<Value>, id: Option<Value>) -> Result<Value, String> {
+    run(vault, move |vault| vault.get_entry(session_id.as_ref(), id.as_ref())).await
+}
+
+#[tauri::command]
+async fn entries_create(vault: State<'_, Shared>, session_id: Option<Value>, payload: Option<Value>) -> Result<Value, String> {
+    run(vault, move |vault| vault.create_entry(session_id.as_ref(), payload.as_ref())).await
+}
+
+#[tauri::command]
+async fn entries_update(vault: State<'_, Shared>, session_id: Option<Value>, id: Option<Value>, payload: Option<Value>) -> Result<Value, String> {
+    run(vault, move |vault| vault.update_entry(session_id.as_ref(), id.as_ref(), payload.as_ref())).await
+}
+
+#[tauri::command]
+async fn entries_delete(vault: State<'_, Shared>, session_id: Option<Value>, id: Option<Value>) -> Result<Value, String> {
+    run(vault, move |vault| vault.delete_entry(session_id.as_ref(), id.as_ref())).await
+}
+
+#[tauri::command]
+async fn entries_set_group(vault: State<'_, Shared>, session_id: Option<Value>, payload: Option<Value>) -> Result<Value, String> {
+    run(vault, move |vault| vault.set_entries_group(session_id.as_ref(), payload.as_ref())).await
+}
+
+#[tauri::command]
+async fn password_generate(vault: State<'_, Shared>, session_id: Option<Value>, options: Option<Value>) -> Result<Value, String> {
+    run(vault, move |vault| vault.generate_password(session_id.as_ref(), options.as_ref())).await
 }
 
 /// The bundled screen only. Tauri serves it as http://tauri.localhost on Windows.
@@ -69,8 +148,33 @@ fn main() {
         }
     }
 
+    let directory = data_directory::from_environment().unwrap_or_else(|message| fail_startup(&message));
+    let vault: Shared = Arc::new(Vault::open(&directory).unwrap_or_else(|error| fail_startup(&error.message)));
+    let ticker = Arc::clone(&vault);
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(EXPIRY_INTERVAL);
+            ticker.expire();
+        }
+    });
+
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![vault_status])
+        .manage(vault)
+        .invoke_handler(tauri::generate_handler![
+            vault_status,
+            vault_activity,
+            vault_setup,
+            vault_unlock,
+            vault_lock,
+            vault_reset,
+            entries_list,
+            entries_get,
+            entries_create,
+            entries_update,
+            entries_delete,
+            entries_set_group,
+            password_generate
+        ])
         .setup(|app| {
             let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("CIPHER VAULT")
@@ -83,8 +187,20 @@ fn main() {
             #[cfg(feature = "e2e")]
             let builder = with_debugging_port(builder);
             let window = builder.build()?;
-            window.with_webview(|webview| {
-                match webview_hardening::apply_settings(&webview, || trace("renderer-gone")) {
+            let vault = Arc::clone(app.state::<Shared>().inner());
+            let closed = Arc::clone(&vault);
+            // The Electron app locks when its window closes; the process may outlive the window.
+            window.on_window_event(move |event| {
+                if matches!(event, WindowEvent::Destroyed) {
+                    closed.lock_for(LockReason::WindowClosed);
+                }
+            });
+            window.with_webview(move |webview| {
+                let gone = move || {
+                    vault.lock_for(LockReason::RendererGone);
+                    trace("renderer-gone");
+                };
+                match webview_hardening::apply_settings(&webview, gone) {
                     Ok(settings) => trace(&format!("webview-settings {settings}")),
                     // These settings protect secrets, so the window must not stay open without them.
                     Err(_) => fail_startup("The WebView2 security settings could not be applied."),
@@ -115,10 +231,5 @@ mod tests {
         ] {
             assert!(!is_application_url(&Url::parse(refused).unwrap()), "{refused}");
         }
-    }
-
-    #[test]
-    fn the_status_says_the_vault_is_not_available_yet() {
-        assert_eq!(vault_status().unwrap_err(), NOT_PORTED);
     }
 }

@@ -17,7 +17,19 @@
             "main"
           ],
           "permissions": [
-            "allow-vault-status"
+            "allow-vault-status",
+            "allow-vault-activity",
+            "allow-vault-setup",
+            "allow-vault-unlock",
+            "allow-vault-lock",
+            "allow-vault-reset",
+            "allow-entries-list",
+            "allow-entries-get",
+            "allow-entries-create",
+            "allow-entries-update",
+            "allow-entries-delete",
+            "allow-entries-set-group",
+            "allow-password-generate"
           ]
         }
       ],

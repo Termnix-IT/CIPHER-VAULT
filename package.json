@@ -36,6 +36,7 @@
     "build:web:tauri": "npm run build:shared && npm --workspace apps/web run build:tauri",
     "build:tauri": "npm run build:web:tauri && cargo build --release -p cipher-vault",
     "test:rust": "cargo test --workspace",
+    "test:rust-parity": "npm run build:api && cargo test -p cipher-vault-core --test node_parity -- --ignored",
     "test:tauri-shell": "npm run build:web:tauri && cargo build -p cipher-vault --features e2e && node scripts/verify-tauri-shell.mjs target/debug/cipher-vault.exe target/e2e-screenshots",
     "package:desktop": "npm run build:desktop && electron-builder --win nsis portable --publish never",
     "test:desktop-package": "node scripts/test-packaged-desktop.mjs",

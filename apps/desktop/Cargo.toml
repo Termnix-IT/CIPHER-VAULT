@@ -9,6 +9,7 @@ description = "CIPHER VAULT on Tauri. It replaces apps/electron and the Node ser
 tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
+cipher-vault-core = { path = "../../crates/vault-core" }
 serde_json = "1"
 # custom-protocol serves the embedded web build. The Tauri CLI is only needed for installers.
 tauri = { version = "2.12", features = ["custom-protocol"] }

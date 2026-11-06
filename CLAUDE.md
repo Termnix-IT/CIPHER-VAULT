@@ -27,8 +27,8 @@ npm workspaces、TypeScript、React + Vite、Node.js標準HTTP、Electron、bett
 - `apps/electron/src/main.ts` / `preload.ts`: ウィンドウ、IPC、サービス初期化、クリップボード。
 - `apps/electron/src/manual-updater.ts` / `update-service.ts`: 手動更新の状態制御とElectron接続。
 - `packages/shared/src/types.ts`: Web・API・Electronの共通型。契約変更はここから揃える。
-- `crates/vault-core/`: Rust版の中核（Tauri非依存）。現在は暗号形式のみ。
-- `apps/desktop/`: Tauriのデスクトップアプリ。画面に公開するコマンドは `build.rs` の一覧と `tauri.conf.json` の `capabilities` の両方に書く。CSPは `renderer-policy.ts` の `tauri` モードと一致させる。
+- `crates/vault-core/`: Rust版の中核（Tauri非依存）。暗号形式、保存、セッション、初期設定・解除・ロック・リセット、エントリ操作、パスワード生成。挙動はTypeScript版と `tests/rust-parity-engine.mjs` で比べる。
+- `apps/desktop/`: Tauriのデスクトップアプリ。画面に公開するコマンドは `build.rs` の一覧と `tauri.conf.json` の `capabilities` の両方に書く。CSPは `renderer-policy.ts` の `tauri` モードと一致させる。移行が終わるまで保存先の既定値はなく、`CIPHER_VAULT_DATA_DIR` の試験用フォルダだけを開く。
 
 WebはHTTP → サービス → SQLite、Electronはpreload → IPC → 同じサービス → SQLiteを使う。Electron版の保管庫操作にHTTPサーバーは不要。
 
@@ -50,12 +50,13 @@ WebはHTTP → サービス → SQLite、Electronはpreload → IPC → 同じ�
 | `npm run package:desktop` | Windows setup / portable生成（公開しない） |
 | `npm run package` | Node.jsで動かすWeb/API配布フォルダ生成 |
 | `npm run test:rust` | Rust版（Cargo workspace）の試験 |
-| `npm run test:tauri-shell` | Rust版の画面・CSP・IPCの実ウィンドウ検証 |
+| `npm run test:rust-parity` | Rust版とTypeScriptサービスの差分試験（API再ビルドを含む） |
+| `npm run test:tauri-shell` | Rust版の画面・CSP・IPCと保管庫操作の実ウィンドウ検証 |
 | `npm run build:tauri` | Rust版のreleaseビルド（配布はまだしない） |
 
 個別ビルドは `build:shared` / `build:web` / `build:api` / `build:electron`。API監視起動は `npm --workspace apps/api run dev:watch`。
 
-`experiments/tauri-poc/` はRust移行を判断した試作で、配布しない。既定は読取専用で、`CIPHER_VAULT_POC_WRITE=1` のときだけ保管庫のコピーへ書き込む。暗号形式を変更したときは `npm run test:rust` も確認する。手順は [開発・配布手順](docs/開発・配布手順.md#変更に応じた検証) を参照する。
+`experiments/tauri-poc/` はRust移行を判断した試作で、配布しない。既定は読取専用で、`CIPHER_VAULT_POC_WRITE=1` のときだけ保管庫のコピーへ書き込む。暗号形式を変更したときは `npm run test:rust` も確認する。サービスや入力検証を変更したときはRust版も揃え、`npm run test:rust-parity` で差がないことを確認する。手順は [開発・配布手順](docs/開発・配布手順.md#変更に応じた検証) を参照する。
 
 ## 検証とデータ保護
 

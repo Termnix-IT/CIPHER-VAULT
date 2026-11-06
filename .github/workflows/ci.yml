@@ -100,7 +100,12 @@ jobs:
         run: npm run build:web:tauri
       - name: Rust workspace tests
         run: cargo test --workspace --locked
-      - name: Shell window, CSP and IPC
+      # The same calls on the Rust core and the TypeScript services, compared answer by answer.
+      - name: Differential test against the Node services
+        run: |
+          npm run build:api
+          cargo test -p cipher-vault-core --test node_parity --locked -- --ignored
+      - name: Shell window, CSP and vault through the screen
         run: |
           cargo build -p cipher-vault --features e2e --locked
           node scripts/verify-tauri-shell.mjs target/debug/cipher-vault.exe "$env:RUNNER_TEMP\tauri-shell"
