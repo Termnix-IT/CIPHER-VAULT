@@ -1,4 +1,7 @@
-export type RendererPolicyMode = "web" | "desktop" | "development";
+export type RendererPolicyMode = "web" | "desktop" | "tauri" | "development";
+
+// Tauri's IPC answers on its own custom protocol. Windows WebView2 reaches it as http://ipc.localhost.
+export const TAURI_IPC_SOURCES = "ipc: http://ipc.localhost";
 
 export function localDevelopmentUrl(value: string) {
   const url = new URL(value);
@@ -12,7 +15,7 @@ export function localDevelopmentUrl(value: string) {
 // The HTML meta policy also works for file://. frame-ancestors is added in HTTP headers.
 export function rendererContentSecurityPolicy(mode: RendererPolicyMode, developmentUrl?: string) {
   const development = mode === "development";
-  let connections = mode === "desktop" ? "'none'" : "'self'";
+  let connections = mode === "desktop" ? "'none'" : mode === "tauri" ? TAURI_IPC_SOURCES : "'self'";
   if (development) {
     const url = localDevelopmentUrl(developmentUrl!);
     const protocol = url.protocol === "https:" ? "wss:" : "ws:";

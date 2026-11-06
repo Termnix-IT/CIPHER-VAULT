@@ -1,8 +1,6 @@
-//! Verification-only reimplementation of the CIPHER VAULT crypto formats.
-//!
-//! This crate answers one question: can Rust read and write the data of the
-//! TypeScript app? Only the prototype uses it, never the application. It covers
-//! the byte formats only, not storage, sessions, nonce reservation or migration.
+//! The CIPHER VAULT byte formats: legacy secrets and verifiers, `.cvault` backups and the v2
+//! entry and password-slot envelopes. It covers the bytes only, not storage, sessions, nonce
+//! reservation or migration. Every format must stay readable by the TypeScript app.
 
 use aes_gcm::aead::{Aead, KeyInit, Nonce, Payload};
 use aes_gcm::Aes256Gcm;

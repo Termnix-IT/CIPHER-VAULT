@@ -2,7 +2,7 @@
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use cipher_vault_crypto_compat::*;
+use cipher_vault_core::crypto::*;
 use serde_json::{Value, json};
 
 const FIXTURE: &str = include_str!("../../../tests/fixtures/crypto-compatibility.json");

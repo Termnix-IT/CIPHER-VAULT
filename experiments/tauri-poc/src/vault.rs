@@ -4,7 +4,7 @@
 mod writes;
 
 use crate::clock::Stamp;
-use cipher_vault_crypto_compat::{self as crypto, CryptoError, Secret};
+use cipher_vault_core::crypto::{self, CryptoError, Secret};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde::Serialize;
 use serde_json::{Value, json};

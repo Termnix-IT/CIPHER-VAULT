@@ -14,7 +14,7 @@
 
 ## 構成と責務
 
-npm workspaces、TypeScript、React + Vite、Node.js標準HTTP、Electron、better-sqlite3を使用する。
+npm workspaces、TypeScript、React + Vite、Node.js標準HTTP、Electron、better-sqlite3を使用する。Electron版とNode APIはTauri 2 + Rustへ段階的に置き換え中で、方針と制約は [設計](docs/設計.md#rust版への移行) を正とする。移行が終わるまではTypeScriptのサービス層を正解とし、Rust版は同じ結果とエラー文言を返す。
 
 - `apps/web/src/lib/api.ts`: WebのHTTPとElectronのpreload APIを切り替える。
 - `apps/web/src/App.tsx`: 保管庫状態、一覧・選択、自動ロックを管理する。
@@ -27,6 +27,8 @@ npm workspaces、TypeScript、React + Vite、Node.js標準HTTP、Electron、bett
 - `apps/electron/src/main.ts` / `preload.ts`: ウィンドウ、IPC、サービス初期化、クリップボード。
 - `apps/electron/src/manual-updater.ts` / `update-service.ts`: 手動更新の状態制御とElectron接続。
 - `packages/shared/src/types.ts`: Web・API・Electronの共通型。契約変更はここから揃える。
+- `crates/vault-core/`: Rust版の中核（Tauri非依存）。現在は暗号形式のみ。
+- `apps/desktop/`: Tauriのデスクトップアプリ。画面に公開するコマンドは `build.rs` の一覧と `tauri.conf.json` の `capabilities` の両方に書く。CSPは `renderer-policy.ts` の `tauri` モードと一致させる。
 
 WebはHTTP → サービス → SQLite、Electronはpreload → IPC → 同じサービス → SQLiteを使う。Electron版の保管庫操作にHTTPサーバーは不要。
 
@@ -47,10 +49,13 @@ WebはHTTP → サービス → SQLite、Electronはpreload → IPC → 同じ�
 | `npm run test:api` | 一時DBでAPI・配布スクリプトの回帰テスト |
 | `npm run package:desktop` | Windows setup / portable生成（公開しない） |
 | `npm run package` | Node.jsで動かすWeb/API配布フォルダ生成 |
+| `npm run test:rust` | Rust版（Cargo workspace）の試験 |
+| `npm run test:tauri-shell` | Rust版の画面・CSP・IPCの実ウィンドウ検証 |
+| `npm run build:tauri` | Rust版のreleaseビルド（配布はまだしない） |
 
 個別ビルドは `build:shared` / `build:web` / `build:api` / `build:electron`。API監視起動は `npm --workspace apps/api run dev:watch`。
 
-`experiments/rust-crypto-compat/` はRust移行を判断するための検証専用crateで、アプリからは使わない。暗号形式を変更したときは `cargo test --manifest-path experiments/rust-crypto-compat/Cargo.toml` も確認する。`experiments/tauri-poc/` は同じ判断のための試作で、配布しない。既定は読取専用で、`CIPHER_VAULT_POC_WRITE=1` のときだけ保管庫のコピーへ書き込む。手順は [開発・配布手順](docs/開発・配布手順.md#変更に応じた検証) を参照する。
+`experiments/tauri-poc/` はRust移行を判断した試作で、配布しない。既定は読取専用で、`CIPHER_VAULT_POC_WRITE=1` のときだけ保管庫のコピーへ書き込む。暗号形式を変更したときは `npm run test:rust` も確認する。手順は [開発・配布手順](docs/開発・配布手順.md#変更に応じた検証) を参照する。
 
 ## 検証とデータ保護
 

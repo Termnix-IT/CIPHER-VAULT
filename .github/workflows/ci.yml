@@ -80,6 +80,31 @@ jobs:
       - name: Packaged sandbox, migration, restart and key cleanup
         run: npm run test:desktop-package
 
+  rust:
+    name: Rust app (Tauri)
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      # The Tauri build embeds this screen, so it must exist before Cargo compiles the app.
+      - name: Build the screen with the Tauri CSP
+        run: npm run build:web:tauri
+      - name: Rust workspace tests
+        run: cargo test --workspace --locked
+      - name: Shell window, CSP and IPC
+        run: |
+          cargo build -p cipher-vault --features e2e --locked
+          node scripts/verify-tauri-shell.mjs target/debug/cipher-vault.exe "$env:RUNNER_TEMP\tauri-shell"
+
   dependencies:
     name: Dependency audit
     runs-on: windows-2025

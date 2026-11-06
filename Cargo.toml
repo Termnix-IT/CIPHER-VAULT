@@ -1,0 +1,15 @@
+# The Rust replacement of the Electron app and the Node services. See docs/開発・配布手順.md.
+[workspace]
+resolver = "3"
+members = ["apps/desktop", "crates/vault-core"]
+# The prototypes are standalone crates with their own lockfiles, and are not part of the app.
+exclude = ["experiments"]
+
+# scrypt with N=2^17 takes far too long without optimization, so dependencies are always optimized.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true

@@ -1,7 +1,7 @@
 //! Reads output written by the app's own TypeScript codecs, as opposed to the Python vectors.
 //! Run generate-node-vectors.mjs first. See docs/開発・配布手順.md for the commands.
 
-use cipher_vault_crypto_compat::*;
+use cipher_vault_core::crypto::*;
 use serde_json::Value;
 use std::time::Instant;
 

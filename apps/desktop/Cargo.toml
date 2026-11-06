@@ -1,0 +1,26 @@
+[package]
+name = "cipher-vault"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "CIPHER VAULT on Tauri. It replaces apps/electron and the Node services step by step."
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+serde_json = "1"
+# custom-protocol serves the embedded web build. The Tauri CLI is only needed for installers.
+tauri = { version = "2.12", features = ["custom-protocol"] }
+# The same versions Tauri already uses. A mismatch would not compile against its webview handle.
+webview2-com = "0.39"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Registry"] }
+
+[dev-dependencies]
+uuid = { version = "1", features = ["v4"] }
+# The policy test writes a temporary registry key, which needs the security types.
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Registry"] }
+
+[features]
+# Automated UI checks only: the debugging port stays available and events go to stdout. Never distribute it.
+e2e = []

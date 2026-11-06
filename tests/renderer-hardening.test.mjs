@@ -45,6 +45,12 @@ test("production CSP blocks inline scripts and external connections, keeping dev
     assert.deepEqual(parsed["connect-src"], [mode === "web" ? "'self'" : "'none'"]);
     assert.ok(!rendererContentSecurityPolicy(mode).includes("unsafe-eval"));
   }
+  // Tauri applies its own header and the page's meta together, so both must allow exactly its IPC.
+  const tauri = rendererContentSecurityPolicy("tauri");
+  assert.deepEqual(directives(tauri)["connect-src"], ["ipc:", "http://ipc.localhost"]);
+  assert.deepEqual(directives(tauri)["script-src"], ["'self'"]);
+  const tauriConfig = JSON.parse(readFileSync(new URL("../apps/desktop/tauri.conf.json", import.meta.url), "utf8"));
+  assert.equal(tauriConfig.app.security.csp, tauri);
   const dev = directives(rendererContentSecurityPolicy("development", "http://127.0.0.1:5173/"));
   assert.ok(dev["script-src"].includes("'unsafe-inline'"));
   assert.ok(dev["connect-src"].includes("ws://127.0.0.1:5173"));
