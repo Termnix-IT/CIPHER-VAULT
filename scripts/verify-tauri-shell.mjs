@@ -3,7 +3,9 @@
 // refuses outside connections, navigation, new windows and ungranted commands.
 // Usage: node scripts/verify-tauri-shell.mjs <e2e-exe> <screenshot-directory>
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { connect, powershell, screenshot, sleep, startE2eProcess, until } from "./lib/webview-e2e.mjs";
 
 const [exe, screenshotDirectory] = process.argv.slice(2);
@@ -14,7 +16,9 @@ const NOT_PORTED = "この版では保管庫をまだ開けません。現行の
 const PORT = 9341;
 const settle = (page, expression) => page.evaluate(`Promise.resolve().then(() => ${expression}).then((value) => ({ value }), (error) => ({ error: String(error?.message ?? error) }))`);
 
-const { child, events, errors } = startE2eProcess(exe, PORT);
+// A fresh WebView2 profile for each run, so the check never touches the profile of a real install.
+const profile = mkdtempSync(path.join(tmpdir(), "cipher-vault-e2e-profile-"));
+const { child, events, errors } = startE2eProcess(exe, PORT, { CIPHER_VAULT_E2E_DEBUG_PORT: String(PORT), CIPHER_VAULT_E2E_PROFILE: profile });
 let page;
 try {
   page = await connect(PORT);
@@ -74,4 +78,7 @@ try {
 } finally {
   page?.close();
   child.kill();
+  await until("the app to exit", () => child.exitCode !== null || child.signalCode !== null).catch(() => undefined);
+  // WebView2's helper processes release the profile a moment after the app exits.
+  rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
 }

@@ -37,6 +37,23 @@ fn is_application_url(url: &Url) -> bool {
     matches!((url.scheme(), url.host_str()), ("http", Some("tauri.localhost")) | ("tauri", Some("localhost")))
 }
 
+/// The automated checks reach the page through WebView2's debugging port. The arguments are set
+/// here rather than through WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS, which WebView2 does not apply
+/// on every machine (it was ignored on the CI runner). WebView2 requires a separate profile for
+/// different browser arguments, so the check passes a temporary one.
+#[cfg(feature = "e2e")]
+fn with_debugging_port<'a, R: tauri::Runtime, M: tauri::Manager<R>>(builder: WebviewWindowBuilder<'a, R, M>) -> WebviewWindowBuilder<'a, R, M> {
+    let port = std::env::var("CIPHER_VAULT_E2E_DEBUG_PORT").ok().and_then(|value| value.parse::<u16>().ok());
+    let profile = std::env::var_os("CIPHER_VAULT_E2E_PROFILE").map(std::path::PathBuf::from).filter(|path| path.is_absolute());
+    let (Some(port), Some(profile)) = (port, profile) else {
+        fail_startup("Set CIPHER_VAULT_E2E_DEBUG_PORT and an absolute CIPHER_VAULT_E2E_PROFILE for the e2e build.");
+    };
+    // wry's own defaults are replaced by these, so they are repeated.
+    builder.data_directory(profile).additional_browser_args(&format!(
+        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port={port} --remote-allow-origins=*"
+    ))
+}
+
 fn fail_startup(message: &str) -> ! {
     eprintln!("{message}");
     std::process::exit(2);
@@ -55,15 +72,17 @@ fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![vault_status])
         .setup(|app| {
-            let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("CIPHER VAULT")
                 .inner_size(880.0, 780.0)
                 .min_inner_size(780.0, 680.0)
                 .initialization_script(include_str!("desktop-api.js"))
                 .on_navigation(is_application_url)
                 .on_new_window(|_url, _features| NewWindowResponse::Deny)
-                .disable_drag_drop_handler()
-                .build()?;
+                .disable_drag_drop_handler();
+            #[cfg(feature = "e2e")]
+            let builder = with_debugging_port(builder);
+            let window = builder.build()?;
             window.with_webview(|webview| {
                 match webview_hardening::apply_settings(&webview, || trace("renderer-gone")) {
                     Ok(settings) => trace(&format!("webview-settings {settings}")),
