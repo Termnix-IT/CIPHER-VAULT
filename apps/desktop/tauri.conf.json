@@ -29,7 +29,9 @@
             "allow-entries-update",
             "allow-entries-delete",
             "allow-entries-set-group",
-            "allow-password-generate"
+            "allow-password-generate",
+            "allow-backup-export",
+            "allow-backup-restore"
           ]
         }
       ],

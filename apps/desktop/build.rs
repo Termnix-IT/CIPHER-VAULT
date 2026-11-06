@@ -14,6 +14,8 @@ const COMMANDS: &[&str] = &[
     "entries_delete",
     "entries_set_group",
     "password_generate",
+    "backup_export",
+    "backup_restore",
 ];
 
 fn main() {

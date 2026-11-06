@@ -37,7 +37,9 @@
     deleteEntry: (id, sessionId) => call("entries_delete", { sessionId, id }),
     setEntriesGroup: (payload, sessionId) => call("entries_set_group", { sessionId, payload }),
     generatePassword: (options, sessionId) => call("password_generate", { sessionId, options }),
-    runVaultMaintenance: notPorted, exportBackup: notPorted, restoreBackup: notPorted, auditVault: notPorted, copyText: notPorted,
+    exportBackup: (payload, sessionId) => call("backup_export", { sessionId, payload }),
+    restoreBackup: (payload, sessionId) => call("backup_restore", { sessionId, payload }),
+    runVaultMaintenance: notPorted, auditVault: notPorted, copyText: notPorted,
     checkForUpdates: notPorted, downloadUpdate: notPorted, installUpdate: notPorted, openReleasePage: notPorted
   };
   Object.defineProperty(window, "passwordManager", { value: Object.freeze(api) });

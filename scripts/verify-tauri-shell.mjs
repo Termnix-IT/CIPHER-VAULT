@@ -1,7 +1,8 @@
 // Checks the Tauri app in apps/desktop through its `e2e` build: it refuses to start without a test
 // folder or on a folder holding real data, the screen sets up, adds to, locks and unlocks a vault
-// in a temporary folder through the Rust core, and the window keeps refusing outside connections,
-// navigation, new windows and ungranted commands. Only synthetic passwords are used.
+// in a temporary folder through the Rust core, saves a backup and restores it into the emptied
+// vault, and the window keeps refusing outside connections, navigation, new windows, downloads it
+// did not make and ungranted commands. Only synthetic passwords are used.
 // Usage: node scripts/verify-tauri-shell.mjs <e2e-exe> <screenshot-directory>
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -16,11 +17,19 @@ mkdirSync(screenshotDirectory, { recursive: true });
 
 const NOT_PORTED = "この機能はこの版ではまだ使えません。現行のアプリを使ってください";
 const PASSWORD = "synthetic-shell-check-password";
+const BACKUP_PASSPHRASE = "synthetic-shell-backup-passphrase";
 const PORT = 9341;
 const settle = (page, expression) => page.evaluate(`Promise.resolve().then(() => ${expression}).then((value) => ({ value }), (error) => ({ error: String(error?.message ?? error) }))`);
 const status = (page) => page.evaluate("window.passwordManager.fetchVaultStatus()");
 const screenHas = (page, text) => page.evaluate(`document.body.innerText.includes(${JSON.stringify(text)})`);
 const click = (page, selector) => page.evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
+const menu = (page, group, item) => page.evaluate(`(() => {
+  [...document.querySelectorAll(".app-menu-trigger")].find((node) => node.textContent === ${JSON.stringify(group)}).click();
+  return new Promise((resolve) => setTimeout(() => {
+    [...document.querySelectorAll(".app-menu-item")].find((node) => node.textContent.endsWith(${JSON.stringify(item)})).click();
+    resolve(true);
+  }, 100));
+})()`);
 const lockScreenShown = (page) => page.evaluate(`!!document.querySelector('input[aria-label="マスターパスワード"]')`);
 
 async function type(page, selector, text) {
@@ -73,9 +82,11 @@ function startupRefusals(base) {
 const base = mkdtempSync(path.join(tmpdir(), "cipher-vault-e2e-"));
 const profile = path.join(base, "profile");
 const data = path.join(base, "data");
+const downloads = path.join(base, "downloads");
 mkdirSync(data);
+mkdirSync(downloads);
 const result = { startupRefusals: startupRefusals(base) };
-const { child, events, errors } = startE2eProcess(exe, PORT, { CIPHER_VAULT_E2E_DEBUG_PORT: String(PORT), CIPHER_VAULT_E2E_PROFILE: profile, CIPHER_VAULT_DATA_DIR: data });
+const { child, events, errors } = startE2eProcess(exe, PORT, { CIPHER_VAULT_E2E_DEBUG_PORT: String(PORT), CIPHER_VAULT_E2E_PROFILE: profile, CIPHER_VAULT_DATA_DIR: data, CIPHER_VAULT_E2E_DOWNLOADS: downloads });
 let page;
 try {
   page = await connect(PORT);
@@ -128,6 +139,61 @@ try {
   const file = readFileSync(path.join(data, "password-manager.db"));
   result.passwordInPlainText = file.includes(Buffer.from(generated));
   assert.equal(result.passwordInPlainText, false);
+
+  // ---- A backup, saved through the screen and restored into the emptied vault
+  await menu(page, "ツール", "バックアップ");
+  await until("the backup dialog", () => page.evaluate(`!!document.querySelector("#backup-export")`));
+  await type(page, "#backup-export label:nth-of-type(1) input", BACKUP_PASSPHRASE);
+  await type(page, "#backup-export label:nth-of-type(2) input", BACKUP_PASSPHRASE);
+  await click(page, 'button[form="backup-export"]');
+  await until("the saved backup", () => events.includes("download-finished true"));
+  const [backupName] = readdirSync(downloads);
+  assert.match(backupName, /^CIPHER-VAULT-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.cvault$/);
+  const backupFile = readFileSync(path.join(downloads, backupName), "utf8");
+  const envelope = JSON.parse(backupFile);
+  assert.equal(envelope.format, "CIPHER-VAULT");
+  assert.equal(envelope.version, 1);
+  assert.equal(backupFile.includes(generated) || backupFile.includes("synthetic-shell-id"), false, "the backup is encrypted");
+  assert.equal(await screenHas(page, "ファイルの保存を始めました"), true);
+  result.backupSaved = { version: envelope.version, name: "CIPHER-VAULT-<time>.cvault" };
+  await screenshot(page, screenshotDirectory, "tauri-shell-backup");
+  await click(page, 'button[aria-label="閉じる"]');
+
+  // A download the screen did not make is refused and nothing is saved. A data: link is stopped by
+  // the navigation guard before WebView2 starts a download; the download guard covers the rest.
+  await page.evaluate(`(() => { const anchor = document.createElement("a"); anchor.href = "data:application/octet-stream,x"; anchor.download = "other.cvault"; document.body.append(anchor); anchor.click(); anchor.remove(); })()`);
+  await sleep(1500);
+  assert.deepEqual(readdirSync(downloads), [backupName]);
+  assert.equal(events.filter((event) => event.startsWith("download-finished")).length, 1);
+  result.otherDownloadRefused = true;
+
+  const unlocked = await status(page);
+  await page.evaluate(`window.passwordManager.deleteEntry(${JSON.stringify(listed[0].id)}, ${JSON.stringify(unlocked.sessionId)})`);
+  await menu(page, "ファイル", "一覧を更新");
+  await until("the emptied list", async () => !(await screenHas(page, "画面で追加")));
+  await menu(page, "ツール", "バックアップ");
+  await until("the backup dialog", () => page.evaluate(`!!document.querySelector("#backup-export")`));
+  await page.evaluate(`[...document.querySelectorAll('[role="tab"]')].find((node) => node.textContent === "読み込む").click()`);
+  await until("the restore form", () => page.evaluate(`!!document.querySelector("#backup-restore")`));
+  const { result: input } = await page.send("Runtime.evaluate", { expression: `document.querySelector('#backup-restore input[type="file"]')` });
+  await page.send("DOM.setFileInputFiles", { objectId: input.objectId, files: [path.join(downloads, backupName)] });
+  await type(page, '#backup-restore input[type="password"]', "synthetic-wrong-backup-phrase");
+  await until("the restore button", () => page.evaluate(`!document.querySelector('button[form="backup-restore"]').disabled`));
+  await click(page, 'button[form="backup-restore"]');
+  await until("the wrong passphrase", () => screenHas(page, "パスフレーズが違うか、バックアップファイルが破損しています"));
+  await type(page, '#backup-restore input[type="password"]', BACKUP_PASSPHRASE);
+  await click(page, 'button[form="backup-restore"]');
+  await until("the restore", () => screenHas(page, "1件を読み込みました。"));
+  await click(page, 'button[aria-label="閉じる"]');
+  await until("the restored entry", () => screenHas(page, "画面で追加"));
+  const restoredSession = (await status(page)).sessionId;
+  const [restored] = (await page.evaluate(`window.passwordManager.fetchEntries(${JSON.stringify(restoredSession)})`)).items;
+  assert.equal(restored.id, listed[0].id);
+  assert.equal((await page.evaluate(`window.passwordManager.fetchEntry(${JSON.stringify(restored.id)}, ${JSON.stringify(restoredSession)})`)).password, generated);
+  result.restoredThroughScreen = true;
+  result.restoreIntoFullVault = await settle(page, `window.passwordManager.restoreBackup({ passphrase: ${JSON.stringify(BACKUP_PASSPHRASE)}, content: ${JSON.stringify(backupFile)} }, ${JSON.stringify(restoredSession)})`);
+  assert.deepEqual(result.restoreIntoFullVault, { error: "復元できるのは空の保管庫のみです" });
+
   result.notPorted = await settle(page, `window.passwordManager.copyText("x", ${JSON.stringify((await status(page)).sessionId)})`);
   assert.deepEqual(result.notPorted, { error: NOT_PORTED });
 
@@ -141,7 +207,7 @@ try {
   assert.ok(result.outsideFetch.error, "an outside connection must fail");
   result.ungrantedCommand = await settle(page, `window.__TAURI_INTERNALS__.invoke("plugin:window|set_title", { label: "main", value: "changed" })`);
   assert.ok(result.ungrantedCommand.error, "a command no capability grants must be refused");
-  result.unknownCommand = await settle(page, `window.__TAURI_INTERNALS__.invoke("backup_export", {})`);
+  result.unknownCommand = await settle(page, `window.__TAURI_INTERNALS__.invoke("vault_audit", {})`);
   assert.ok(result.unknownCommand.error);
   result.newWindow = await page.evaluate(`window.open("https://example.test/") === null`);
 

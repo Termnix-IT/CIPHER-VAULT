@@ -294,6 +294,16 @@ pub fn insert(transaction: &Transaction<'_>, id: &str, login: &SealedLogin<'_>, 
     Ok(())
 }
 
+/// restoreLegacyEntries: a login from a backup keeps its id and dates.
+pub fn insert_restored(transaction: &Transaction<'_>, id: &str, login: &SealedLogin<'_>, created_at: &str, updated_at: &str, changed_at: Option<&str>) -> rusqlite::Result<()> {
+    transaction.execute(
+        "INSERT INTO password_entries (id, service_name, login_id, encrypted_password, encrypted_notes, url, tags, group_name, created_at, updated_at, password_changed_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params![id, login.service_name, login.login_id, login.password, login.notes, login.url, login.tags, login.group, created_at, updated_at, changed_at],
+    )?;
+    Ok(())
+}
+
 pub fn update(transaction: &Transaction<'_>, id: &str, login: &SealedLogin<'_>, changed_at: Option<&str>, now: &str) -> rusqlite::Result<usize> {
     transaction.execute(
         "UPDATE password_entries SET service_name = ?2, login_id = ?3, encrypted_password = ?4, encrypted_notes = ?5, url = ?6, tags = ?7, group_name = ?8,

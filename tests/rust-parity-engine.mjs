@@ -4,6 +4,7 @@
 //
 //   node tests/rust-parity-engine.mjs fixtures                 prints the shared invalid-input cases
 //   node tests/rust-parity-engine.mjs prepare <kind> <folder>  writes a starting vault, prints its password
+//   node tests/rust-parity-engine.mjs backups                  prints .cvault files of each version for one passphrase
 //   node tests/rust-parity-engine.mjs serve                    runs calls from stdin on PASSWORD_MANAGER_DATA_DIR
 //
 // serve reads one JSON request per line, {"method": "...", "args": [...]}, where the string
@@ -54,6 +55,7 @@ async function serve() {
   const entries = await import(`${base}services/entry-service.js`);
   const { generatePassword } = await import(`${base}services/password-service.js`);
   const session = await import(`${base}services/vault-session.js`);
+  const backup = await import(`${base}services/backup-service.js`);
   maintenance.openApplicationVault();
   // handleControl and handleSession in desktop-main.ts, without the quit and power checks.
   const control = (action) => (sessionId, payload) => { session.vaultSession.requireGeneration(sessionId); return action(payload); };
@@ -71,7 +73,10 @@ async function serve() {
     update: scoped(entries.updateEntry),
     delete: scoped(entries.deleteEntry),
     setGroup: scoped(entries.setEntriesGroup),
-    generate: scoped(generatePassword)
+    generate: scoped(generatePassword),
+    exportBackup: scoped(backup.exportBackup),
+    restoreBackup: scoped(backup.restoreBackup),
+    decodeBackup: decodeBackup
   };
   for await (const line of createInterface({ input: process.stdin })) {
     const { method, args } = JSON.parse(line);
@@ -85,9 +90,41 @@ async function serve() {
   maintenance.closeApplicationVault();
 }
 
+/** Reads a file the other engine wrote, without a vault. */
+async function decodeBackup(content, passphrase) {
+  const { deriveBackupKey } = await import(`${base}crypto/backup-v1.js`);
+  const { decodeVaultBackup, parseVaultBackup } = await import(`${base}crypto/vault-backup.js`);
+  const envelope = parseVaultBackup(content), key = await deriveBackupKey(passphrase, envelope.salt);
+  try { return { version: envelope.version, entries: decodeVaultBackup(envelope, key) }; } finally { key.fill(0); }
+}
+
+/** One file of each version, with fixed ids and dates so both engines restore the same entries. */
+async function backups() {
+  const { randomBytes } = await import("node:crypto");
+  const { deriveBackupKey } = await import(`${base}crypto/backup-v1.js`);
+  const { encodeVaultBackup } = await import(`${base}crypto/vault-backup.js`);
+  const passphrase = "synthetic-parity-backup-passphrase";
+  const dates = { createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-02-01T00:00:00.000Z" };
+  const common = { notes: "", url: "", tags: ["backup"], group: null, ...dates };
+  const login = { id: "aaaaaaaa-0000-4000-8000-000000000001", serviceName: "Restored login", loginId: "restored", password: "synthetic-restored-password",
+    ...common, notes: "restored notes", url: "https://example.test/", group: "復元", passwordChangedAt: "2026-01-15T00:00:00.000Z" };
+  const second = { ...login, id: "AAAAAAAA-0000-4000-8000-000000000002", serviceName: "Restored second", notes: "", passwordChangedAt: null };
+  const apiKey = { id: "aaaaaaaa-0000-4000-8000-000000000003", type: "apiKey", serviceName: "Restored key", ...common, apiKey: { key: "synthetic-restored-key", keyId: "", expiresOn: null } };
+  const financial = { id: "aaaaaaaa-0000-4000-8000-000000000004", type: "financial", serviceName: "Restored bank", ...common,
+    financial: { loginId: "bank", loginPassword: "synthetic-restored-bank", tradingPassword: "", extraSecrets: [] } };
+  const files = { passphrase };
+  for (const [name, entries] of [["v1", [login, second]], ["v2", [login, apiKey]], ["v3", [login, apiKey, financial]]]) {
+    const salt = randomBytes(16), key = await deriveBackupKey(passphrase, salt);
+    try { files[name] = encodeVaultBackup(entries, key, salt); } finally { key.fill(0); }
+  }
+  return files;
+}
+
 if (mode === "fixtures") {
   const { invalidContractCases, validEntryPayload } = await import("./input-contract-fixtures.mjs");
   write({ valid: validEntryPayload(), invalid: invalidContractCases() });
+} else if (mode === "backups") {
+  write(await backups());
 } else if (mode === "prepare") {
   write(await prepare(rest[0], rest[1]));
 } else if (mode === "serve") {

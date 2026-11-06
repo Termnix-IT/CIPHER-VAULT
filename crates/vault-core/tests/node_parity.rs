@@ -11,7 +11,7 @@
 //! nature (ids, session ids, times, generated passwords) are replaced by names in order of
 //! appearance before the comparison.
 
-use cipher_vault_core::Vault;
+use cipher_vault_core::{Vault, VaultError, backup, crypto};
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -94,6 +94,9 @@ impl Engine for RustEngine {
             "delete" => vault.delete_entry(arg(0), arg(1)),
             "setGroup" => vault.set_entries_group(arg(0), arg(1)),
             "generate" => vault.generate_password(arg(0), arg(1)),
+            "exportBackup" => vault.export_backup(arg(0), arg(1)),
+            "restoreBackup" => vault.restore_backup(arg(0), arg(1)),
+            "decodeBackup" => decode_backup(args[0].as_str().unwrap(), args[1].as_str().unwrap()),
             other => panic!("unknown method {other}"),
         };
         match result {
@@ -101,6 +104,13 @@ impl Engine for RustEngine {
             Err(error) => json!({ "error": { "status": error.status, "message": error.message } }),
         }
     }
+}
+
+/// Reads a file the other engine wrote, without a vault.
+fn decode_backup(content: &str, passphrase: &str) -> Result<Value, VaultError> {
+    let envelope = backup::parse(content)?;
+    let key = crypto::derive_strong_key(passphrase.as_bytes(), &envelope.salt).unwrap();
+    Ok(json!({ "version": envelope.version, "entries": backup::decode(&envelope, &key)? }))
 }
 
 struct NodeEngine {
@@ -244,6 +254,15 @@ fn run(engine: &mut dyn Engine, directory: &Path, scenario: &Scenario) -> Vec<(S
                         .map(|group| password.chars().any(|char| group(&char)))
                         .collect();
                     answer["ok"]["password"] = json!({ "length": password.chars().count(), "groups": groups });
+                }
+                // A backup is sealed with a random salt and IV: only its version and name are compared.
+                if *method == "exportBackup"
+                    && let Some(file) = answer.get_mut("ok").and_then(Value::as_object_mut)
+                {
+                    let name = file["fileName"].as_str().unwrap_or_default();
+                    let named = name.starts_with("CIPHER-VAULT-") && name.ends_with("Z.cvault") && name.len() == "CIPHER-VAULT-2026-01-01T00-00-00-000Z.cvault".len();
+                    let version = serde_json::from_str::<Value>(file["content"].as_str().unwrap_or_default()).map(|content| content["version"].clone()).unwrap_or_default();
+                    *file = Map::from_iter([("fileName".to_string(), json!(named)), ("version".to_string(), version)]);
                 }
                 // Recovery itself arrives in a later phase, and the Rust core gives no hint for it yet.
                 if let Some(maintenance) = answer["ok"].get_mut("maintenance").and_then(Value::as_object_mut) {
@@ -485,4 +504,116 @@ fn a_vault_changed_underneath_stops_as_in_node() {
         .session("unlock", vec![json!({ "masterPassword": PASSWORD })])
         .session("create", vec![login()]);
     compare("empty", &scenario);
+}
+
+// ---- Backups
+
+fn backup_files() -> Value {
+    node(&["backups"])
+}
+
+fn backup_payload(files: &Value, version: &str) -> Value {
+    json!({ "passphrase": files["passphrase"], "content": files[version] })
+}
+
+fn export_cases(scenario: &mut Scenario, passphrase: &Value) {
+    scenario
+        .session("exportBackup", vec![json!(UNDEFINED)])
+        .session("exportBackup", vec![json!({ "passphrase": "short" })])
+        .session("exportBackup", vec![json!({ "passphrase": 12 })])
+        .session("exportBackup", vec![json!({ "passphrase": passphrase, "content": "" })])
+        .session("exportBackup", vec![json!({ "passphrase": passphrase })]);
+}
+
+#[test]
+#[ignore = "needs Node.js and the built API: npm run test:rust-parity"]
+fn backups_of_a_legacy_vault_answer_as_the_node_services_do() {
+    let files = backup_files();
+    let passphrase = files["passphrase"].clone();
+    let mut scenario = Scenario::default();
+    scenario
+        .session("exportBackup", vec![json!({ "passphrase": passphrase })])
+        .session("setup", vec![json!({ "masterPassword": PASSWORD })])
+        .session("exportBackup", vec![json!({ "passphrase": passphrase })])
+        .session("restoreBackup", vec![json!({ "passphrase": passphrase })])
+        .session("restoreBackup", vec![json!({ "passphrase": passphrase, "content": 1 })])
+        .session("restoreBackup", vec![json!({ "passphrase": passphrase, "content": "not json" })])
+        .session("restoreBackup", vec![json!({ "passphrase": passphrase, "content": "{\"version\":4}" })])
+        .session("restoreBackup", vec![json!({ "passphrase": passphrase, "content": files["v1"].as_str().unwrap().replace("\"kdf\"", "\"extra\":1,\"kdf\"") })])
+        .session("restoreBackup", vec![json!({ "passphrase": "synthetic-parity-wrong-passphrase", "content": files["v1"] })])
+        .session("restoreBackup", vec![backup_payload(&files, "v3")])
+        .session("restoreBackup", vec![backup_payload(&files, "v1")])
+        .session("list", vec![])
+        .session("get", vec![entry(0)])
+        .session("get", vec![entry(1)])
+        .session("restoreBackup", vec![backup_payload(&files, "v1")]);
+    export_cases(&mut scenario, &passphrase);
+    scenario.session("create", vec![login()]).session("exportBackup", vec![json!({ "passphrase": passphrase })]);
+    compare("empty", &scenario);
+}
+
+#[test]
+#[ignore = "needs Node.js and the built API: npm run test:rust-parity"]
+fn backups_of_a_v2_vault_answer_as_the_node_services_do() {
+    let password = node(&["prepare", "v2", TemporaryDirectory::new().0.join("probe").to_str().unwrap()])["password"].clone();
+    let files = backup_files();
+    let mut scenario = Scenario::default();
+    scenario
+        .session("unlock", vec![json!({ "masterPassword": password })])
+        .session("list", vec![])
+        .session("restoreBackup", vec![backup_payload(&files, "v3")])
+        .session("delete", vec![entry(0)])
+        .session("delete", vec![entry(1)])
+        .session("restoreBackup", vec![json!({ "passphrase": "synthetic-parity-wrong-passphrase", "content": files["v3"] })])
+        .session("restoreBackup", vec![backup_payload(&files, "v3")])
+        .session("list", vec![])
+        .session("get", vec![entry(2)])
+        .session("get", vec![entry(3)])
+        .session("get", vec![entry(4)]);
+    export_cases(&mut scenario, &files["passphrase"]);
+    scenario
+        .session("delete", vec![entry(2)])
+        .session("delete", vec![entry(3)])
+        .session("delete", vec![entry(4)])
+        .session("restoreBackup", vec![backup_payload(&files, "v1")])
+        .session("list", vec![])
+        .session("exportBackup", vec![json!({ "passphrase": files["passphrase"] })])
+        .session("restoreBackup", vec![backup_payload(&files, "v2")]);
+    compare("v2", &scenario);
+}
+
+/// Each engine opens the file the other one wrote, with every kind of entry.
+#[test]
+#[ignore = "needs Node.js and the built API: npm run test:rust-parity"]
+fn backups_written_by_each_engine_open_in_the_other() {
+    let password = node(&["prepare", "v2", TemporaryDirectory::new().0.join("probe").to_str().unwrap()])["password"].clone();
+    let passphrase = json!("synthetic-parity-cross-passphrase");
+    let folder = TemporaryDirectory::new();
+    let source = folder.0.join("source");
+    node(&["prepare", "v2", source.to_str().unwrap()]);
+    let (rust_directory, node_directory) = (folder.0.join("rust"), folder.0.join("node"));
+    copy_directory(&source, &rust_directory);
+    copy_directory(&source, &node_directory);
+    let mut rust = RustEngine(Vault::open(&rust_directory).unwrap());
+    let mut node_engine = NodeEngine::start(&node_directory);
+    let mut written = Vec::new();
+    for engine in [&mut rust as &mut dyn Engine, &mut node_engine] {
+        let id = |engine: &mut dyn Engine| engine.call("status", &[])["ok"]["sessionId"].clone();
+        let current = id(engine);
+        assert!(engine.call("unlock", &[current, json!({ "masterPassword": password })]).get("ok").is_some());
+        for item in additional_items() {
+            let current = id(engine);
+            assert!(engine.call("create", &[current, item]).get("ok").is_some());
+        }
+        let current = id(engine);
+        let items = engine.call("list", &[current])["ok"]["items"].as_array().unwrap().clone();
+        let entries: Vec<Value> = items.iter().map(|item| { let current = id(engine); engine.call("get", &[current, item["id"].clone()])["ok"].clone() }).collect();
+        let current = id(engine);
+        let content = engine.call("exportBackup", &[current, json!({ "passphrase": passphrase })])["ok"]["content"].clone();
+        written.push((content, entries));
+    }
+    let (rust_file, rust_entries) = &written[0];
+    let (node_file, node_entries) = &written[1];
+    assert_eq!(node_engine.call("decodeBackup", &[rust_file.clone(), passphrase.clone()]), json!({ "ok": { "version": 3, "entries": rust_entries } }));
+    assert_eq!(rust.call("decodeBackup", &[node_file.clone(), passphrase.clone()]), json!({ "ok": { "version": 3, "entries": node_entries } }));
 }

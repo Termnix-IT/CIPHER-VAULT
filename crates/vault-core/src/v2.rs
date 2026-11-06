@@ -301,6 +301,80 @@ impl V2Store {
         })
     }
 
+    /// restoreEntries: fills an empty vault in one transaction. Every nonce is reserved durably
+    /// before its entry is sealed, as in a single write, and the entries are saved only if the
+    /// vault is still empty when the write lock is held.
+    pub fn restore(&mut self, root: &[u8], entries: &[Value], active: Active<'_>) -> StoreResult<usize> {
+        active()?;
+        require(entries.len() <= MAX_ENTRIES)?;
+        let is_empty = |connection: &Connection| -> StoreResult<()> {
+            let found = connection.query_row("SELECT 1 FROM vault_entries WHERE envelope IS NOT NULL LIMIT 1", [], |_| Ok(())).optional()?;
+            if found.is_some() { Err(StoreError::Conflict) } else { Ok(()) }
+        };
+        is_empty(&self.connection)?;
+        if self.header(&self.connection)? + entries.len() as i64 > MAX_ENCRYPTIONS {
+            return Err(StoreError::KeyLimit);
+        }
+        let mut snapshots = Vec::with_capacity(entries.len());
+        let mut ids = std::collections::HashSet::new();
+        let mut bytes = 0;
+        for entry in entries {
+            let id = entry["id"].as_str().ok_or(StoreError::Invalid)?;
+            require(valid_entry_id(id) && ids.insert(id))?;
+            // A deleted entry keeps its revision, so a restored one continues after it.
+            let stored: Option<i64> = self.connection.query_row("SELECT revision FROM vault_entries WHERE entry_id = ?1", [id], |row| row.get(0)).optional()?;
+            let revision = match stored {
+                Some(stored) => revision_of(&Value::from(stored))? + 1,
+                None => 1,
+            };
+            let plaintext = zeroize::Zeroizing::new(serde_json::to_vec(entry).map_err(|_| StoreError::Invalid)?);
+            bytes += plaintext.len();
+            require(bytes <= MAX_PLAINTEXT_BYTES)?;
+            input::validate_stored_entry(entry, id).map_err(|_| StoreError::Invalid)?;
+            snapshots.push((id, revision, plaintext, schema_version_for(entry)));
+        }
+        let mut sealed = Vec::with_capacity(snapshots.len());
+        for (id, revision, plaintext, _) in &snapshots {
+            active()?;
+            let mut reserved = None;
+            for _ in 0..NONCE_ATTEMPTS {
+                let candidate = fresh_iv()?;
+                if self.reserve(id, *revision, &candidate)? {
+                    reserved = Some(candidate);
+                    break;
+                }
+            }
+            let iv = reserved.ok_or(StoreError::Invalid)?;
+            let envelope = crypto::seal_v2_entry(root, &iv, plaintext, &self.vault_id, &self.key_id, id, *revision).map_err(|_| StoreError::Invalid)?;
+            sealed.push((*id, *revision, iv, envelope));
+        }
+        active()?;
+        let (vault_id, key_id) = (self.vault_id.clone(), self.key_id.clone());
+        let version = snapshots.iter().map(|snapshot| snapshot.3).max().unwrap_or(0);
+        self.immediate(active, |transaction| {
+            is_empty(transaction)?;
+            header(transaction, &vault_id, &key_id)?;
+            for (id, revision, iv, envelope) in &sealed {
+                Self::can_write(transaction, id, *revision)?;
+                let is_reserved = transaction
+                    .query_row("SELECT 1 FROM vault_nonces WHERE key_id = ?1 AND iv = ?2 AND entry_id = ?3 AND revision = ?4", params![key_id, &iv[..], id, sql_revision(*revision)?], |_| Ok(()))
+                    .optional()?
+                    .is_some();
+                require(is_reserved)?;
+                transaction.execute(
+                    "INSERT INTO vault_entries (entry_id, revision, envelope) VALUES (?1, ?2, ?3)
+                     ON CONFLICT(entry_id) DO UPDATE SET revision = excluded.revision, envelope = excluded.envelope",
+                    params![id, sql_revision(*revision)?, envelope],
+                )?;
+            }
+            let current: i64 = transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
+            if version > current {
+                transaction.pragma_update(None, "user_version", version)?;
+            }
+            Ok(sealed.len())
+        })
+    }
+
     /// deleteEntry: removes the ciphertext and keeps the id and revision as a tombstone, so the
     /// revision never repeats. Its nonces stay used.
     pub fn delete(&mut self, id: &str, revision: u64, active: Active<'_>) -> StoreResult<()> {

@@ -27,7 +27,7 @@ npm workspaces、TypeScript、React + Vite、Node.js標準HTTP、Electron、bett
 - `apps/electron/src/main.ts` / `preload.ts`: ウィンドウ、IPC、サービス初期化、クリップボード。
 - `apps/electron/src/manual-updater.ts` / `update-service.ts`: 手動更新の状態制御とElectron接続。
 - `packages/shared/src/types.ts`: Web・API・Electronの共通型。契約変更はここから揃える。
-- `crates/vault-core/`: Rust版の中核（Tauri非依存）。暗号形式、保存、セッション、初期設定・解除・ロック・リセット、エントリ操作、パスワード生成。挙動はTypeScript版と `tests/rust-parity-engine.mjs` で比べる。
+- `crates/vault-core/`: Rust版の中核（Tauri非依存）。暗号形式、保存、セッション、初期設定・解除・ロック・リセット、エントリ操作、パスワード生成、バックアップ。挙動はTypeScript版と `tests/rust-parity-engine.mjs` で比べる。
 - `apps/desktop/`: Tauriのデスクトップアプリ。画面に公開するコマンドは `build.rs` の一覧と `tauri.conf.json` の `capabilities` の両方に書く。CSPは `renderer-policy.ts` の `tauri` モードと一致させる。移行が終わるまで保存先の既定値はなく、`CIPHER_VAULT_DATA_DIR` の試験用フォルダだけを開く。
 
 WebはHTTP → サービス → SQLite、Electronはpreload → IPC → 同じサービス → SQLiteを使う。Electron版の保管庫操作にHTTPサーバーは不要。

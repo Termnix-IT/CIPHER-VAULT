@@ -7,6 +7,7 @@
 //! write lock, the data directory must still select the same file; otherwise the vault fails
 //! closed until the app restarts, as in the TypeScript app.
 
+use crate::backup;
 use crate::crypto::{self, CryptoError, Secret};
 use crate::error::{self, Result, VaultError, changed, context_failed, not_found};
 use crate::files::{self, FileIdentity};
@@ -30,6 +31,7 @@ const LEGACY_KDF_PARAMS: &str = r#"{"algorithm":"scrypt","keyLength":32,"verifie
 const LEGACY_VERIFIER: &str = "hmac-sha256-v1";
 const DECRYPT_FAILED: &str = "保存済みのデータを復号できませんでした";
 const KDF_FAILED: &str = "鍵を導出できませんでした";
+const EMPTY_ONLY: &str = "復元できるのは空の保管庫のみです";
 
 enum Storage {
     Legacy { database: Mutex<LegacyDatabase>, identity: FileIdentity },
@@ -66,6 +68,7 @@ pub struct Vault {
     clock: Clock,
     failed: AtomicBool,
     writing: AtomicBool,
+    backing_up: AtomicBool,
 }
 
 fn random_bytes<const N: usize>() -> Result<Zeroizing<[u8; N]>> {
@@ -148,7 +151,7 @@ impl Vault {
         let mut session = Session::new(clock());
         session.lock(LockReason::Manual);
         let session = Mutex::new(session);
-        Ok(Self { root, storage, session, guard: UnlockGuard::default(), clock, failed: AtomicBool::new(false), writing: AtomicBool::new(false) })
+        Ok(Self { root, storage, session, guard: UnlockGuard::default(), clock, failed: AtomicBool::new(false), writing: AtomicBool::new(false), backing_up: AtomicBool::new(false) })
     }
 
     fn now(&self) -> Stamp {
@@ -552,40 +555,46 @@ impl Vault {
 
     /// listEntries. A list never carries secrets.
     pub fn list_entries(&self, session_id: Option<&Value>) -> Result<Value> {
-        self.with_session(session_id, |_| {
-            if let Some(store) = self.v2() {
-                return self.v2_operation(store, false, |store, root, active| {
-                    let mut items = Vec::new();
-                    for (id, _) in store.entries()? {
-                        active()?;
-                        items.push(v2_summary(&Self::read_v2(store, root, &id)?.0));
-                    }
-                    let text = |value: &Value, field: &str| value[field].as_str().unwrap_or_default().to_string();
-                    items.sort_by(|a, b| text(b, "updatedAt").cmp(&text(a, "updatedAt")).then_with(|| text(a, "id").cmp(&text(b, "id"))));
-                    Ok(json!({ "items": items }))
-                });
-            }
-            let session = self.require_unlocked_vault(None)?;
-            let database = self.legacy().ok_or_else(|| self.fail())?;
-            let rows = database.lock().unwrap().list().map_err(|_| self.fail())?;
-            let items: Vec<Value> = rows.iter().map(legacy::summary).collect();
-            self.require_unlocked_vault(Some(&session))?;
-            Ok(json!({ "items": items }))
-        })
+        self.with_session(session_id, |_| self.entry_list())
+    }
+
+    /// listEntries without the session wrapper, which the backup also uses.
+    fn entry_list(&self) -> Result<Value> {
+        if let Some(store) = self.v2() {
+            return self.v2_operation(store, false, |store, root, active| {
+                let mut items = Vec::new();
+                for (id, _) in store.entries()? {
+                    active()?;
+                    items.push(v2_summary(&Self::read_v2(store, root, &id)?.0));
+                }
+                let text = |value: &Value, field: &str| value[field].as_str().unwrap_or_default().to_string();
+                items.sort_by(|a, b| text(b, "updatedAt").cmp(&text(a, "updatedAt")).then_with(|| locale_order(&text(a, "id"), &text(b, "id"))));
+                Ok(json!({ "items": items }))
+            });
+        }
+        let session = self.require_unlocked_vault(None)?;
+        let database = self.legacy().ok_or_else(|| self.fail())?;
+        let rows = database.lock().unwrap().list().map_err(|_| self.fail())?;
+        let items: Vec<Value> = rows.iter().map(legacy::summary).collect();
+        self.require_unlocked_vault(Some(&session))?;
+        Ok(json!({ "items": items }))
     }
 
     /// getEntryById
     pub fn get_entry(&self, session_id: Option<&Value>, id: Option<&Value>) -> Result<Value> {
-        self.with_session(session_id, |_| {
-            if let Some(store) = self.v2() {
-                return self.v2_operation(store, false, |store, root, _| Ok(Self::read_v2(store, root, &input::parse_entry_id(id)?)?.0));
-            }
-            let session = self.require_unlocked_vault(None)?;
-            let id = input::parse_entry_id(id)?;
-            let entry = self.legacy_entry(&session, &id)?;
-            self.require_unlocked_vault(Some(&session))?;
-            Ok(entry)
-        })
+        self.with_session(session_id, |_| self.entry(id))
+    }
+
+    /// getEntryById without the session wrapper, which the backup also uses.
+    fn entry(&self, id: Option<&Value>) -> Result<Value> {
+        if let Some(store) = self.v2() {
+            return self.v2_operation(store, false, |store, root, _| Ok(Self::read_v2(store, root, &input::parse_entry_id(id)?)?.0));
+        }
+        let session = self.require_unlocked_vault(None)?;
+        let id = input::parse_entry_id(id)?;
+        let entry = self.legacy_entry(&session, &id)?;
+        self.require_unlocked_vault(Some(&session))?;
+        Ok(entry)
     }
 
     /// The sealed password and notes of a parsed login. Empty notes are stored as null.
@@ -762,10 +771,119 @@ impl Vault {
         self.with_session(session_id, |_| password::generate_password(options))
     }
 
+    // ---- Backups.
+
+    /// withBackupKey in backup-service.ts: one backup at a time, and the vault must still be
+    /// unlocked by the same session once the slow key derivation is done.
+    fn with_backup_key<T>(&self, passphrase: &str, salt: &[u8], action: impl FnOnce(&Secret) -> Result<T>) -> Result<T> {
+        self.require_unlocked_vault(None)?;
+        if self.backing_up.swap(true, Ordering::SeqCst) {
+            return Err(VaultError::conflict("バックアップ処理の完了を待ってください"));
+        }
+        struct Release<'a>(&'a AtomicBool);
+        impl Drop for Release<'_> {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::SeqCst);
+            }
+        }
+        let _release = Release(&self.backing_up);
+        let session = self.require_unlocked(None)?;
+        let key = crypto::derive_strong_key(passphrase.as_bytes(), salt).map_err(|_| VaultError::new(500, KDF_FAILED))?;
+        self.require_unlocked_vault(None)?;
+        self.require_unlocked(Some(&session))?;
+        let result = action(&key)?;
+        self.require_unlocked_vault(Some(&session))?;
+        Ok(result)
+    }
+
+    /// exportBackup: every entry, sealed with a key from the passphrase, as a `.cvault` file the
+    /// screen saves.
+    pub fn export_backup(&self, session_id: Option<&Value>, payload: Option<&Value>) -> Result<Value> {
+        self.with_session(session_id, |_| {
+            self.require_unlocked_vault(None)?;
+            let (passphrase, _) = input::parse_backup_payload(payload, false)?;
+            let passphrase = Zeroizing::new(passphrase);
+            let salt = random_bytes::<16>()?;
+            self.with_backup_key(&passphrase, salt.as_ref(), |key| {
+                let summaries = self.entry_list()?;
+                let summaries = summaries["items"].as_array().cloned().unwrap_or_default();
+                if summaries.len() > MAX_ENTRIES {
+                    return Err(VaultError::bad_request("バックアップは10000件まで対応しています"));
+                }
+                let entries = summaries.iter().map(|summary| self.entry(Some(&summary["id"]))).collect::<Result<Vec<_>>>()?;
+                let content = backup::encode(entries, key, salt.as_ref(), random_bytes::<12>()?.as_ref())?;
+                Ok(json!({ "fileName": backup::file_name(&now_iso()), "content": content }))
+            })
+        })
+    }
+
+    /// restoreBackup: only into an empty vault, keeping each entry's id and dates.
+    pub fn restore_backup(&self, session_id: Option<&Value>, payload: Option<&Value>) -> Result<Value> {
+        self.with_session(session_id, |_| {
+            self.require_unlocked_vault(None)?;
+            let (passphrase, content) = input::parse_backup_payload(payload, true)?;
+            let passphrase = Zeroizing::new(passphrase);
+            if self.entry_list()?["items"].as_array().is_some_and(|items| !items.is_empty()) {
+                return Err(VaultError::conflict(EMPTY_ONLY));
+            }
+            let envelope = backup::parse(&content.unwrap_or_default())?;
+            self.with_backup_key(&passphrase, &envelope.salt, |key| {
+                let entries = backup::decode(&envelope, key)?;
+                self.restore_entries(&entries)
+            })
+        })
+    }
+
+    /// restoreEntriesIntoEmptyVault
+    fn restore_entries(&self, entries: &[Value]) -> Result<Value> {
+        if let Some(store) = self.v2() {
+            for entry in entries {
+                input::validate_stored_entry(entry, entry["id"].as_str().unwrap_or_default()).map_err(|_| invalid_entry())?;
+            }
+            let count = self.v2_mutation(store, |store, root, active| Ok(store.restore(root, entries, &|| active().map_err(|_| StoreError::Cancelled))?))?;
+            return Ok(json!({ "restoredCount": count }));
+        }
+        let session = self.require_unlocked_vault(None)?;
+        if entries.iter().any(|entry| matches!(entry["type"].as_str(), Some("apiKey" | "creditCard" | "financial"))) {
+            return Err(VaultError::conflict("このバックアップの復元には新しい形式への移行が必要です"));
+        }
+        let key = self.key(&session)?;
+        // Unlike a new entry, a restored one stores its notes sealed even when they are empty.
+        let sealed = entries
+            .iter()
+            .map(|entry| Ok((entry["tags"].to_string(), Self::seal_legacy(&key, entry["password"].as_str().unwrap_or_default())?, Self::seal_legacy(&key, entry["notes"].as_str().unwrap_or_default())?)))
+            .collect::<Result<Vec<_>>>()?;
+        drop(key);
+        let text = |entry: &'_ Value, field: &str| entry[field].as_str().map(str::to_string);
+        self.legacy_write(Some(&session), None, |transaction| {
+            if legacy::count(transaction).map_err(|_| context_failed())? > 0 {
+                return Err(VaultError::conflict(EMPTY_ONLY));
+            }
+            for (entry, (tags, password, notes)) in entries.iter().zip(&sealed) {
+                let (service_name, login_id, url, group) = (text(entry, "serviceName").unwrap_or_default(), text(entry, "loginId").unwrap_or_default(), text(entry, "url"), text(entry, "group"));
+                let login = SealedLogin { service_name: &service_name, login_id: &login_id, password, notes: Some(notes), url: url.as_deref(), tags, group: group.as_deref() };
+                let changed = text(entry, "passwordChangedAt");
+                legacy::insert_restored(transaction, entry["id"].as_str().unwrap_or_default(), &login, entry["createdAt"].as_str().unwrap_or_default(), entry["updatedAt"].as_str().unwrap_or_default(), changed.as_deref())
+                    .map_err(|_| context_failed())?;
+            }
+            Ok(())
+        })?;
+        Ok(json!({ "restoredCount": entries.len() }))
+    }
+
     #[cfg(test)]
     pub(crate) fn legacy_connection<T>(&self, action: impl FnOnce(&rusqlite::Connection) -> T) -> T {
         action(self.legacy().unwrap().lock().unwrap().connection())
     }
+}
+
+/// String.prototype.localeCompare for entry ids, which hold only ASCII hex digits and dashes. ICU
+/// compares letters without case first and then puts lowercase before uppercase, so a restored
+/// uppercase id sorts as Node sorts it. Dashes, digits and letters keep their ASCII order.
+fn locale_order(left: &str, right: &str) -> std::cmp::Ordering {
+    let folded = |text: &str| text.to_ascii_lowercase();
+    let case = |text: &str| text.bytes().map(|byte| byte.is_ascii_uppercase()).collect::<Vec<_>>();
+    folded(left).cmp(&folded(right)).then_with(|| case(left).cmp(&case(right)))
 }
 
 #[cfg(test)]
@@ -779,6 +897,15 @@ mod tests {
 
     const SCHEMA: &str = include_str!("../../../apps/api/src/db/schema.sql");
     const MASTER: &str = "synthetic-master-password";
+
+    #[test]
+    fn ids_sort_as_locale_compare_sorts_them() {
+        // The order Node prints for ["AAAAAAAA-…02", "aaaaaaaa-…01", "Aaaaaaaa-…01", "baaaaaaa-…01"].sort(localeCompare)
+        let expected = ["aaaaaaaa-0000-4000-8000-000000000001", "Aaaaaaaa-0000-4000-8000-000000000001", "AAAAAAAA-0000-4000-8000-000000000002", "baaaaaaa-0000-4000-8000-000000000001"];
+        let mut ids = [expected[2], expected[3], expected[1], expected[0]];
+        ids.sort_by(|a, b| locale_order(a, b));
+        assert_eq!(ids, expected);
+    }
 
     fn id(status: &Value) -> Value {
         status["sessionId"].clone()
@@ -1089,3 +1216,4 @@ mod tests {
         assert_eq!(error.message, legacy::StorageError::UnsupportedFormat.message());
     }
 }
+

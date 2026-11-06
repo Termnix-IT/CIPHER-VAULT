@@ -1,12 +1,13 @@
 //! CIPHER VAULT on Tauri. It shows the existing React screen from `apps/web` and replaces
 //! `apps/electron` and the Node services step by step. The vault commands run the Rust core in
-//! `crates/vault-core`; maintenance, backup, audit, the clipboard and updates are not ported yet.
+//! `crates/vault-core`; maintenance, the audit, the clipboard and updates are not ported yet.
 //!
 //! The `e2e` feature exists for automated checks only. It keeps the WebView2 debugging port
 //! available and reports events on stdout. Never distribute it.
 
 #![cfg_attr(not(feature = "e2e"), windows_subsystem = "windows")]
 
+mod backup_download;
 mod data_directory;
 #[cfg_attr(feature = "e2e", allow(dead_code))]
 mod webview_hardening;
@@ -24,7 +25,7 @@ type Shared = Arc<Vault>;
 const EXPIRY_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Reports events to the automated checks. Prints nothing in a normal build.
-fn trace(_event: &str) {
+pub(crate) fn trace(_event: &str) {
     #[cfg(feature = "e2e")]
     {
         use std::io::Write;
@@ -111,8 +112,18 @@ async fn password_generate(vault: State<'_, Shared>, session_id: Option<Value>, 
     run(vault, move |vault| vault.generate_password(session_id.as_ref(), options.as_ref())).await
 }
 
+#[tauri::command]
+async fn backup_export(vault: State<'_, Shared>, session_id: Option<Value>, payload: Option<Value>) -> Result<Value, String> {
+    run(vault, move |vault| vault.export_backup(session_id.as_ref(), payload.as_ref())).await
+}
+
+#[tauri::command]
+async fn backup_restore(vault: State<'_, Shared>, session_id: Option<Value>, payload: Option<Value>) -> Result<Value, String> {
+    run(vault, move |vault| vault.restore_backup(session_id.as_ref(), payload.as_ref())).await
+}
+
 /// The bundled screen only. Tauri serves it as http://tauri.localhost on Windows.
-fn is_application_url(url: &Url) -> bool {
+pub(crate) fn is_application_url(url: &Url) -> bool {
     matches!((url.scheme(), url.host_str()), ("http", Some("tauri.localhost")) | ("tauri", Some("localhost")))
 }
 
@@ -173,7 +184,9 @@ fn main() {
             entries_update,
             entries_delete,
             entries_set_group,
-            password_generate
+            password_generate,
+            backup_export,
+            backup_restore
         ])
         .setup(|app| {
             let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
@@ -183,6 +196,7 @@ fn main() {
                 .initialization_script(include_str!("desktop-api.js"))
                 .on_navigation(is_application_url)
                 .on_new_window(|_url, _features| NewWindowResponse::Deny)
+                .on_download(backup_download::handle)
                 .disable_drag_drop_handler();
             #[cfg(feature = "e2e")]
             let builder = with_debugging_port(builder);

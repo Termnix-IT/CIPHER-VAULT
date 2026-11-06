@@ -171,6 +171,12 @@ pub fn open_legacy_secret(key: &[u8], payload: &str) -> Result<Secret> {
     open(key, iv, tag, ciphertext, b"")
 }
 
+/// Seals a `.cvault` payload. The caller supplies a fresh random IV: each backup has its own
+/// salt and therefore its own key, so one IV per key is enough.
+pub fn seal_backup(key: &[u8], iv: &[u8], plaintext: &[u8], version: u64) -> Result<(Vec<u8>, Vec<u8>)> {
+    seal(key, iv, plaintext, &backup_aad(version))
+}
+
 pub fn backup_aad(version: u64) -> Vec<u8> {
     format!("CIPHER-VAULT:{version}:{BACKUP_KDF}:{CIPHER}").into_bytes()
 }

@@ -11,6 +11,8 @@ tauri-build = { version = "2.7", features = [] }
 [dependencies]
 cipher-vault-core = { path = "../../crates/vault-core" }
 serde_json = "1"
+# The save dialog for backups. Windows needs none of its Linux portal features.
+rfd = { version = "0.17", default-features = false }
 # custom-protocol serves the embedded web build. The Tauri CLI is only needed for installers.
 tauri = { version = "2.12", features = ["custom-protocol"] }
 # The same versions Tauri already uses. A mismatch would not compile against its webview handle.

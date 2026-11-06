@@ -14,7 +14,10 @@ use serde_json::{Map, Value, json};
 pub const MAX_ENTRIES: usize = 10000;
 const REQUEST_BYTES: usize = 1024 * 1024;
 const MASTER_PASSWORD_BYTES: usize = 1024 * 1024;
-const BACKUP_PLAINTEXT_BYTES: usize = 11 * 1024 * 1024;
+pub const BACKUP_PLAINTEXT_BYTES: usize = 11 * 1024 * 1024;
+pub const BACKUP_FILE_BYTES: usize = 16 * 1024 * 1024;
+const BACKUP_PASSPHRASE_BYTES: usize = 4096;
+const RESTORE_REQUEST_BYTES: usize = 18 * 1024 * 1024;
 const ID_BYTES: usize = 128;
 const SERVICE_NAME_BYTES: usize = 1024;
 const LOGIN_ID_BYTES: usize = 4096;
@@ -99,6 +102,21 @@ pub fn parse_master_password(value: Option<&Value>, setup: bool) -> Result<Strin
     }
     json_size(&json!({ "masterPassword": password }), REQUEST_BYTES)?;
     Ok(password.to_string())
+}
+
+/// parseBackupPayload: the passphrase, and for a restore the file content as the screen read it.
+pub fn parse_backup_payload(value: Option<&Value>, restore: bool) -> Result<(String, Option<String>)> {
+    let input = record(value, if restore { &["passphrase", "content"] } else { &["passphrase"] })?;
+    if !input.get("passphrase").and_then(Value::as_str).is_some_and(|text| (12..=1024).contains(&js_length(text))) {
+        return Err(VaultError::bad_request("バックアップ用パスフレーズは12〜1024文字で入力してください"));
+    }
+    let passphrase = text(input.get("passphrase"), "バックアップ用パスフレーズ", BACKUP_PASSPHRASE_BYTES)?.to_string();
+    if !restore {
+        return Ok((passphrase, None));
+    }
+    let content = text(input.get("content"), "バックアップファイル", BACKUP_FILE_BYTES)?;
+    json_size(&json!({ "passphrase": passphrase, "content": content }), RESTORE_REQUEST_BYTES)?;
+    Ok((passphrase, Some(content.to_string())))
 }
 
 pub fn parse_reset_payload(value: Option<&Value>) -> Result<()> {
@@ -365,7 +383,7 @@ fn canonical_date(value: Option<&Value>) -> Option<&str> {
     (parsed.with_timezone(&Utc).to_rfc3339_opts(SecondsFormat::Millis, true) == text).then_some(text)
 }
 
-fn is_entry_uuid(id: &str) -> bool {
+pub(crate) fn is_entry_uuid(id: &str) -> bool {
     id.len() == 36 && id.bytes().all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
 }
 
