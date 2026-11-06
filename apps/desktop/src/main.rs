@@ -12,6 +12,7 @@ mod backup_download;
 mod clipboard;
 mod clock;
 mod data_directory;
+mod electron_guard;
 mod os_events;
 mod single_instance;
 mod updates;
@@ -301,8 +302,18 @@ fn apply_e2e_arguments() {
     }
 }
 
+/// The released build has no console, so the reason is shown in a dialog as well.
 fn fail_startup(message: &str) -> ! {
     eprintln!("{message}");
+    #[cfg(not(feature = "e2e"))]
+    {
+        let _ = rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Error)
+            .set_title(data_directory::RELEASED_PRODUCT)
+            .set_description(message)
+            .set_buttons(rfd::MessageButtons::Ok)
+            .show();
+    }
     std::process::exit(2);
 }
 
@@ -325,7 +336,14 @@ fn main() {
         }
     }
 
-    let directory = data_directory::from_environment().unwrap_or_else(|message| fail_startup(&message));
+    let context = tauri::generate_context!();
+    let product_name = context.config().product_name.clone().unwrap_or_else(|| data_directory::RELEASED_PRODUCT.to_string());
+    let location = data_directory::resolve(&product_name).unwrap_or_else(|message| fail_startup(&message));
+    if location.shared_with_electron && electron_guard::electron_is_running(&product_name) {
+        trace("electron-running");
+        fail_startup(&electron_guard::message(&product_name));
+    }
+    let directory = location.path;
     // Before the vault opens, so a second copy never touches it.
     let _instance = match single_instance::claim(&directory) {
         Ok(Some(instance)) => instance,
@@ -422,7 +440,7 @@ fn main() {
             })?;
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .unwrap_or_else(|_| fail_startup("The window failed to start."));
 
     app.run(move |_app, event| {

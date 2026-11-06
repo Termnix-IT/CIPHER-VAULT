@@ -4,9 +4,9 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { desktopPlatformCapabilities, desktopVaultDataDirectory } from "../apps/electron/dist/apps/electron/src/desktop-platform.js";
 
-test("only packaged Windows setup enables in-app updates; macOS alone stays alive after closing windows", () => {
+test("the last Electron release updates nothing in-app; macOS alone stays alive after closing windows", () => {
   const cases = [
-    ["win32", true, false, "windows", true, false, true],
+    ["win32", true, false, "windows", true, false, false],
     ["win32", true, true, "windows", true, false, false],
     ["win32", false, false, "windows", true, false, false],
     ["win32", false, true, "windows", true, false, false],

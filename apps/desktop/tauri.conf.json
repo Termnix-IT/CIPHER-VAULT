@@ -62,13 +62,14 @@
         "installMode": "currentUser",
         "languages": [
           "Japanese"
-        ]
+        ],
+        "installerHooks": "windows/installer-hooks.nsh"
       }
     }
   },
   "plugins": {
     "updater": {
-      "pubkey": "",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQzQzcxRDcwQUNCOUJFOTgKUldTWXZybXNjQjNIMDJOWDJCeHhiRHBSblA1WFNaMUFlOEJOWHNiUHRWWFowMlllSVdNZnMralkK",
       "endpoints": [
         "https://github.com/Termnix-IT/CIPHER-VAULT/releases/latest/download/latest.json"
       ],

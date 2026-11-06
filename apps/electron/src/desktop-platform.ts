@@ -9,7 +9,10 @@ export function desktopPlatformCapabilities(options: { platform: string; package
     operatingSystem: options.platform === "win32" ? "windows" : options.platform === "darwin" ? "macos" : options.platform === "linux" ? "linux" : "unsupported",
     screenLockEvents: supportsScreenLockEvents(options.platform),
     keepAliveAfterLastWindow: options.platform === "darwin",
-    inAppUpdates: options.platform === "win32" && options.packaged && !options.portable
+    // The Electron app is being replaced by the Tauri app (docs/設計.md#rust版への移行). Its last
+    // release updates nothing itself and sends every user to the releases page for the new setup,
+    // which removes the Electron app and keeps the vault.
+    inAppUpdates: false
   });
 }
 
