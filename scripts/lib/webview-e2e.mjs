@@ -81,9 +81,9 @@ export async function screenshot(page, directory, name) {
 }
 
 /** Starts an `e2e` build with its debugging port open and collects the events it prints. */
-export function startE2eProcess(exe, port, environment = {}) {
+export function startE2eProcess(exe, port, environment = {}, args = []) {
   const events = [], errors = [];
-  const child = spawn(exe, [], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env,
+  const child = spawn(exe, args, { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env,
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --remote-allow-origins=*`, ...environment } });
   let buffered = "";
   child.stdout.setEncoding("utf8").on("data", (chunk) => {

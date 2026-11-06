@@ -4,8 +4,10 @@
 // vault, audits it, migrates it to the v2 format and opens it with the new password. It copies through the
 // e2e build's fake clipboard (the user's clipboard is never written), checks that copies expire and that
 // screen lock and sleep notifications lock the vault and clear the copy, that a second launch on the same
-// folder exits, and that closing the window locks, clears and exits. The window keeps refusing outside connections, navigation, new windows, downloads it
-// did not make and ungranted commands. Only synthetic passwords are used.
+// folder exits, and that closing the window locks, clears and exits. This build is not the setup, so the
+// version dialog offers only the releases page and checking for updates does nothing. The window keeps
+// refusing outside connections, navigation, new windows, downloads it did not make and ungranted
+// commands, the updater plugin's own commands included. Only synthetic passwords are used.
 // Usage: node scripts/verify-tauri-shell.mjs <e2e-exe> <screenshot-directory>
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -18,7 +20,8 @@ const [exe, screenshotDirectory] = process.argv.slice(2);
 if (!exe || !screenshotDirectory) throw new Error("Usage: node scripts/verify-tauri-shell.mjs <e2e-exe> <screenshot-directory>");
 mkdirSync(screenshotDirectory, { recursive: true });
 
-const NOT_PORTED = "この機能はこの版ではまだ使えません。現行のアプリを使ってください";
+const VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+const RELEASE_PAGE = "https://github.com/Termnix-IT/CIPHER-VAULT/releases/latest";
 const PASSWORD = "synthetic-shell-check-password";
 const BACKUP_PASSPHRASE = "synthetic-shell-backup-passphrase";
 const MIGRATED_PASSWORD = "synthetic-shell-migrated-password";
@@ -295,8 +298,28 @@ try {
   result.secondLaunch = { exitCode: second.status, reported: second.stdout.includes("e2e-event already-running") };
   assert.deepEqual(result.secondLaunch, { exitCode: 0, reported: true });
 
-  result.notPorted = await settle(page, `window.passwordManager.checkForUpdates()`);
-  assert.deepEqual(result.notPorted, { error: NOT_PORTED });
+  // ---- Updates. Only the setup updates itself, so this build points to the releases page.
+  const unsupported = { status: "unsupported", currentVersion: VERSION };
+  result.updates = { support: events.find((event) => event.startsWith("update-support ")), state: await settle(page, "window.passwordManager.getUpdateState()") };
+  assert.deepEqual(result.updates, { support: "update-support false", state: { value: unsupported } });
+  await menu(page, "ヘルプ", "バージョンと更新");
+  await until("the version dialog", () => screenHas(page, "このバージョンはアプリ内で更新できません"));
+  assert.equal(await page.evaluate(`[...document.querySelectorAll(".app-info-actions button")].map((node) => node.textContent).join()`), "ダウンロードページを開く");
+  await page.evaluate(`[...document.querySelectorAll(".app-info-actions button")].find((node) => node.textContent === "ダウンロードページを開く").click()`);
+  await until("the releases page", () => events.includes(`release-page ${RELEASE_PAGE}`));
+  await page.evaluate(`document.querySelector(".app-info-dialog").close()`);
+  result.updates.check = await settle(page, "window.passwordManager.checkForUpdates()");
+  result.updates.download = await settle(page, "window.passwordManager.downloadUpdate()");
+  result.updates.install = await settle(page, "window.passwordManager.installUpdate(false)");
+  result.updates.invalidInstall = await settle(page, `window.passwordManager.installUpdate("yes")`);
+  result.updates.after = await settle(page, "window.passwordManager.getUpdateState()");
+  assert.deepEqual(result.updates, { ...result.updates, check: { value: null }, download: { value: null }, install: { value: null }, invalidInstall: { error: "Invalid update request" }, after: { value: unsupported } });
+  // The plugin registers its own commands for the screen, but no capability grants them.
+  for (const command of ["check", "download", "install", "download_and_install"]) {
+    const refused = await settle(page, `window.__TAURI_INTERNALS__.invoke("plugin:updater|${command}", {})`);
+    assert.match(refused.error ?? "", new RegExp(`^updater\\.${command} not allowed\\. Permissions`), `plugin:updater|${command} must be refused for lack of permission`);
+  }
+  assert.ok(!events.includes("update-dialog"), "no update step ran");
 
   // ---- The shell
   await until("the IPC response", () => page.responses.some((response) => response.url.startsWith("http://ipc.localhost/vault_status")));
@@ -308,7 +331,7 @@ try {
   assert.ok(result.outsideFetch.error, "an outside connection must fail");
   result.ungrantedCommand = await settle(page, `window.__TAURI_INTERNALS__.invoke("plugin:window|set_title", { label: "main", value: "changed" })`);
   assert.ok(result.ungrantedCommand.error, "a command no capability grants must be refused");
-  result.unknownCommand = await settle(page, `window.__TAURI_INTERNALS__.invoke("update_check", {})`);
+  result.unknownCommand = await settle(page, `window.__TAURI_INTERNALS__.invoke("update_apply", {})`);
   assert.ok(result.unknownCommand.error);
   result.newWindow = await page.evaluate(`window.open("https://example.test/") === null`);
 

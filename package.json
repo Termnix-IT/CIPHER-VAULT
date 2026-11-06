@@ -19,6 +19,7 @@
     "electron-updater": "^6.8.9"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4",
     "concurrently": "^9.2.5",
     "electron-builder": "^26.18.1"
   },
@@ -35,6 +36,8 @@
     "build:desktop": "npm run build && npm --workspace apps/electron run build",
     "build:web:tauri": "npm run build:shared && npm --workspace apps/web run build:tauri",
     "build:tauri": "npm run build:web:tauri && cargo build --release -p cipher-vault",
+    "package:tauri": "npm run build:web:tauri && node scripts/package-tauri.mjs",
+    "test:tauri-update": "npm run build:web:tauri && node scripts/verify-tauri-update.mjs",
     "test:rust": "cargo test --workspace",
     "test:rust-parity": "npm run build:api && cargo test -p cipher-vault-core --test node_parity -- --ignored",
     "test:tauri-shell": "npm run build:web:tauri && cargo build -p cipher-vault --features e2e && node scripts/verify-tauri-shell.mjs target/debug/cipher-vault.exe target/e2e-screenshots",

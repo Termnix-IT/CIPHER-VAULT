@@ -28,7 +28,7 @@ npm workspaces、TypeScript、React + Vite、Node.js標準HTTP、Electron、bett
 - `apps/electron/src/manual-updater.ts` / `update-service.ts`: 手動更新の状態制御とElectron接続。
 - `packages/shared/src/types.ts`: Web・API・Electronの共通型。契約変更はここから揃える。
 - `crates/vault-core/`: Rust版の中核（Tauri非依存）。暗号形式、保存、セッション、初期設定・解除・ロック・リセット、エントリ操作、パスワード生成、バックアップ、監査、移行・鍵更新・リセット・復旧。挙動はTypeScript版と `tests/rust-parity-engine.mjs` で比べる。
-- `apps/desktop/`: Tauriのデスクトップアプリ。画面に公開するコマンドは `build.rs` の一覧と `tauri.conf.json` の `capabilities` の両方に書く。CSPは `renderer-policy.ts` の `tauri` モードと一致させる。クリップボード・画面ロックとスリープの連動・多重起動の防止もここが受け持つ。移行が終わるまで保存先の既定値はなく、`CIPHER_VAULT_DATA_DIR` の試験用フォルダだけを開く。
+- `apps/desktop/`: Tauriのデスクトップアプリ。画面に公開するコマンドは `build.rs` の一覧と `tauri.conf.json` の `capabilities` の両方に書く。CSPは `renderer-policy.ts` の `tauri` モードと一致させる。クリップボード・画面ロックとスリープの連動・多重起動の防止・署名付きの手動更新もここが受け持つ。移行が終わるまで保存先の既定値はなく、`CIPHER_VAULT_DATA_DIR` の試験用フォルダだけを開く。
 
 WebはHTTP → サービス → SQLite、Electronはpreload → IPC → 同じサービス → SQLiteを使う。Electron版の保管庫操作にHTTPサーバーは不要。
 
@@ -53,6 +53,8 @@ WebはHTTP → サービス → SQLite、Electronはpreload → IPC → 同じ�
 | `npm run test:rust-parity` | Rust版とTypeScriptサービスの差分試験（API再ビルドを含む） |
 | `npm run test:tauri-shell` | Rust版の画面・CSP・IPCと保管庫操作の実ウィンドウ検証 |
 | `npm run build:tauri` | Rust版のreleaseビルド（配布はまだしない） |
+| `npm run package:tauri` | Rust版のsetup / portableを `dist-tauri/` に生成（公開しない） |
+| `npm run test:tauri-update` | Rust版の2版のsetupで実際に更新して、再起動とデータの維持を確認 |
 
 個別ビルドは `build:shared` / `build:web` / `build:api` / `build:electron`。API監視起動は `npm --workspace apps/api run dev:watch`。
 

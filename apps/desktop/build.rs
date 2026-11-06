@@ -19,6 +19,11 @@ const COMMANDS: &[&str] = &[
     "backup_restore",
     "vault_audit",
     "clipboard_write",
+    "update_state",
+    "update_check",
+    "update_download",
+    "update_install",
+    "update_open_releases",
 ];
 
 fn main() {

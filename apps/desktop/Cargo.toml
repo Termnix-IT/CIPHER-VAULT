@@ -16,7 +16,8 @@ subtle = "2"
 uuid = { version = "1", features = ["v4"] }
 zeroize = "1"
 # The save dialog for backups. Windows needs none of its Linux portal features.
-rfd = { version = "0.17", default-features = false }
+# common-controls-v6 lets the update question name its buttons and default to going back to editing.
+rfd = { version = "0.17", default-features = false, features = ["common-controls-v6"] }
 # custom-protocol serves the embedded web build. The Tauri CLI is only needed for installers.
 tauri = { version = "2.12", features = ["custom-protocol"] }
 # The same versions Tauri already uses. A mismatch would not compile against its webview handle.
@@ -32,8 +33,11 @@ windows = { version = "0.62", features = [
     "Win32_System_Registry",
     "Win32_System_RemoteDesktop",
     "Win32_System_Threading",
+    "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
+# Manual updates. It checks each download against the public key before it is installed.
+tauri-plugin-updater = "2.14"
 
 [dev-dependencies]
 # The clipboard test runs in its own window station, so it never touches the user's clipboard.

@@ -12,6 +12,7 @@ packages/shared/src/*.d.ts
 *.log
 release/
 dist-desktop/
+dist-tauri/
 target/
 experiments/tauri-poc/gen/
 apps/desktop/gen/

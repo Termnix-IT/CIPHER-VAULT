@@ -1,8 +1,7 @@
 //! CIPHER VAULT on Tauri. It shows the existing React screen from `apps/web` and replaces
 //! `apps/electron` and the Node services step by step. The vault commands run the Rust core in
-//! `crates/vault-core`; manual updates are not ported yet. The desktop adds what the Electron
-//! main process did: the expiring clipboard, locking on screen lock and sleep, and one app per
-//! vault folder.
+//! `crates/vault-core`. The desktop adds what the Electron main process did: the expiring
+//! clipboard, locking on screen lock and sleep, one app per vault folder and manual updates.
 //!
 //! The `e2e` feature exists for automated checks only. It keeps the WebView2 debugging port
 //! available, replaces the clipboard with a fake one and reports events on stdout. Never distribute it.
@@ -15,6 +14,7 @@ mod clock;
 mod data_directory;
 mod os_events;
 mod single_instance;
+mod updates;
 #[cfg_attr(feature = "e2e", allow(dead_code))]
 mod webview_hardening;
 // Left out of the e2e build, so that build cannot reach the real clipboard at all.
@@ -30,7 +30,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tauri::webview::NewWindowResponse;
-use tauri::{Manager, RunEvent, State, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, Manager, RunEvent, State, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use updates::Updates;
 use zeroize::Zeroize;
 
 type Shared = Arc<Vault>;
@@ -235,6 +236,34 @@ async fn vault_audit(vault: State<'_, Shared>, session_id: Option<Value>) -> Res
     run(vault, move |vault| vault.audit_vault(session_id.as_ref())).await
 }
 
+#[tauri::command]
+fn update_state(updates: State<'_, Updates>) -> Value {
+    updates.state()
+}
+
+#[tauri::command]
+async fn update_check(app: AppHandle, updates: State<'_, Updates>, desktop: State<'_, SharedDesktop>) -> Result<(), String> {
+    updates.check(&app, Arc::clone(&desktop)).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn update_download(updates: State<'_, Updates>) -> Result<(), String> {
+    updates.download().await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn update_install(app: AppHandle, updates: State<'_, Updates>, desktop: State<'_, SharedDesktop>, has_unsaved_changes: Option<Value>) -> Result<Option<bool>, String> {
+    let desktop = Arc::clone(&desktop);
+    updates.install(&app, &desktop, has_unsaved_changes).await
+}
+
+#[tauri::command]
+fn update_open_releases() -> Result<(), String> {
+    updates::open_release_page()
+}
+
 /// The bundled screen only. Tauri serves it as http://tauri.localhost on Windows.
 pub(crate) fn is_application_url(url: &Url) -> bool {
     matches!((url.scheme(), url.host_str()), ("http", Some("tauri.localhost")) | ("tauri", Some("localhost")))
@@ -257,6 +286,21 @@ fn with_debugging_port<'a, R: tauri::Runtime, M: tauri::Manager<R>>(builder: Web
     ))
 }
 
+/// The installer restarts the app after an update with this process's arguments but not its
+/// environment, so the update check passes the e2e build's settings as arguments as well.
+#[cfg(feature = "e2e")]
+fn apply_e2e_arguments() {
+    const NAMES: [&str; 5] = ["CIPHER_VAULT_DATA_DIR", "CIPHER_VAULT_E2E_DEBUG_PORT", "CIPHER_VAULT_E2E_PROFILE", "CIPHER_VAULT_E2E_DOWNLOADS", "CIPHER_VAULT_E2E_UPDATE_ANSWER"];
+    for argument in std::env::args().skip(1) {
+        if let Some((name, value)) = argument.strip_prefix("--e2e-env=").and_then(|setting| setting.split_once('='))
+            && NAMES.contains(&name)
+        {
+            // SAFETY: no other thread exists yet.
+            unsafe { std::env::set_var(name, value) };
+        }
+    }
+}
+
 fn fail_startup(message: &str) -> ! {
     eprintln!("{message}");
     std::process::exit(2);
@@ -270,6 +314,8 @@ fn clipboard_port() -> Box<dyn clipboard::ClipboardPort> {
 }
 
 fn main() {
+    #[cfg(feature = "e2e")]
+    apply_e2e_arguments();
     #[cfg(not(feature = "e2e"))]
     {
         // SAFETY: no other thread exists yet.
@@ -312,6 +358,8 @@ fn main() {
     let app = tauri::Builder::default()
         .manage(vault)
         .manage(Arc::clone(&desktop))
+        // Its commands for the screen are granted to no window; see updates.rs.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             vault_status,
             vault_activity,
@@ -330,9 +378,17 @@ fn main() {
             backup_export,
             backup_restore,
             vault_audit,
-            clipboard_write
+            clipboard_write,
+            update_state,
+            update_check,
+            update_download,
+            update_install,
+            update_open_releases
         ])
         .setup(|app| {
+            let supported = updates::supported(app.handle());
+            trace(&format!("update-support {supported}"));
+            app.manage(Updates::new(app.package_info().version.to_string(), supported));
             let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title(single_instance::WINDOW_TITLE)
                 .inner_size(880.0, 780.0)
