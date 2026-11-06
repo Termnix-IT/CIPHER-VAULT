@@ -14,7 +14,7 @@
 // Usage: node scripts/verify-tauri-migration.mjs (after npm run build:desktop and npm run build:web:tauri)
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -101,6 +101,8 @@ try {
   const bundle = path.join(TARGET, "debug", "bundle", "nsis");
   const tauriSetup = path.join(bundle, readdirSync(bundle).find((file) => file.startsWith(`${PRODUCT}_`) && file.endsWith("-setup.exe")));
   const portable = path.join(TARGET, "debug", "cipher-vault.exe");
+  // A bundling run that was stopped can leave the setup's bundle type in the built exe.
+  assert.ok(readFileSync(portable).includes("__TAURI_BUNDLE_TYPE_VAR_UNK"), `the portable exe carries the setup's bundle type; delete ${portable} and build again`);
 
   // ---- 1. The Electron app, installed, sets up the vault.
   run(electronSetup, ["/S", "/currentuser", `/D=${electronInstall}`]);

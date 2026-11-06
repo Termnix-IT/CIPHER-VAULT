@@ -1,3 +1,4 @@
+﻿; Saved with a UTF-8 BOM, as the setup's own files are, so makensis reads the Japanese messages as UTF-8.
 ; Included by the Tauri setup (bundle.windows.nsis.installerHooks in tauri.conf.json).
 ;
 ; Before this app is installed, the Electron app of the same product is removed with its own
