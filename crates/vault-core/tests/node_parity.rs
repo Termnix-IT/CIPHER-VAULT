@@ -86,6 +86,7 @@ impl Engine for RustEngine {
             "setup" => vault.setup(arg(0), arg(1)),
             "unlock" => vault.unlock(arg(0), arg(1)),
             "reset" => vault.reset(arg(0), arg(1)),
+            "maintain" => vault.run_maintenance(arg(0), arg(1)),
             "lock" => vault.lock(arg(0)),
             "list" => vault.list_entries(arg(0)),
             "get" => vault.get_entry(arg(0), arg(1)),
@@ -265,10 +266,6 @@ fn run(engine: &mut dyn Engine, directory: &Path, scenario: &Scenario) -> Vec<(S
                     let version = serde_json::from_str::<Value>(file["content"].as_str().unwrap_or_default()).map(|content| content["version"].clone()).unwrap_or_default();
                     *file = Map::from_iter([("fileName".to_string(), json!(named)), ("version".to_string(), version)]);
                 }
-                // Recovery itself arrives in a later phase, and the Rust core gives no hint for it yet.
-                if let Some(maintenance) = answer["ok"].get_mut("maintenance").and_then(Value::as_object_mut) {
-                    maintenance.remove("recoveryOperation");
-                }
                 answers.push((label.clone(), names.normalize(&answer, None)));
                 // Keeps the update times of consecutive writes apart, so list order never depends on a tie.
                 std::thread::sleep(Duration::from_millis(3));
@@ -279,6 +276,29 @@ fn run(engine: &mut dyn Engine, directory: &Path, scenario: &Scenario) -> Vec<(S
 }
 
 fn compare(kind: &str, scenario: &Scenario) {
+    compare_in(kind, scenario);
+}
+
+/// Answers that differ between the two runs, as a failure message.
+fn assert_same(kind: &str, rust: &[(String, Value)], node: &[(String, Value)]) {
+    // PARITY_SHOW=1 prints the Rust answers, to see what a passing scenario actually compared.
+    if std::env::var_os("PARITY_SHOW").is_some() {
+        for (label, answer) in rust {
+            eprintln!("{kind} | {label}: {answer}");
+        }
+    }
+    assert_eq!(rust.len(), node.len());
+    let differences: Vec<String> = rust
+        .iter()
+        .zip(node)
+        .filter(|((_, rust), (_, node))| rust != node)
+        .map(|((label, rust), (_, node))| format!("{label}\n  rust: {rust}\n  node: {node}"))
+        .collect();
+    assert!(differences.is_empty(), "{kind}: {} of {} answers differ\n{}", differences.len(), rust.len(), differences.join("\n"));
+}
+
+/// Runs the scenario on both engines and returns the folders each one left.
+fn compare_in(kind: &str, scenario: &Scenario) -> (TemporaryDirectory, PathBuf, PathBuf) {
     let folder = TemporaryDirectory::new();
     let source = folder.0.join("source");
     node(&["prepare", kind, source.to_str().unwrap()]);
@@ -288,20 +308,15 @@ fn compare(kind: &str, scenario: &Scenario) {
 
     let rust = run(&mut RustEngine(Vault::open(&rust_directory).unwrap()), &rust_directory, scenario);
     let node = run(&mut NodeEngine::start(&node_directory), &node_directory, scenario);
-    // PARITY_SHOW=1 prints the Rust answers, to see what a passing scenario actually compared.
-    if std::env::var_os("PARITY_SHOW").is_some() {
-        for (label, answer) in &rust {
-            eprintln!("{kind} | {label}: {answer}");
-        }
-    }
-    assert_eq!(rust.len(), node.len());
-    let differences: Vec<String> = rust
-        .iter()
-        .zip(&node)
-        .filter(|((_, rust), (_, node))| rust != node)
-        .map(|((label, rust), (_, node))| format!("{label}\n  rust: {rust}\n  node: {node}"))
-        .collect();
-    assert!(differences.is_empty(), "{kind}: {} of {} answers differ\n{}", differences.len(), rust.len(), differences.join("\n"));
+    assert_same(kind, &rust, &node);
+    (folder, rust_directory, node_directory)
+}
+
+/// Opens the folder each engine left with the other engine, and compares those answers.
+fn compare_swapped(kind: &str, rust_directory: &Path, node_directory: &Path, scenario: &Scenario) {
+    let node = run(&mut NodeEngine::start(rust_directory), rust_directory, scenario);
+    let rust = run(&mut RustEngine(Vault::open(node_directory).unwrap()), node_directory, scenario);
+    assert_same(&format!("{kind}, swapped"), &rust, &node);
 }
 
 fn login() -> Value {
@@ -674,4 +689,146 @@ fn audits_of_a_v2_vault_answer_as_the_node_services_do() {
         .session("restoreBackup", vec![backup_payload(&files, "audit")])
         .session("audit", vec![]);
     compare("v2", &scenario);
+}
+
+// ---- Switching the vault: migration, rekey, reset and recovery
+
+const PASSPHRASE: &str = "synthetic-parity-recovery-passphrase";
+const MIGRATED: &str = "synthetic-parity-migrated-password";
+const REKEYED: &str = "synthetic-parity-rekeyed-password";
+const EMPTIED: &str = "synthetic-parity-emptied-password";
+
+/// A request as the screen sends it: a reset carries its confirmation, and recovery asks for the
+/// backup passphrase only once.
+fn switch(operation: &str, master: &Value, new: &str, passphrase: &Value) -> Value {
+    let mut payload = json!({ "operation": operation, "masterPassword": master, "newMasterPassword": new, "confirmNewMasterPassword": new, "backupPassphrase": passphrase });
+    if operation != "recover" {
+        payload["confirmBackupPassphrase"] = passphrase.clone();
+    }
+    if operation == "reset" {
+        payload["confirmation"] = json!("RESET_ALL_DATA");
+    }
+    payload
+}
+
+/// The payload with one field changed, or removed when the value is "$undefined".
+fn with(mut payload: Value, field: &str, value: Value) -> Value {
+    if value == json!(UNDEFINED) {
+        payload.as_object_mut().unwrap().remove(field);
+    } else {
+        payload[field] = value;
+    }
+    payload
+}
+
+fn unlock(password: impl Into<Value>) -> Vec<Value> {
+    vec![json!({ "masterPassword": password.into() })]
+}
+
+#[test]
+#[ignore = "needs Node.js and the built API: npm run test:rust-parity"]
+fn a_legacy_vault_migrates_rekeys_and_resets_as_in_node() {
+    let password = node(&["prepare", "legacy", TemporaryDirectory::new().0.join("probe").to_str().unwrap()])["password"].clone();
+    let passphrase = json!(PASSPHRASE);
+    let migrate = switch("migrate", &password, MIGRATED, &passphrase);
+    let mut scenario = Scenario::default();
+    scenario
+        .session("maintain", vec![migrate.clone()])
+        .session("unlock", unlock(password.clone()))
+        .session("maintain", vec![json!(UNDEFINED)])
+        .session("maintain", vec![json!(null)])
+        .session("maintain", vec![with(migrate.clone(), "newMasterPassword", json!("short"))])
+        .session("maintain", vec![with(migrate.clone(), "confirmNewMasterPassword", json!("synthetic-parity-other-password"))])
+        .session("maintain", vec![with(migrate.clone(), "newMasterPassword", password.clone())])
+        .session("maintain", vec![with(migrate.clone(), "confirmBackupPassphrase", json!(UNDEFINED))])
+        .session("maintain", vec![with(migrate.clone(), "backupPassphrase", json!("short"))])
+        .session("maintain", vec![with(migrate.clone(), "confirmation", json!("RESET_ALL_DATA"))])
+        .session("maintain", vec![with(migrate.clone(), "extra", json!(true))])
+        .session("maintain", vec![with(migrate.clone(), "operation", json!("upgrade"))])
+        .session("maintain", vec![switch("rekey", &password, MIGRATED, &passphrase)])
+        .session("maintain", vec![switch("recover", &password, MIGRATED, &passphrase)])
+        .call("maintain with another session", "maintain", vec![json!("another-session"), migrate.clone()])
+        .session("maintain", vec![with(migrate.clone(), "masterPassword", json!(WRONG))])
+        .call("status after a refused migration", "status", vec![])
+        .session("unlock", unlock(password.clone()))
+        .session("maintain", vec![migrate.clone()])
+        .call("status after the migration", "status", vec![])
+        .session("unlock", unlock(password.clone()))
+        .session("unlock", unlock(MIGRATED))
+        .session("list", vec![])
+        .session("get", vec![entry(0)])
+        .session("maintain", vec![migrate])
+        .session("maintain", vec![switch("rekey", &json!(WRONG), REKEYED, &passphrase)])
+        .session("unlock", unlock(MIGRATED))
+        .session("maintain", vec![switch("rekey", &json!(MIGRATED), REKEYED, &passphrase)])
+        .session("unlock", unlock(MIGRATED))
+        .session("unlock", unlock(REKEYED))
+        .session("list", vec![])
+        .session("get", vec![entry(0)])
+        .session("maintain", vec![with(switch("reset", &json!(REKEYED), EMPTIED, &passphrase), "confirmation", json!(UNDEFINED))])
+        .session("maintain", vec![switch("reset", &json!(REKEYED), EMPTIED, &passphrase)])
+        .session("unlock", unlock(EMPTIED))
+        .session("list", vec![]);
+    let (_folder, rust_directory, node_directory) = compare_in("legacy", &scenario);
+
+    // Each engine opens the chain of vaults the other one wrote.
+    let mut reopened = Scenario::default();
+    reopened
+        .call("status", "status", vec![])
+        .session("unlock", unlock(REKEYED))
+        .session("unlock", unlock(EMPTIED))
+        .session("list", vec![])
+        .session("create", vec![login()])
+        .session("list", vec![]);
+    compare_swapped("legacy", &rust_directory, &node_directory, &reopened);
+}
+
+#[test]
+#[ignore = "needs Node.js and the built API: npm run test:rust-parity"]
+fn an_interrupted_migration_is_recovered_as_in_node() {
+    let prepared = node(&["prepare", "recovery", TemporaryDirectory::new().0.join("probe").to_str().unwrap()]);
+    let (legacy, password, passphrase) = (&prepared["legacyPassword"], prepared["password"].as_str().unwrap(), &prepared["passphrase"]);
+    let recover = switch("recover", legacy, password, passphrase);
+    let mut scenario = Scenario::default();
+    scenario
+        .call("status", "status", vec![])
+        .session("unlock", unlock(password))
+        .session("maintain", vec![switch("migrate", legacy, password, passphrase)])
+        .session("maintain", vec![with(recover.clone(), "confirmation", json!("RESET_ALL_DATA"))])
+        .session("maintain", vec![with(recover.clone(), "masterPassword", json!(WRONG))])
+        .session("maintain", vec![switch("recover", legacy, MIGRATED, passphrase)])
+        .call("status after a failed recovery", "status", vec![])
+        .session("maintain", vec![recover])
+        .call("status after the recovery", "status", vec![])
+        .session("unlock", unlock(legacy.clone()))
+        .session("unlock", unlock(password))
+        .session("list", vec![]);
+    compare("recovery", &scenario);
+}
+
+#[test]
+#[ignore = "needs Node.js and the built API: npm run test:rust-parity"]
+fn interrupted_rekeys_and_resets_are_recovered_as_in_node() {
+    for (kind, reset) in [("rekey-interrupted", false), ("reset-interrupted", true)] {
+        let prepared = node(&["prepare", kind, TemporaryDirectory::new().0.join("probe").to_str().unwrap()]);
+        let (old, new, passphrase) = (&prepared["password"], prepared["newPassword"].as_str().unwrap(), &prepared["passphrase"]);
+        let recover = switch("recover", old, new, passphrase);
+        let mut scenario = Scenario::default();
+        scenario.call("status", "status", vec![]).session("unlock", unlock(old.clone()));
+        // The confirmation must match what the stopped switch was doing.
+        if reset {
+            scenario.session("maintain", vec![recover.clone()]);
+        } else {
+            scenario.session("maintain", vec![with(recover.clone(), "confirmation", json!("RESET_ALL_DATA"))]);
+        }
+        let recover = if reset { with(recover, "confirmation", json!("RESET_ALL_DATA")) } else { recover };
+        scenario
+            .session("maintain", vec![with(recover.clone(), "masterPassword", json!(WRONG))])
+            .session("maintain", vec![recover])
+            .call("status after the recovery", "status", vec![])
+            .session("unlock", unlock(old.clone()))
+            .session("unlock", unlock(new))
+            .session("list", vec![]);
+        compare(kind, &scenario);
+    }
 }

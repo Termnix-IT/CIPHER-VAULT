@@ -264,6 +264,22 @@ pub fn unwrap_v2_root(envelope_json: &str, password: &[u8], vault_id: &str, key_
     open(&wrap_key, &iv, &tag, &data, &v2_slot_aad(vault_id, key_id, slot_revision, salt_text))
 }
 
+/// wrapRootKey: seals the root key in a new password slot. The caller supplies a fresh random
+/// salt and IV; the salt gives the slot its own key, so one IV per salt is enough. The fields
+/// follow the order the TypeScript app writes them in.
+pub fn wrap_v2_root(root: &[u8], password: &[u8], vault_id: &str, key_id: &str, slot_revision: u64, salt: &[u8], iv: &[u8]) -> Result<String> {
+    require(root.len() == KEY_BYTES && salt.len() == SALT_BYTES)?;
+    let salt_text = STANDARD.encode(salt);
+    let derived = derive_strong_key(password, salt)?;
+    let wrap_key = derive_v2_purpose_key(&derived, vault_id, V2_WRAP_INFO)?;
+    let (data, tag) = seal(&wrap_key, iv, root, &v2_slot_aad(vault_id, key_id, slot_revision, &salt_text))?;
+    Ok(json!({
+        "cryptoVersion": 2, "cipher": CIPHER, "vaultId": vault_id, "keyId": key_id, "slotRevision": slot_revision, "slotId": "password",
+        "kdf": { "profile": V2_PROFILE, "salt": salt_text }, "iv": STANDARD.encode(iv), "tag": STANDARD.encode(tag), "data": STANDARD.encode(data)
+    })
+    .to_string())
+}
+
 /// Opens one v2 entry. The expected context comes from the caller, not from the envelope.
 pub fn open_v2_entry(root: &[u8], envelope_json: &str, vault_id: &str, key_id: &str, entry_id: &str, revision: u64) -> Result<Secret> {
     let value = parse_json(envelope_json)?;

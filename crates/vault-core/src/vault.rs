@@ -3,9 +3,11 @@
 //! apps/electron/src/desktop-main.ts. Every method takes the screen's arguments as they arrive and
 //! returns the same result or the same message as the TypeScript app.
 //!
-//! The vault opened at startup stays the one in use. Before each operation, and again under the
-//! write lock, the data directory must still select the same file; otherwise the vault fails
-//! closed until the app restarts, as in the TypeScript app.
+//! The vault opened at startup stays the one in use until a switch (vault/switch.rs) replaces it.
+//! Before each operation, and again under the write lock, the data directory must still select
+//! the same file; otherwise the vault fails closed until the app restarts, as in the TypeScript app.
+
+mod switch;
 
 use crate::audit;
 use crate::backup;
@@ -14,6 +16,7 @@ use crate::error::{self, Result, VaultError, changed, context_failed, not_found}
 use crate::files::{self, FileIdentity};
 use crate::input::{self, MAX_ENTRIES, now_iso};
 use crate::legacy::{self, LegacyDatabase, SealedLogin};
+use crate::maintenance;
 use crate::password;
 use crate::selection::{self, Selection};
 use crate::session::{IDLE_TIMEOUT, LockReason, Session, Stamp, parse_session_id};
@@ -24,7 +27,7 @@ use base64::engine::general_purpose::STANDARD;
 use chrono::Utc;
 use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -34,12 +37,40 @@ const LEGACY_VERIFIER: &str = "hmac-sha256-v1";
 const DECRYPT_FAILED: &str = "保存済みのデータを復号できませんでした";
 const KDF_FAILED: &str = "鍵を導出できませんでした";
 const EMPTY_ONLY: &str = "復元できるのは空の保管庫のみです";
+const SWITCH_PENDING: &str = "保管庫の切り替えが完了するまでお待ちください";
 
 enum Storage {
-    Legacy { database: Mutex<LegacyDatabase>, identity: FileIdentity },
-    V2 { store: Mutex<V2Store>, identity: FileIdentity, vault_id: String, key_id: String },
+    Legacy { database: Arc<Mutex<LegacyDatabase>>, identity: FileIdentity },
+    V2 { store: Arc<Mutex<V2Store>>, identity: FileIdentity, vault_id: String, key_id: String },
     /// A switch between formats was interrupted, or the files do not agree. The vault stays locked.
-    RecoveryRequired,
+    /// `operation` names the switch that can finish it, when the files tell.
+    RecoveryRequired { operation: Option<&'static str> },
+    /// A switch is running and no vault file is open.
+    Running { format: &'static str, operation: &'static str, source_session_id: String },
+}
+
+/// The vault the data directory selects. `create` makes an empty legacy file when there is none,
+/// as at startup; after a switch the file must already be there.
+fn open_storage(root: &Path, create: bool) -> Result<Storage> {
+    Ok(match selection::inspect(root) {
+        Ok(Selection::Legacy { database }) => {
+            if !create && !database.exists() {
+                return Err(open_failed());
+            }
+            let opened = LegacyDatabase::open(&database, &|| selection::legacy_namespace_is_clear(root).unwrap_or(false)).map_err(|error| VaultError::new(500, error.message()))?;
+            let identity = files::identity(&database).map_err(|_| open_failed())?;
+            Storage::Legacy { database: Arc::new(Mutex::new(opened)), identity }
+        }
+        Ok(Selection::V2 { database, vault_id, key_id }) => match V2Store::open(&database, &vault_id, &key_id) {
+            Some(store) => Storage::V2 { identity: files::identity(&database).map_err(|_| open_failed())?, store: Arc::new(Mutex::new(store)), vault_id, key_id },
+            None => recovery_required(root),
+        },
+        Err(_) => recovery_required(root),
+    })
+}
+
+fn recovery_required(root: &Path) -> Storage {
+    Storage::RecoveryRequired { operation: maintenance::recovery_hint(root).ok().map(|hint| hint.mode()) }
 }
 
 /// A failure inside a v2 operation: a message for the screen, or a storage outcome to translate.
@@ -64,7 +95,7 @@ type Clock = Box<dyn Fn() -> Stamp + Send + Sync>;
 
 pub struct Vault {
     root: PathBuf,
-    storage: Storage,
+    storage: RwLock<Arc<Storage>>,
     session: Mutex<Session>,
     guard: UnlockGuard,
     clock: Clock,
@@ -72,6 +103,7 @@ pub struct Vault {
     writing: AtomicBool,
     backing_up: AtomicBool,
     auditing: AtomicBool,
+    switching: AtomicBool,
 }
 
 /// Holds a one-at-a-time flag until dropped, also when the work fails.
@@ -153,31 +185,24 @@ impl Vault {
             std::fs::create_dir_all(data_directory).map_err(|_| open_failed())?;
         }
         let root = files::data_root(data_directory).map_err(|_| open_failed())?;
-        let storage = match selection::inspect(&root) {
-            Ok(Selection::Legacy { database }) => {
-                let opened = LegacyDatabase::open(&database, &|| selection::legacy_namespace_is_clear(&root).unwrap_or(false)).map_err(|error| VaultError::new(500, error.message()))?;
-                let identity = files::identity(&database).map_err(|_| open_failed())?;
-                Storage::Legacy { database: Mutex::new(opened), identity }
-            }
-            Ok(Selection::V2 { database, vault_id, key_id }) => match V2Store::open(&database, &vault_id, &key_id) {
-                Some(store) => Storage::V2 { identity: files::identity(&database).map_err(|_| open_failed())?, store: Mutex::new(store), vault_id, key_id },
-                None => Storage::RecoveryRequired,
-            },
-            Err(_) => Storage::RecoveryRequired,
-        };
+        let storage = RwLock::new(Arc::new(open_storage(&root, true)?));
         // Opening the storage locks once, as openVaultStorage does, so the first status says "manual".
         let mut session = Session::new(clock());
         session.lock(LockReason::Manual);
         let session = Mutex::new(session);
-        Ok(Self { root, storage, session, guard: UnlockGuard::default(), clock, failed: AtomicBool::new(false), writing: AtomicBool::new(false), backing_up: AtomicBool::new(false), auditing: AtomicBool::new(false) })
+        Ok(Self { root, storage, session, guard: UnlockGuard::default(), clock, failed: AtomicBool::new(false), writing: AtomicBool::new(false), backing_up: AtomicBool::new(false), auditing: AtomicBool::new(false), switching: AtomicBool::new(false) })
     }
 
     fn now(&self) -> Stamp {
         (self.clock)()
     }
 
+    fn storage(&self) -> Arc<Storage> {
+        self.storage.read().unwrap().clone()
+    }
+
     pub fn is_recovery_required(&self) -> bool {
-        matches!(self.storage, Storage::RecoveryRequired)
+        matches!(*self.storage(), Storage::RecoveryRequired { .. })
     }
 
     // ---- The context: the files selected at startup must still be the ones in use.
@@ -190,7 +215,7 @@ impl Vault {
     }
 
     fn context_is_current(&self) -> files::Checked<bool> {
-        match &self.storage {
+        match &*self.storage() {
             Storage::Legacy { identity, .. } => {
                 let file = files::safe_path(&self.root, &[selection::LEGACY_DATABASE], false, false)?;
                 let found = files::identity(&file)?;
@@ -206,12 +231,15 @@ impl Vault {
                 Ok(selection::read_pointer(&self.root)? == *vault_id && receipt.committed && receipt.vault_id == *vault_id && receipt.key_id == *key_id
                     && (found.volume, found.index) == (identity.volume, identity.index))
             }
-            Storage::RecoveryRequired => Ok(false),
+            Storage::RecoveryRequired { .. } | Storage::Running { .. } => Ok(false),
         }
     }
 
-    /// assertVaultStorage
+    /// assertVaultStorage. While a switch runs there is no vault to fail, so it only waits.
     fn assert_current(&self) -> Result<()> {
+        if matches!(*self.storage(), Storage::Running { .. }) {
+            return Err(VaultError::conflict(SWITCH_PENDING));
+        }
         if self.failed.load(Ordering::SeqCst) || !self.context_is_current().unwrap_or(false) {
             return Err(self.fail());
         }
@@ -220,11 +248,14 @@ impl Vault {
 
     /// assertVaultMaintenanceReady
     fn assert_maintenance_ready(&self) -> Result<()> {
+        if self.switching.load(Ordering::SeqCst) {
+            return Err(VaultError::conflict(SWITCH_PENDING));
+        }
         if self.is_recovery_required() { Err(VaultError::new(503, "保管庫の復旧を先に完了してください")) } else { Ok(()) }
     }
 
     fn is_configured(&self) -> Result<bool> {
-        match &self.storage {
+        match &*self.storage() {
             Storage::Legacy { database, .. } => {
                 if self.failed.load(Ordering::SeqCst) {
                     return Ok(true);
@@ -232,7 +263,7 @@ impl Vault {
                 let metadata = database.lock().unwrap().metadata();
                 metadata.map(|metadata| metadata.is_some()).map_err(|_| self.fail())
             }
-            Storage::V2 { .. } | Storage::RecoveryRequired => Ok(true),
+            Storage::V2 { .. } | Storage::RecoveryRequired { .. } | Storage::Running { .. } => Ok(true),
         }
     }
 
@@ -241,10 +272,17 @@ impl Vault {
     /// getVaultStatus
     pub fn status(&self) -> Result<Value> {
         let state = self.session.lock().unwrap().state(self.now());
-        let maintenance = match &self.storage {
+        let maintenance = match &*self.storage() {
             Storage::Legacy { .. } => json!({ "state": "ready", "format": "legacy" }),
             Storage::V2 { .. } => json!({ "state": "ready", "format": "v2" }),
-            Storage::RecoveryRequired => json!({ "state": "recovery-required", "format": "unknown", "operation": "recover" }),
+            Storage::RecoveryRequired { operation } => {
+                let mut state = json!({ "state": "recovery-required", "format": "unknown", "operation": "recover" });
+                if let Some(operation) = operation {
+                    state["recoveryOperation"] = json!(operation);
+                }
+                state
+            }
+            Storage::Running { format, operation, source_session_id } => json!({ "state": "running", "format": format, "operation": operation, "sourceSessionId": source_session_id }),
         };
         let mut status = json!({ "isConfigured": self.is_configured()?, "sessionId": state.session_id, "isUnlocked": state.is_unlocked, "idleTimeoutMs": IDLE_TIMEOUT.as_millis() as u64 });
         if let Some(reason) = state.lock_reason {
@@ -327,9 +365,9 @@ impl Vault {
 
     // ---- Setup, unlock and reset.
 
-    fn legacy(&self) -> Option<&Mutex<LegacyDatabase>> {
-        match &self.storage {
-            Storage::Legacy { database, .. } => Some(database),
+    fn legacy(&self) -> Option<Arc<Mutex<LegacyDatabase>>> {
+        match &*self.storage() {
+            Storage::Legacy { database, .. } => Some(database.clone()),
             _ => None,
         }
     }
@@ -386,8 +424,8 @@ impl Vault {
         self.control(session_id, || {
             self.assert_maintenance_ready()?;
             self.assert_current()?;
-            if let Storage::V2 { store, .. } = &self.storage {
-                self.unlock_v2(store, payload)?;
+            if let Some(store) = self.v2() {
+                self.unlock_v2(&store, payload)?;
                 return self.status();
             }
             let password = Zeroizing::new(input::parse_master_password(payload, false)?);
@@ -471,7 +509,7 @@ impl Vault {
             input::parse_reset_payload(payload)?;
             self.assert_current()?;
             self.lock_for(LockReason::Reset);
-            if matches!(self.storage, Storage::V2 { .. }) {
+            if self.v2().is_some() {
                 return Err(VaultError::conflict("この保管庫の初期化は現在利用できません"));
             }
             self.legacy_write(None, None, |transaction| legacy::reset(transaction).map_err(|_| context_failed()))?;
@@ -555,9 +593,9 @@ impl Vault {
         self.v2_operation(store, true, action)
     }
 
-    fn v2(&self) -> Option<&Mutex<V2Store>> {
-        match &self.storage {
-            Storage::V2 { store, .. } => Some(store),
+    fn v2(&self) -> Option<Arc<Mutex<V2Store>>> {
+        match &*self.storage() {
+            Storage::V2 { store, .. } => Some(store.clone()),
             _ => None,
         }
     }
@@ -579,7 +617,7 @@ impl Vault {
     /// listEntries without the session wrapper, which the backup also uses.
     fn entry_list(&self) -> Result<Value> {
         if let Some(store) = self.v2() {
-            return self.v2_operation(store, false, |store, root, active| {
+            return self.v2_operation(&store, false, |store, root, active| {
                 let mut items = Vec::new();
                 for (id, _) in store.entries()? {
                     active()?;
@@ -606,7 +644,7 @@ impl Vault {
     /// getEntryById without the session wrapper, which the backup also uses.
     fn entry(&self, id: Option<&Value>) -> Result<Value> {
         if let Some(store) = self.v2() {
-            return self.v2_operation(store, false, |store, root, _| Ok(Self::read_v2(store, root, &input::parse_entry_id(id)?)?.0));
+            return self.v2_operation(&store, false, |store, root, _| Ok(Self::read_v2(store, root, &input::parse_entry_id(id)?)?.0));
         }
         let session = self.require_unlocked_vault(None)?;
         let id = input::parse_entry_id(id)?;
@@ -645,7 +683,7 @@ impl Vault {
             if let Some(store) = self.v2() {
                 self.require_unlocked(None)?;
                 let fields = input::parse_vault_entry(payload)?;
-                return self.v2_mutation(store, |store, root, active| {
+                return self.v2_mutation(&store, |store, root, active| {
                     if store.entries()?.len() >= MAX_ENTRIES {
                         return Err(VaultError::too_large(error::ENTRY_LIMIT).into());
                     }
@@ -683,7 +721,7 @@ impl Vault {
                 self.require_unlocked(None)?;
                 let id = input::parse_entry_id(id)?;
                 let fields = input::parse_vault_entry(payload)?;
-                return self.v2_mutation(store, |store, root, active| {
+                return self.v2_mutation(&store, |store, root, active| {
                     let (existing, revision) = Self::read_v2(store, root, &id)?;
                     let now = not_before(&existing["updatedAt"]);
                     let kind = |value: &Value| value["type"].as_str().unwrap_or("login").to_string();
@@ -719,7 +757,7 @@ impl Vault {
         self.with_session(session_id, |_| {
             if let Some(store) = self.v2() {
                 // The app's delete runs as a read whose store refuses it during a write.
-                return self.v2_operation(store, true, |store, root, active| {
+                return self.v2_operation(&store, true, |store, root, active| {
                     let id = input::parse_entry_id(id)?;
                     let (_, revision) = Self::read_v2(store, root, &id)?;
                     active()?;
@@ -747,7 +785,7 @@ impl Vault {
                 self.require_unlocked(None)?;
                 let (ids, group) = input::parse_group_payload(payload)?;
                 let group = json!(group);
-                return self.v2_mutation(store, |store, root, active| {
+                return self.v2_mutation(&store, |store, root, active| {
                     for id in &ids {
                         store.revision(id)?.ok_or_else(not_found)?;
                     }
@@ -849,7 +887,7 @@ impl Vault {
             for entry in entries {
                 input::validate_stored_entry(entry, entry["id"].as_str().unwrap_or_default()).map_err(|_| invalid_entry())?;
             }
-            let count = self.v2_mutation(store, |store, root, active| Ok(store.restore(root, entries, &|| active().map_err(|_| StoreError::Cancelled))?))?;
+            let count = self.v2_mutation(&store, |store, root, active| Ok(store.restore(root, entries, &|| active().map_err(|_| StoreError::Cancelled))?))?;
             return Ok(json!({ "restoredCount": count }));
         }
         let session = self.require_unlocked_vault(None)?;

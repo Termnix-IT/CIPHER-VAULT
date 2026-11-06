@@ -175,6 +175,11 @@ fn v2_slot_reproduces_the_key_chain_and_wrapped_root_bytes() {
     assert_eq!(unwrap_v2_root(&envelope, b"wrong", vault, key_id, revision).unwrap_err(), CryptoError::Authentication);
     assert_eq!(unwrap_v2_root(&envelope, password, vault, key_id, revision + 1).unwrap_err(), CryptoError::ContextMismatch);
 
+    // Wrapping with the fixture's salt and IV writes the app's slot byte for byte.
+    let ordered = json!({ "cryptoVersion": 2, "cipher": "aes-256-gcm", "vaultId": vault, "keyId": key_id, "slotRevision": revision, "slotId": "password",
+        "kdf": { "profile": s(&v2["profile"]), "salt": salt }, "iv": v2["wrapIv"], "tag": v2["wrapTag"], "data": v2["wrappedRoot"] }).to_string();
+    assert_eq!(wrap_v2_root(&root, password, vault, key_id, revision, &b64(&v2["salt"]), &b64(&v2["wrapIv"])).unwrap(), ordered);
+
     let changed_salt = STANDARD.encode([0u8; 16]);
     let changed = v2_slot_aad(vault, key_id, revision, &changed_salt);
     let opened = open(&wrap_key, &b64(&v2["wrapIv"]), &b64(&v2["wrapTag"]), &b64(&v2["wrappedRoot"]), &changed);

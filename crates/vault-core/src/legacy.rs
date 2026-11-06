@@ -127,7 +127,7 @@ pub fn inspect(connection: &Connection) -> Result<bool, StorageError> {
     check_columns(connection, "password_entries", &ENTRY_COLUMNS, &OPTIONAL_ENTRY_COLUMNS)
 }
 
-fn initialize(connection: &Connection) -> rusqlite::Result<()> {
+pub(crate) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch(SCHEMA)?;
     let mut statement = connection.prepare("SELECT name FROM pragma_table_info('password_entries')")?;
     let columns = statement.query_map([], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;

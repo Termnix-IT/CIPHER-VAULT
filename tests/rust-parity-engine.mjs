@@ -9,7 +9,8 @@
 //
 // serve reads one JSON request per line, {"method": "...", "args": [...]}, where the string
 // "$undefined" stands for a missing argument, and answers {"ok": value} or {"error": {status, message}}.
-import { mkdirSync, readFileSync, unlinkSync } from "node:fs";
+import fs, { mkdirSync, readFileSync, unlinkSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import Database from "better-sqlite3";
@@ -21,11 +22,16 @@ const [mode, ...rest] = process.argv.slice(2);
 async function prepare(kind, directory) {
   const { compatibility, createMigratedFixture, v2Password } = await import("./v2-runtime-fixture.mjs");
   const schema = readFileSync(new URL("../apps/api/src/db/schema.sql", import.meta.url), "utf8");
+  const passwords = { password: v2Password, legacyPassword: compatibility.legacy.password, passphrase: compatibility.backupV1.passphrase };
   if (kind === "v2" || kind === "recovery") {
     await createMigratedFixture(directory);
     // A switch to v2 that stopped before the pointer was written, which the app must recover first.
     if (kind === "recovery") unlinkSync(path.join(directory, "vault-current.json"));
-    return { password: v2Password };
+    return passwords;
+  }
+  if (kind === "rekey-interrupted" || kind === "reset-interrupted") {
+    await createMigratedFixture(directory);
+    return { ...passwords, newPassword: await interruptReplacement(directory, kind === "reset-interrupted", passwords) };
   }
   mkdirSync(directory);
   if (kind === "empty") return {};
@@ -49,6 +55,32 @@ async function prepare(kind, directory) {
   }
 }
 
+/** A rekey or reset that stops when it would write the pointer: its journal and new vault stay. */
+async function interruptReplacement(directory, reset, { password, passphrase }) {
+  const maintenance = await import(`${base}services/vault-maintenance-service.js`);
+  const vault = await import(`${base}services/vault-service.js`);
+  const newPassword = "synthetic-parity-replacement-password";
+  maintenance.openApplicationVault({ dataDirectory: directory });
+  const rename = fs.renameSync;
+  fs.renameSync = (from, to) => {
+    if (String(to).endsWith("vault-current.json")) throw new Error("synthetic interruption");
+    return rename(from, to);
+  };
+  syncBuiltinESMExports();
+  try {
+    const { sessionId } = await vault.unlockVault({ masterPassword: password });
+    await maintenance.runVaultMaintenance({ operation: reset ? "reset" : "rekey", masterPassword: password, newMasterPassword: newPassword,
+      confirmNewMasterPassword: newPassword, backupPassphrase: passphrase, confirmBackupPassphrase: passphrase,
+      ...(reset ? { confirmation: "RESET_ALL_DATA" } : {}) }, sessionId).then(() => { throw new Error("the replacement was not interrupted"); }, () => undefined);
+    if (maintenance.getVaultMaintenanceState()?.state !== "recovery-required") throw new Error("the replacement left no recovery");
+  } finally {
+    fs.renameSync = rename;
+    syncBuiltinESMExports();
+    maintenance.closeApplicationVault();
+  }
+  return newPassword;
+}
+
 async function serve() {
   const maintenance = await import(`${base}services/vault-maintenance-service.js`);
   const vault = await import(`${base}services/vault-service.js`);
@@ -67,6 +99,12 @@ async function serve() {
     setup: control(vault.setupVault),
     unlock: control(vault.unlockVault),
     reset: control(vault.resetVault),
+    // The vault:maintenance handler in desktop-main.ts.
+    maintain: async (sessionId, payload) => {
+      session.vaultSession.requireGeneration(sessionId);
+      await maintenance.runVaultMaintenance(payload, sessionId);
+      return vault.getVaultStatus();
+    },
     lock: (sessionId) => vault.lockVaultForSession(sessionId),
     list: scoped(entries.listEntries),
     get: scoped(entries.getEntryById),

@@ -1,12 +1,12 @@
 // Checks the Tauri app in apps/desktop through its `e2e` build: it refuses to start without a test
 // folder or on a folder holding real data, the screen sets up, adds to, locks and unlocks a vault
 // in a temporary folder through the Rust core, saves a backup and restores it into the emptied
-// vault, audits it, and the window keeps refusing outside connections, navigation, new windows, downloads it
+// vault, audits it, migrates it to the v2 format and opens it with the new password, and the window keeps refusing outside connections, navigation, new windows, downloads it
 // did not make and ungranted commands. Only synthetic passwords are used.
 // Usage: node scripts/verify-tauri-shell.mjs <e2e-exe> <screenshot-directory>
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { connect, powershell, screenshot, sleep, startE2eProcess, until } from "./lib/webview-e2e.mjs";
@@ -18,6 +18,7 @@ mkdirSync(screenshotDirectory, { recursive: true });
 const NOT_PORTED = "この機能はこの版ではまだ使えません。現行のアプリを使ってください";
 const PASSWORD = "synthetic-shell-check-password";
 const BACKUP_PASSPHRASE = "synthetic-shell-backup-passphrase";
+const MIGRATED_PASSWORD = "synthetic-shell-migrated-password";
 const PORT = 9341;
 const settle = (page, expression) => page.evaluate(`Promise.resolve().then(() => ${expression}).then((value) => ({ value }), (error) => ({ error: String(error?.message ?? error) }))`);
 const status = (page) => page.evaluate("window.passwordManager.fetchVaultStatus()");
@@ -205,6 +206,31 @@ try {
   await screenshot(page, screenshotDirectory, "tauri-shell-audit");
   await click(page, 'button[aria-label="閉じる"]');
 
+  // ---- Migration to the v2 format, through the screen. The vault locks and opens with the new password only.
+  await menu(page, "ツール", "保管庫を更新…");
+  await until("the maintenance form", () => page.evaluate(`!!document.querySelector("#maintenance-form")`));
+  const maintenanceField = (index) => `#maintenance-form .maintenance-fields label:nth-of-type(${index}) input`;
+  for (const [index, text] of [PASSWORD, MIGRATED_PASSWORD, MIGRATED_PASSWORD, BACKUP_PASSPHRASE, BACKUP_PASSPHRASE].entries()) {
+    await type(page, maintenanceField(index + 1), text);
+  }
+  await click(page, 'button[form="maintenance-form"]');
+  await until("the migration", () => screenHas(page, "変更しました。新しいマスターパスワードで開いてください。"), 120000);
+  const migrated = await status(page);
+  assert.deepEqual({ isUnlocked: migrated.isUnlocked, maintenance: migrated.maintenance }, { isUnlocked: false, maintenance: { state: "ready", format: "v2" } });
+  await screenshot(page, screenshotDirectory, "tauri-shell-migrated");
+  await click(page, '.vault-maintenance-dialog button[aria-label="閉じる"]');
+  await submitPassword(page, PASSWORD, false);
+  await until("the refusal of the old password", () => screenHas(page, "マスターパスワードが正しくありません"));
+  await submitPassword(page, MIGRATED_PASSWORD, false);
+  await until("the migrated list", async () => !(await lockScreenShown(page)) && (await screenHas(page, "画面で追加")));
+  const migratedSession = (await status(page)).sessionId;
+  const [carried] = (await page.evaluate(`window.passwordManager.fetchEntries(${JSON.stringify(migratedSession)})`)).items;
+  assert.equal((await page.evaluate(`window.passwordManager.fetchEntry(${JSON.stringify(carried.id)}, ${JSON.stringify(migratedSession)})`)).password, generated);
+  const files = readdirSync(data, { recursive: true }).map((name) => path.join(data, name)).filter((file) => statSync(file).isFile());
+  assert.ok(files.some((file) => path.basename(file) === "vault-current.json"), "the v2 vault is selected");
+  result.migratedThroughScreen = { format: "v2", passwordInPlainText: files.some((file) => readFileSync(file).includes(Buffer.from(generated))) };
+  assert.equal(result.migratedThroughScreen.passwordInPlainText, false);
+
   result.notPorted = await settle(page, `window.passwordManager.copyText("x", ${JSON.stringify((await status(page)).sessionId)})`);
   assert.deepEqual(result.notPorted, { error: NOT_PORTED });
 
@@ -218,7 +244,7 @@ try {
   assert.ok(result.outsideFetch.error, "an outside connection must fail");
   result.ungrantedCommand = await settle(page, `window.__TAURI_INTERNALS__.invoke("plugin:window|set_title", { label: "main", value: "changed" })`);
   assert.ok(result.ungrantedCommand.error, "a command no capability grants must be refused");
-  result.unknownCommand = await settle(page, `window.__TAURI_INTERNALS__.invoke("vault_maintenance", {})`);
+  result.unknownCommand = await settle(page, `window.__TAURI_INTERNALS__.invoke("clipboard_write", {})`);
   assert.ok(result.unknownCommand.error);
   result.newWindow = await page.evaluate(`window.open("https://example.test/") === null`);
 

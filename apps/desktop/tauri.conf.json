@@ -23,6 +23,7 @@
             "allow-vault-unlock",
             "allow-vault-lock",
             "allow-vault-reset",
+            "allow-vault-maintenance",
             "allow-entries-list",
             "allow-entries-get",
             "allow-entries-create",

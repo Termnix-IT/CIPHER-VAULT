@@ -79,7 +79,18 @@ fn valid_login(entry: &Value) -> Option<String> {
 
 /// validateBackupEntries (version 1, logins only) and validateVaultEntries (later versions).
 fn validate(entries: &Value, typed: bool) -> Option<()> {
-    let entries = entries.as_array().filter(|entries| entries.len() <= MAX_ENTRIES)?;
+    validate_list(entries.as_array()?, typed)
+}
+
+/// validateBackupEntries or, when `typed`, validateVaultEntries.
+pub fn validate_entries(entries: &[Value], typed: bool) -> bool {
+    validate_list(entries, typed).is_some()
+}
+
+fn validate_list(entries: &[Value], typed: bool) -> Option<()> {
+    if entries.len() > MAX_ENTRIES {
+        return None;
+    }
     let mut ids = HashSet::new();
     for entry in entries {
         let id = match entry.get("type") {

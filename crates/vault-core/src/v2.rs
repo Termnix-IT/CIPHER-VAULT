@@ -141,6 +141,49 @@ impl V2Store {
         Some(Self { connection, vault_id: vault_id.into(), key_id: key_id.into(), slot })
     }
 
+    /// openV2Store without writer mode, for checks that must not take the write lock: another
+    /// connection of the same switch may hold it.
+    pub fn open_read_only(path: &Path, vault_id: &str, key_id: &str) -> Option<Self> {
+        let mut connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX).ok()?;
+        let transaction = connection.transaction().ok()?;
+        let slot = inspect(&transaction, vault_id, key_id).ok()?;
+        transaction.commit().ok()?;
+        Some(Self { connection, vault_id: vault_id.into(), key_id: key_id.into(), slot })
+    }
+
+    /// createV2Store: a new file holding only the header. The parent directory must exist, and an
+    /// existing file, even an empty one, is never overwritten.
+    pub fn create(path: &Path, slot: &str, vault_id: &str, key_id: &str) -> StoreResult<Self> {
+        let (slot_vault, slot_key, revision) = slot_context(slot)?;
+        require(slot_vault == vault_id && slot_key == key_id && revision == SLOT_REVISION)?;
+        std::fs::OpenOptions::new().write(true).create_new(true).open(path).map_err(|_| StoreError::Invalid)?;
+        let mut connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
+        connection.pragma_update(None, "synchronous", "EXTRA")?;
+        connection.pragma_update(None, "foreign_keys", true)?;
+        connection.pragma_update(None, "secure_delete", true)?;
+        connection.pragma_update(None, "trusted_schema", false)?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        for (_, sql) in TABLES {
+            transaction.execute_batch(sql)?;
+        }
+        transaction.pragma_update(None, "application_id", APPLICATION_ID)?;
+        transaction.pragma_update(None, "user_version", LOGIN_SCHEMA_VERSION)?;
+        transaction.execute("INSERT INTO vault_header VALUES (1, ?1, ?2, ?3, ?4, 0)", params![vault_id, key_id, SLOT_REVISION as i64, slot])?;
+        inspect(&transaction, vault_id, key_id)?;
+        transaction.commit()?;
+        Ok(Self { connection, vault_id: vault_id.into(), key_id: key_id.into(), slot: slot.into() })
+    }
+
+    /// getUsage: how many nonces this key has used, which is also how many seals it made.
+    pub fn encryption_count(&self) -> StoreResult<i64> {
+        self.header(&self.connection)
+    }
+
+    /// The stored envelope of a current entry, to prove that another key cannot open it.
+    pub fn envelope(&self, id: &str) -> StoreResult<Option<String>> {
+        Ok(self.connection.query_row("SELECT envelope FROM vault_entries WHERE entry_id = ?1", [id], |row| row.get::<_, Option<String>>(0)).optional()?.flatten())
+    }
+
     pub fn password_slot(&self) -> &str {
         &self.slot
     }
@@ -521,6 +564,27 @@ pub(crate) mod tests {
         assert_eq!(count(&store, "PRAGMA user_version"), 2, "the first item raises the marker");
         store.write(&root, &entry(id), id, 5, &available).unwrap();
         assert_eq!(count(&store, "PRAGMA user_version"), 2, "and a later login never lowers it");
+    }
+
+    #[test]
+    fn a_created_store_reopens_and_counts_its_seals() {
+        let directory = TemporaryDirectory::new();
+        let path = directory.0.join("vault.sqlite");
+        let (vault, key) = ("44444444-4444-4444-8444-444444444444", "55555555-5555-4555-8555-555555555555");
+        let root = [7u8; 32];
+        let slot = crypto::wrap_v2_root(&root, b"synthetic-created-password", vault, key, 1, &[1u8; 16], &[2u8; 12]).unwrap();
+        let mut store = V2Store::create(&path, &slot, vault, key).unwrap();
+        let id = "33333333-3333-4333-8333-333333333333";
+        store.write(&root, &entry(id), id, 1, &available).unwrap();
+        assert_eq!(store.encryption_count().unwrap(), 1);
+        drop(store);
+        assert!(V2Store::create(&path, &slot, vault, key).is_err(), "an existing file is never replaced");
+        let reader = V2Store::open_read_only(&path, vault, key).unwrap();
+        assert_eq!(reader.password_slot(), slot);
+        assert_eq!(reader.read(&root, id).unwrap().unwrap().0, entry(id));
+        assert!(reader.envelope(id).unwrap().is_some());
+        assert_eq!(*crypto::unwrap_v2_root(reader.password_slot(), b"synthetic-created-password", vault, key, 1).unwrap(), root);
+        assert!(V2Store::open(&path, vault, key).is_some(), "the writer accepts the file too");
     }
 
     #[test]

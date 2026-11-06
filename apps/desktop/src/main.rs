@@ -1,6 +1,6 @@
 //! CIPHER VAULT on Tauri. It shows the existing React screen from `apps/web` and replaces
 //! `apps/electron` and the Node services step by step. The vault commands run the Rust core in
-//! `crates/vault-core`; maintenance, the clipboard and updates are not ported yet.
+//! `crates/vault-core`; the clipboard and updates are not ported yet.
 //!
 //! The `e2e` feature exists for automated checks only. It keeps the WebView2 debugging port
 //! available and reports events on stdout. Never distribute it.
@@ -70,6 +70,12 @@ async fn vault_unlock(vault: State<'_, Shared>, session_id: Option<Value>, paylo
 #[tauri::command]
 async fn vault_lock(vault: State<'_, Shared>, session_id: Option<Value>) -> Result<Value, String> {
     run(vault, move |vault| vault.lock(session_id.as_ref())).await
+}
+
+/// Migration, rekey, reset to an empty v2 vault, and recovery of a switch that stopped.
+#[tauri::command]
+async fn vault_maintenance(vault: State<'_, Shared>, session_id: Option<Value>, payload: Option<Value>) -> Result<Value, String> {
+    run(vault, move |vault| vault.run_maintenance(session_id.as_ref(), payload.as_ref())).await
 }
 
 #[tauri::command]
@@ -183,6 +189,7 @@ fn main() {
             vault_unlock,
             vault_lock,
             vault_reset,
+            vault_maintenance,
             entries_list,
             entries_get,
             entries_create,
