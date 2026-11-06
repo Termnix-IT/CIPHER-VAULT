@@ -29,13 +29,16 @@ export async function until(label, check, timeoutMs = 15000) {
   }
 }
 
+// WebView2's first start on a fresh machine, such as a CI runner, can take far longer than later ones.
+const DEBUGGING_PORT_TIMEOUT_MS = 60_000;
+
 export async function connect(port) {
   const pages = await until("debugging port", async () => {
     try {
       const list = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
       return list.some((page) => page.type === "page") ? list : null;
     } catch { return null; }
-  });
+  }, DEBUGGING_PORT_TIMEOUT_MS);
   const socket = new WebSocket(pages.find((page) => page.type === "page").webSocketDebuggerUrl);
   await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; });
   const pending = new Map(), messages = [], dialogs = [], responses = [];
