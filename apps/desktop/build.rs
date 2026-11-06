@@ -18,6 +18,7 @@ const COMMANDS: &[&str] = &[
     "backup_export",
     "backup_restore",
     "vault_audit",
+    "clipboard_write",
 ];
 
 fn main() {

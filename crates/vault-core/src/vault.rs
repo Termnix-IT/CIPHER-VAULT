@@ -27,7 +27,7 @@ use base64::engine::general_purpose::STANDARD;
 use chrono::Utc;
 use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -93,6 +93,10 @@ impl From<StoreError> for Failure {
 
 type Clock = Box<dyn Fn() -> Stamp + Send + Sync>;
 
+/// The desktop's own refusal of vault operations, such as while the screen is locked
+/// (assertAvailable in desktop-main.ts). Without one, every operation is available.
+pub type Availability = Box<dyn Fn() -> Result<()> + Send + Sync>;
+
 pub struct Vault {
     root: PathBuf,
     storage: RwLock<Arc<Storage>>,
@@ -104,6 +108,7 @@ pub struct Vault {
     backing_up: AtomicBool,
     auditing: AtomicBool,
     switching: AtomicBool,
+    availability: OnceLock<Availability>,
 }
 
 /// Holds a one-at-a-time flag until dropped, also when the work fails.
@@ -190,7 +195,7 @@ impl Vault {
         let mut session = Session::new(clock());
         session.lock(LockReason::Manual);
         let session = Mutex::new(session);
-        Ok(Self { root, storage, session, guard: UnlockGuard::default(), clock, failed: AtomicBool::new(false), writing: AtomicBool::new(false), backing_up: AtomicBool::new(false), auditing: AtomicBool::new(false), switching: AtomicBool::new(false) })
+        Ok(Self { root, storage, session, guard: UnlockGuard::default(), clock, failed: AtomicBool::new(false), writing: AtomicBool::new(false), backing_up: AtomicBool::new(false), auditing: AtomicBool::new(false), switching: AtomicBool::new(false), availability: OnceLock::new() })
     }
 
     fn now(&self) -> Stamp {
@@ -199,6 +204,28 @@ impl Vault {
 
     fn storage(&self) -> Arc<Storage> {
         self.storage.read().unwrap().clone()
+    }
+
+/// Sets the desktop's check once, before the screen can call anything. Returns false when one was
+    /// already set.
+    pub fn set_availability(&self, check: Availability) -> bool {
+        self.availability.set(check).is_ok()
+    }
+
+    /// Called where desktop-main.ts calls assertAvailable, so the refusals come in the same order.
+    fn available(&self) -> Result<()> {
+        self.availability.get().map_or(Ok(()), |check| check())
+    }
+
+    /// Whether a key is in memory, for the desktop's decisions. Expiry is applied first.
+    pub fn is_unlocked(&self) -> bool {
+        let now = self.now();
+        self.session.lock().unwrap().state(now).is_unlocked
+    }
+
+    /// Whether a switch is still running, so that quitting can give it a moment to stop.
+    pub fn is_switching(&self) -> bool {
+        self.switching.load(Ordering::SeqCst)
     }
 
     pub fn is_recovery_required(&self) -> bool {
@@ -333,13 +360,25 @@ impl Vault {
 
     /// handleControl in desktop-main.ts: the request must come from the current session.
     fn control<T>(&self, session_id: Option<&Value>, action: impl FnOnce() -> Result<T>) -> Result<T> {
+        self.available()?;
         let expected = parse_session_id(session_id)?;
         self.require_generation(&expected)?;
         action()
     }
 
-    /// withVaultSession: the vault is unlocked by this session before and after the action.
+    /// handleSession in desktop-main.ts: the desktop's check runs inside withVaultSession, before
+    /// and after the action.
     fn with_session<T>(&self, session_id: Option<&Value>, action: impl FnOnce(&str) -> Result<T>) -> Result<T> {
+        self.within_session(session_id, |session| {
+            self.available()?;
+            let result = action(session)?;
+            self.available()?;
+            Ok(result)
+        })
+    }
+
+    /// withVaultSession: the vault is unlocked by this session before and after the action.
+    fn within_session<T>(&self, session_id: Option<&Value>, action: impl FnOnce(&str) -> Result<T>) -> Result<T> {
         let expected = parse_session_id(session_id)?;
         let session = self.require_unlocked(Some(&expected))?;
         let result = action(&session)?;
@@ -347,8 +386,23 @@ impl Vault {
         Ok(result)
     }
 
+    /// The clipboard:writeText handler. `copy` writes the text and must call `current` before and
+    /// after writing; it fails when the screen lock or a change of session arrived in between.
+    pub fn copy_text(&self, session_id: Option<&Value>, value: Option<&Value>, copy: impl FnOnce(&str, &dyn Fn() -> Result<()>) -> Result<()>) -> Result<Value> {
+        self.within_session(session_id, |session| {
+            self.available()?;
+            let text = input::parse_clipboard_text(value)?;
+            copy(text, &|| {
+                self.available()?;
+                self.require_unlocked(Some(session)).map(|_| ())
+            })?;
+            Ok(Value::Null)
+        })
+    }
+
     /// recordVaultActivity
     pub fn record_activity(&self, session_id: Option<&Value>) -> Result<Value> {
+        self.available()?;
         let expected = parse_session_id(session_id)?;
         let now = self.now();
         self.session.lock().unwrap().record_activity(&expected, now)?;
@@ -1328,5 +1382,82 @@ mod tests {
         let error = Vault::open(&directory.0).err().unwrap();
         assert_eq!(error.message, legacy::StorageError::UnsupportedFormat.message());
     }
-}
 
+    const AWAY: &str = "synthetic-away-message";
+
+    /// A desktop check the test switches on and off, counting how often the core asked.
+    fn away_switch(vault: &Vault) -> (Arc<std::sync::atomic::AtomicBool>, Arc<std::sync::atomic::AtomicUsize>) {
+        let away = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (flag, count) = (Arc::clone(&away), Arc::clone(&asked));
+        assert!(vault.set_availability(Box::new(move || {
+            count.fetch_add(1, Ordering::SeqCst);
+            if flag.load(Ordering::SeqCst) { Err(VaultError::new(423, AWAY)) } else { Ok(()) }
+        })));
+        assert!(!vault.set_availability(Box::new(|| Ok(()))), "the check is set only once");
+        (away, asked)
+    }
+
+    #[test]
+    fn the_desktop_check_runs_where_the_electron_handlers_call_it() {
+        let (directory, legacy) = legacy_directory(false);
+        let vault = Vault::open(&directory.0).unwrap();
+        let (away, asked) = away_switch(&vault);
+        let session = id(&unlocked(&vault, s(&legacy["password"])));
+        assert_eq!(asked.load(Ordering::SeqCst), 1, "unlock asks once, before the generation check");
+        assert!(vault.is_unlocked());
+
+        // A session operation asks before and after the action.
+        vault.list_entries(some(&session)).unwrap();
+        assert_eq!(asked.load(Ordering::SeqCst), 3);
+
+        away.store(true, Ordering::SeqCst);
+        assert_eq!(vault.list_entries(some(&session)).unwrap_err().message, AWAY);
+        assert_eq!(vault.record_activity(some(&session)).unwrap_err().message, AWAY);
+        assert_eq!(vault.run_maintenance(some(&session), None).unwrap_err().message, AWAY);
+        // withVaultSession checks the session first; handleControl checks the desktop first.
+        assert_eq!(vault.list_entries(some(&json!("stale-session"))).unwrap_err().message, error::CHANGED);
+        assert_eq!(vault.unlock(some(&json!("stale-session")), some(&password("x"))).unwrap_err().message, AWAY);
+        // The status and the lock stay available, as in the Electron app.
+        assert_eq!(vault.status().unwrap()["isUnlocked"], true);
+        vault.lock(some(&session)).unwrap();
+        assert!(!vault.is_unlocked());
+    }
+
+    #[test]
+    fn copying_checks_the_session_and_the_desktop_around_the_write() {
+        let (directory, legacy) = legacy_directory(false);
+        let vault = Vault::open(&directory.0).unwrap();
+        let (away, _) = away_switch(&vault);
+        let session = id(&unlocked(&vault, s(&legacy["password"])));
+
+        let mut written = None;
+        vault
+            .copy_text(some(&session), some(&json!("synthetic-copy")), |text, current| {
+                current()?;
+                written = Some(text.to_string());
+                current()
+            })
+            .unwrap();
+        assert_eq!(written.as_deref(), Some("synthetic-copy"));
+
+        let never = |_: &str, _: &dyn Fn() -> Result<()>| -> Result<()> { panic!("nothing may be written") };
+        assert_eq!(vault.copy_text(some(&session), Some(&json!(1)), never).unwrap_err().message, "コピーする内容は文字列で指定してください");
+        assert_eq!(vault.copy_text(some(&session), None, never).unwrap_err().message, "コピーする内容は文字列で指定してください");
+        let large = json!("x".repeat(1024 * 1024 + 1));
+        assert_eq!(vault.copy_text(some(&session), Some(&large), never).unwrap_err().status, 413);
+        assert_eq!(vault.copy_text(some(&json!("stale-session")), some(&json!("x")), never).unwrap_err().message, error::CHANGED);
+
+        // A lock that arrives during the write fails the copy, so the desktop clears what it wrote.
+        let result = vault.copy_text(some(&session), some(&json!("late")), |_, current| {
+            current()?;
+            vault.lock_for(LockReason::ScreenLock);
+            current()
+        });
+        assert_eq!(result.unwrap_err().message, error::LOCKED);
+
+        let session = id(&unlocked(&vault, s(&legacy["password"])));
+        away.store(true, Ordering::SeqCst);
+        assert_eq!(vault.copy_text(some(&session), some(&json!("x")), never).unwrap_err().message, AWAY);
+    }
+}

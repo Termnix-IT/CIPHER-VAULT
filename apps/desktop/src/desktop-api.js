@@ -41,7 +41,7 @@
     restoreBackup: (payload, sessionId) => call("backup_restore", { sessionId, payload }),
     auditVault: (sessionId) => call("vault_audit", { sessionId }),
     runVaultMaintenance: (payload, sessionId) => call("vault_maintenance", { sessionId, payload }),
-    copyText: notPorted,
+    copyText: (value, sessionId) => call("clipboard_write", { sessionId, value }),
     checkForUpdates: notPorted, downloadUpdate: notPorted, installUpdate: notPorted, openReleasePage: notPorted
   };
   Object.defineProperty(window, "passwordManager", { value: Object.freeze(api) });

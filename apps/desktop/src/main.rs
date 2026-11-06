@@ -1,28 +1,107 @@
 //! CIPHER VAULT on Tauri. It shows the existing React screen from `apps/web` and replaces
 //! `apps/electron` and the Node services step by step. The vault commands run the Rust core in
-//! `crates/vault-core`; the clipboard and updates are not ported yet.
+//! `crates/vault-core`; manual updates are not ported yet. The desktop adds what the Electron
+//! main process did: the expiring clipboard, locking on screen lock and sleep, and one app per
+//! vault folder.
 //!
 //! The `e2e` feature exists for automated checks only. It keeps the WebView2 debugging port
-//! available and reports events on stdout. Never distribute it.
+//! available, replaces the clipboard with a fake one and reports events on stdout. Never distribute it.
 
 #![cfg_attr(not(feature = "e2e"), windows_subsystem = "windows")]
 
 mod backup_download;
+mod clipboard;
+mod clock;
 mod data_directory;
+mod os_events;
+mod single_instance;
 #[cfg_attr(feature = "e2e", allow(dead_code))]
 mod webview_hardening;
+// Left out of the e2e build, so that build cannot reach the real clipboard at all.
+#[cfg(not(feature = "e2e"))]
+mod windows_clipboard;
 
+use cipher_vault_core::error::VaultError;
 use cipher_vault_core::{LockReason, Vault};
+use clipboard::ExpiringClipboard;
+use os_events::{OsEvent, PowerGuard};
 use serde_json::Value;
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 use tauri::webview::NewWindowResponse;
-use tauri::{Manager, State, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{Manager, RunEvent, State, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use zeroize::Zeroize;
 
 type Shared = Arc<Vault>;
+type SharedDesktop = Arc<Desktop>;
 
-/// How often the idle limit is checked. The screen asks for the status every second as well.
-const EXPIRY_INTERVAL: Duration = Duration::from_secs(1);
+/// How often the idle limit and the copy deadline are checked, even when the screen hangs.
+const WATCHDOG_INTERVAL: Duration = Duration::from_millis(500);
+/// How long quitting waits for a switch to stop, as the Electron app waits before it exits.
+const QUIT_WAIT: Duration = Duration::from_millis(1500);
+const QUITTING: &str = "アプリを終了しています";
+
+/// What the Electron main process kept around the services: the clipboard, the OS state and quitting.
+struct Desktop {
+    vault: Shared,
+    clipboard: ExpiringClipboard,
+    power: PowerGuard,
+    quitting: AtomicBool,
+}
+
+impl Desktop {
+    /// Lock first: the key must be gone even if the clipboard is busy. The report comes before the
+    /// lock, so the watchdog's clearing can never be reported ahead of it.
+    fn lock_and_clear(&self, reason: LockReason) {
+        trace(&format!("vault-locked {}", reason.as_str()));
+        self.vault.lock_for(reason);
+        self.clipboard.clear_owned();
+    }
+
+    fn handle_os_event(&self, event: OsEvent) {
+        self.power.observe(event);
+        self.lock_and_clear(event.lock_reason());
+    }
+
+    /// assertAvailable in desktop-main.ts. The core calls it where the Electron handlers did.
+    fn assert_available(&self) -> cipher_vault_core::error::Result<()> {
+        if self.quitting.load(Ordering::SeqCst) {
+            return Err(VaultError::new(503, QUITTING));
+        }
+        let result = self.power.check(os_events::session_is_locked());
+        // A lock found here had no notification, so nothing has locked the vault yet. Only the key
+        // is destroyed here: a copy in progress calls this while holding the clipboard lease, so
+        // clearing is left to that copy's failure path and to the watchdog.
+        if result.is_err() && self.vault.is_unlocked() {
+            self.vault.lock_for(LockReason::ScreenLock);
+            trace("vault-locked screen-lock");
+        }
+        result.map_err(|message| VaultError::new(423, message))
+    }
+
+    /// The key and the copy expire here even if the page hangs, so expiry never depends on polling.
+    /// Any lock, however it happened, clears this app's copy, as onVaultState does in Electron.
+    fn watch(&self) {
+        self.vault.expire();
+        if self.vault.is_unlocked() {
+            self.clipboard.tick();
+        } else {
+            self.clipboard.clear_owned();
+        }
+    }
+
+    fn quit(&self) {
+        self.quitting.store(true, Ordering::SeqCst);
+        self.lock_and_clear(LockReason::WindowClosed);
+        // The lock cancels a switch at its next check; it then reopens the vault before it returns.
+        let deadline = Instant::now() + QUIT_WAIT;
+        while self.vault.is_switching() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        trace("exit-complete");
+    }
+}
 
 /// Reports events to the automated checks. Prints nothing in a normal build.
 pub(crate) fn trace(_event: &str) {
@@ -68,8 +147,31 @@ async fn vault_unlock(vault: State<'_, Shared>, session_id: Option<Value>, paylo
 }
 
 #[tauri::command]
-async fn vault_lock(vault: State<'_, Shared>, session_id: Option<Value>) -> Result<Value, String> {
-    run(vault, move |vault| vault.lock(session_id.as_ref())).await
+async fn vault_lock(vault: State<'_, Shared>, desktop: State<'_, SharedDesktop>, session_id: Option<Value>) -> Result<Value, String> {
+    let desktop = Arc::clone(&desktop);
+    run(vault, move |vault| {
+        trace("vault-locked manual");
+        let status = vault.lock(session_id.as_ref())?;
+        desktop.clipboard.clear_owned();
+        Ok(status)
+    })
+    .await
+}
+
+/// clipboard:writeText. The text is wiped from this copy of the request once it is written.
+#[tauri::command]
+async fn clipboard_write(vault: State<'_, Shared>, desktop: State<'_, SharedDesktop>, session_id: Option<Value>, mut value: Option<Value>) -> Result<Value, String> {
+    let desktop = Arc::clone(&desktop);
+    run(vault, move |vault| {
+        let result = vault.copy_text(session_id.as_ref(), value.as_ref(), |text, current| {
+            desktop.clipboard.copy(text, || current().map_err(|error| error.message)).map_err(|message| VaultError::new(500, message))
+        });
+        if let Some(Value::String(text)) = &mut value {
+            text.zeroize();
+        }
+        result
+    })
+    .await
 }
 
 /// Migration, rekey, reset to an empty v2 vault, and recovery of a switch that stopped.
@@ -160,6 +262,13 @@ fn fail_startup(message: &str) -> ! {
     std::process::exit(2);
 }
 
+fn clipboard_port() -> Box<dyn clipboard::ClipboardPort> {
+    #[cfg(feature = "e2e")]
+    return Box::new(clipboard::fake::FakeClipboard::default());
+    #[cfg(not(feature = "e2e"))]
+    return Box::new(windows_clipboard::WindowsClipboard);
+}
+
 fn main() {
     #[cfg(not(feature = "e2e"))]
     {
@@ -171,17 +280,38 @@ fn main() {
     }
 
     let directory = data_directory::from_environment().unwrap_or_else(|message| fail_startup(&message));
+    // Before the vault opens, so a second copy never touches it.
+    let _instance = match single_instance::claim(&directory) {
+        Ok(Some(instance)) => instance,
+        Ok(None) => {
+            trace("already-running");
+            std::process::exit(0);
+        }
+        Err(message) => fail_startup(&message),
+    };
     let vault: Shared = Arc::new(Vault::open(&directory).unwrap_or_else(|error| fail_startup(&error.message)));
-    let ticker = Arc::clone(&vault);
+    let desktop: SharedDesktop = Arc::new(Desktop { vault: Arc::clone(&vault), clipboard: ExpiringClipboard::new(clipboard_port()), power: PowerGuard::default(), quitting: AtomicBool::new(false) });
+    // The vault keeps only a weak link back, so the two do not keep each other alive.
+    let checker = Arc::downgrade(&desktop);
+    vault.set_availability(Box::new(move || checker.upgrade().map_or(Ok(()), |desktop| desktop.assert_available())));
+
+    let listener = Arc::clone(&desktop);
+    match os_events::start(Box::new(move |event| listener.handle_os_event(event))) {
+        Ok(window) => trace(&format!("os-window {window}")),
+        // Running without these notifications would silently lose a protection.
+        Err(message) => fail_startup(&message),
+    }
+    let watchdog = Arc::clone(&desktop);
     std::thread::spawn(move || {
         loop {
-            std::thread::sleep(EXPIRY_INTERVAL);
-            ticker.expire();
+            std::thread::sleep(WATCHDOG_INTERVAL);
+            watchdog.watch();
         }
     });
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(vault)
+        .manage(Arc::clone(&desktop))
         .invoke_handler(tauri::generate_handler![
             vault_status,
             vault_activity,
@@ -199,11 +329,12 @@ fn main() {
             password_generate,
             backup_export,
             backup_restore,
-            vault_audit
+            vault_audit,
+            clipboard_write
         ])
         .setup(|app| {
             let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("CIPHER VAULT")
+                .title(single_instance::WINDOW_TITLE)
                 .inner_size(880.0, 780.0)
                 .min_inner_size(780.0, 680.0)
                 .initialization_script(include_str!("desktop-api.js"))
@@ -214,17 +345,17 @@ fn main() {
             #[cfg(feature = "e2e")]
             let builder = with_debugging_port(builder);
             let window = builder.build()?;
-            let vault = Arc::clone(app.state::<Shared>().inner());
-            let closed = Arc::clone(&vault);
+            let desktop = Arc::clone(app.state::<SharedDesktop>().inner());
+            let closed = Arc::clone(&desktop);
             // The Electron app locks when its window closes; the process may outlive the window.
             window.on_window_event(move |event| {
                 if matches!(event, WindowEvent::Destroyed) {
-                    closed.lock_for(LockReason::WindowClosed);
+                    closed.lock_and_clear(LockReason::WindowClosed);
                 }
             });
             window.with_webview(move |webview| {
                 let gone = move || {
-                    vault.lock_for(LockReason::RendererGone);
+                    desktop.lock_and_clear(LockReason::RendererGone);
                     trace("renderer-gone");
                 };
                 match webview_hardening::apply_settings(&webview, gone) {
@@ -235,8 +366,14 @@ fn main() {
             })?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("the window failed to start");
+        .build(tauri::generate_context!())
+        .unwrap_or_else(|_| fail_startup("The window failed to start."));
+
+    app.run(move |_app, event| {
+        if let RunEvent::Exit = event {
+            desktop.quit();
+        }
+    });
 }
 
 #[cfg(test)]

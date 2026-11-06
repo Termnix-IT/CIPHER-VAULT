@@ -1,7 +1,10 @@
 // Checks the Tauri app in apps/desktop through its `e2e` build: it refuses to start without a test
 // folder or on a folder holding real data, the screen sets up, adds to, locks and unlocks a vault
 // in a temporary folder through the Rust core, saves a backup and restores it into the emptied
-// vault, audits it, migrates it to the v2 format and opens it with the new password, and the window keeps refusing outside connections, navigation, new windows, downloads it
+// vault, audits it, migrates it to the v2 format and opens it with the new password. It copies through the
+// e2e build's fake clipboard (the user's clipboard is never written), checks that copies expire and that
+// screen lock and sleep notifications lock the vault and clear the copy, that a second launch on the same
+// folder exits, and that closing the window locks, clears and exits. The window keeps refusing outside connections, navigation, new windows, downloads it
 // did not make and ungranted commands. Only synthetic passwords are used.
 // Usage: node scripts/verify-tauri-shell.mjs <e2e-exe> <screenshot-directory>
 import assert from "node:assert/strict";
@@ -9,7 +12,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { connect, powershell, screenshot, sleep, startE2eProcess, until } from "./lib/webview-e2e.mjs";
+import { connect, powershell, screenshot, sendOsMessage, sleep, startE2eProcess, until } from "./lib/webview-e2e.mjs";
 
 const [exe, screenshotDirectory] = process.argv.slice(2);
 if (!exe || !screenshotDirectory) throw new Error("Usage: node scripts/verify-tauri-shell.mjs <e2e-exe> <screenshot-directory>");
@@ -19,6 +22,15 @@ const NOT_PORTED = "この機能はこの版ではまだ使えません。現行
 const PASSWORD = "synthetic-shell-check-password";
 const BACKUP_PASSPHRASE = "synthetic-shell-backup-passphrase";
 const MIGRATED_PASSWORD = "synthetic-shell-migrated-password";
+const AWAY_MESSAGE = "画面ロック・スリープ中は保管庫を操作できません。OSへ戻ってから解除してください";
+const CLIPBOARD_CLEAR_AFTER_MS = 30000;
+// The messages Windows sends for a screen lock and for sleep (WM_WTSSESSION_CHANGE, WM_POWERBROADCAST).
+const WM_POWERBROADCAST = 0x218, WM_WTSSESSION_CHANGE = 0x2b1;
+const OS_SCENARIOS = [
+  { name: "screenLock", away: [WM_WTSSESSION_CHANGE, 7], awayReason: "screen-lock", back: [WM_WTSSESSION_CHANGE, 8], backReason: "screen-unlock" },
+  { name: "suspend", away: [WM_POWERBROADCAST, 4], awayReason: "suspend", back: [WM_POWERBROADCAST, 7], backReason: "resume" },
+  { name: "suspendAutomaticResume", away: [WM_POWERBROADCAST, 4], awayReason: "suspend", back: [WM_POWERBROADCAST, 0x12], backReason: "resume" }
+];
 const PORT = 9341;
 const settle = (page, expression) => page.evaluate(`Promise.resolve().then(() => ${expression}).then((value) => ({ value }), (error) => ({ error: String(error?.message ?? error) }))`);
 const status = (page) => page.evaluate("window.passwordManager.fetchVaultStatus()");
@@ -231,7 +243,59 @@ try {
   result.migratedThroughScreen = { format: "v2", passwordInPlainText: files.some((file) => readFileSync(file).includes(Buffer.from(generated))) };
   assert.equal(result.migratedThroughScreen.passwordInPlainText, false);
 
-  result.notPorted = await settle(page, `window.passwordManager.copyText("x", ${JSON.stringify((await status(page)).sessionId)})`);
+  // ---- The clipboard and the OS. Only the vault-locked and clipboard reports are compared.
+  const osWindow = events.find((event) => event.startsWith("os-window ")).split(" ")[1];
+  const reportsSince = (mark) => events.slice(mark).filter((event) => event.startsWith("vault-locked ") || event.startsWith("clipboard-"));
+  const copy = async () => settle(page, `window.passwordManager.copyText("synthetic-clipboard-value", ${JSON.stringify((await status(page)).sessionId)})`);
+  let mark = events.length;
+  await click(page, `button[data-entry-id="${carried.id}"]`);
+  await until("the selected entry", () => page.evaluate(`document.querySelector(".inspector-title")?.textContent === "画面で追加"`));
+  await menu(page, "編集", "パスワードをコピー");
+  await until("the copy notice", () => screenHas(page, "パスワードをコピーしました"));
+  assert.deepEqual(reportsSince(mark), ["clipboard-write"]);
+  mark = events.length;
+  await menu(page, "ファイル", "ロック");
+  await until("the cleared copy", () => events.slice(mark).includes("clipboard-clear"));
+  result.copyThroughScreen = { lockReports: reportsSince(mark).sort() };
+  assert.deepEqual(result.copyThroughScreen.lockReports, ["clipboard-clear", "vault-locked manual"]);
+
+  result.osEvents = {};
+  for (const scenario of OS_SCENARIOS) {
+    await submitPassword(page, MIGRATED_PASSWORD, false);
+    await until("the unlocked list", async () => (await status(page)).isUnlocked);
+    assert.deepEqual(await copy(), { value: null });
+    mark = events.length;
+    sendOsMessage(osWindow, scenario.away);
+    await until("the cleared copy", () => events.slice(mark).includes("clipboard-clear"));
+    const away = await status(page);
+    // While away, unlocking is refused even with the right password.
+    const refused = await settle(page, `window.passwordManager.unlockVault({ masterPassword: ${JSON.stringify(MIGRATED_PASSWORD)} }, ${JSON.stringify(away.sessionId)})`);
+    sendOsMessage(osWindow, scenario.back);
+    const back = await status(page);
+    result.osEvents[scenario.name] = { reports: reportsSince(mark), awayReason: away.lockReason, refused: refused.error, backReason: back.lockReason };
+    assert.deepEqual(result.osEvents[scenario.name], { reports: [`vault-locked ${scenario.awayReason}`, "clipboard-clear", `vault-locked ${scenario.backReason}`], awayReason: scenario.awayReason, refused: AWAY_MESSAGE, backReason: scenario.backReason });
+    assert.equal(back.isUnlocked, false, "returning never unlocks by itself");
+  }
+
+  // A copy clears itself after 30 seconds while the vault stays open.
+  await submitPassword(page, MIGRATED_PASSWORD, false);
+  await until("the unlocked list", async () => (await status(page)).isUnlocked);
+  assert.deepEqual(await copy(), { value: null });
+  mark = events.length;
+  const copiedAt = Date.now();
+  await until("the copy to expire", () => events.slice(mark).includes("clipboard-clear"), CLIPBOARD_CLEAR_AFTER_MS + 5000);
+  result.copyExpiry = { afterSeconds: Math.round((Date.now() - copiedAt) / 1000), stillUnlocked: (await status(page)).isUnlocked };
+  assert.ok(result.copyExpiry.afterSeconds >= 29, "not before the deadline");
+  assert.equal(result.copyExpiry.stillUnlocked, true);
+  result.copyRefusedForOtherSession = await settle(page, `window.passwordManager.copyText("x", "another-session")`);
+  assert.ok(result.copyRefusedForOtherSession.error);
+
+  // A second launch on the same folder exits before it opens the vault.
+  const second = spawnSync(exe, [], { env: { ...process.env, CIPHER_VAULT_DATA_DIR: data }, encoding: "utf8", timeout: 20000 });
+  result.secondLaunch = { exitCode: second.status, reported: second.stdout.includes("e2e-event already-running") };
+  assert.deepEqual(result.secondLaunch, { exitCode: 0, reported: true });
+
+  result.notPorted = await settle(page, `window.passwordManager.checkForUpdates()`);
   assert.deepEqual(result.notPorted, { error: NOT_PORTED });
 
   // ---- The shell
@@ -244,7 +308,7 @@ try {
   assert.ok(result.outsideFetch.error, "an outside connection must fail");
   result.ungrantedCommand = await settle(page, `window.__TAURI_INTERNALS__.invoke("plugin:window|set_title", { label: "main", value: "changed" })`);
   assert.ok(result.ungrantedCommand.error, "a command no capability grants must be refused");
-  result.unknownCommand = await settle(page, `window.__TAURI_INTERNALS__.invoke("clipboard_write", {})`);
+  result.unknownCommand = await settle(page, `window.__TAURI_INTERNALS__.invoke("update_check", {})`);
   assert.ok(result.unknownCommand.error);
   result.newWindow = await page.evaluate(`window.open("https://example.test/") === null`);
 
@@ -269,6 +333,15 @@ try {
   result.outsideBlockedByPolicy = messages.some((message) => message.includes("https://example.test/") && message.includes("connect-src"));
   assert.equal(result.outsideBlockedByPolicy, true);
   result.console = messages.filter((message) => !message.startsWith("verbose:"));
+
+  // ---- Closing the window locks the vault, clears this app's copy and exits.
+  assert.deepEqual(await copy(), { value: null });
+  mark = events.length;
+  powershell(`[void](Get-Process -Id ${child.pid}).CloseMainWindow()`);
+  await until("the app to exit", () => child.exitCode !== null);
+  const exitReports = [...new Set(events.slice(mark).filter((event) => event !== "renderer-gone"))];
+  result.exit = { exitCode: child.exitCode, reports: exitReports };
+  assert.deepEqual(result.exit, { exitCode: 0, reports: ["vault-locked window-closed", "clipboard-clear", "exit-complete"] });
   console.log(JSON.stringify(result, null, 2));
 } catch (error) {
   if (page) await screenshot(page, screenshotDirectory, "tauri-shell-failure").catch(() => undefined);

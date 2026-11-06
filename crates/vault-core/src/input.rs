@@ -67,6 +67,11 @@ fn text<'a>(value: Option<&'a Value>, label: &str, max_bytes: usize) -> Result<&
     Ok(text)
 }
 
+/// parseClipboardText: the text the screen asks the desktop to copy.
+pub fn parse_clipboard_text(value: Option<&Value>) -> Result<&str> {
+    text(value, "コピーする内容", 1024 * 1024)
+}
+
 /// `input.field ?? ""`
 fn optional_text<'a>(value: Option<&'a Value>, label: &str, max_bytes: usize) -> Result<&'a str> {
     match value {

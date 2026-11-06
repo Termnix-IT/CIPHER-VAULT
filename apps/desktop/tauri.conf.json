@@ -33,7 +33,8 @@
             "allow-password-generate",
             "allow-backup-export",
             "allow-backup-restore",
-            "allow-vault-audit"
+            "allow-vault-audit",
+            "allow-clipboard-write"
           ]
         }
       ],

@@ -11,18 +11,33 @@ tauri-build = { version = "2.7", features = [] }
 [dependencies]
 cipher-vault-core = { path = "../../crates/vault-core" }
 serde_json = "1"
+sha2 = "0.11"
+subtle = "2"
+uuid = { version = "1", features = ["v4"] }
+zeroize = "1"
 # The save dialog for backups. Windows needs none of its Linux portal features.
 rfd = { version = "0.17", default-features = false }
 # custom-protocol serves the embedded web build. The Tauri CLI is only needed for installers.
 tauri = { version = "2.12", features = ["custom-protocol"] }
 # The same versions Tauri already uses. A mismatch would not compile against its webview handle.
 webview2-com = "0.39"
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Registry"] }
+# The clipboard, the screen lock and power notifications, and the single-app check.
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_DataExchange",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_System_Registry",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [dev-dependencies]
-uuid = { version = "1", features = ["v4"] }
-# The policy test writes a temporary registry key, which needs the security types.
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Registry"] }
+# The clipboard test runs in its own window station, so it never touches the user's clipboard.
+windows = { version = "0.62", features = ["Win32_Security", "Win32_System_StationsAndDesktops", "Win32_System_Threading"] }
 
 [features]
 # Automated UI checks only: the debugging port stays available and events go to stdout. Never distribute it.

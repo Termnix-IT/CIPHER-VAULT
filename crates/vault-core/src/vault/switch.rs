@@ -25,6 +25,7 @@ impl Vault {
     /// The vault:maintenance handler: the session must be the current one, and the status after
     /// the switch is the answer.
     pub fn run_maintenance(&self, session_id: Option<&Value>, payload: Option<&Value>) -> Result<Value> {
+        self.available()?;
         let expected = parse_session_id(session_id)?;
         self.require_generation(&expected)?;
         let _busy = Busy::claim(&self.switching).ok_or_else(|| VaultError::conflict(SWITCHING))?;
@@ -128,6 +129,7 @@ impl Vault {
         *self.storage.write().unwrap() = Arc::new(reopened.unwrap_or_else(|| recovery_required(root)));
         self.lock_for(LockReason::Manual);
         outcome?;
+        self.available()?;
         self.status()
     }
 }
