@@ -63,6 +63,13 @@ try {
 } catch (error) {
   if (page) await screenshot(page, screenshotDirectory, "tauri-shell-failure").catch(() => undefined);
   console.error(JSON.stringify({ stderr: errors.join(""), events, console: [...new Set(page?.messages ?? [])] }));
+  // Without a page there is nothing else to report, so show whether WebView2 got the debugging argument.
+  if (!page) {
+    try {
+      console.error(powershell(`Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $($_.CommandLine)" } | Select-Object -First 3`));
+      console.error(powershell(`Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object LocalPort -ge 9000 | ForEach-Object { "$($_.LocalAddress):$($_.LocalPort) $($_.OwningProcess)" }`));
+    } catch (diagnosis) { console.error(String(diagnosis)); }
+  }
   throw error;
 } finally {
   page?.close();
