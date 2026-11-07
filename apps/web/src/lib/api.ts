@@ -8,31 +8,19 @@ import { VaultClientSession, VaultSessionChangedError } from "./vault-client-ses
 
 const session = new VaultClientSession();
 
-function getDesktopApi(): PasswordManagerDesktopApi | null {
-  return typeof window === "undefined" ? null : window.passwordManager ?? null;
-}
-
-async function request<T>(path: string, init?: RequestInit, sessionId?: string): Promise<T> {
-  const headers = new Headers(init?.headers);
-  headers.set("Content-Type", "application/json");
-  if (sessionId) headers.set("X-Cipher-Vault-Session", sessionId);
-  if (!["GET", "HEAD", "OPTIONS"].includes((init?.method ?? "GET").toUpperCase())) {
-    const { token } = await request<{ token: string }>("/vault/csrf");
-    headers.set("X-Cipher-Vault-CSRF", token);
-  }
-  const response = await fetch(path, { ...init, signal: init?.signal ?? AbortSignal.timeout(30000), headers, credentials: "same-origin", cache: "no-store", redirect: "error" });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({})) as { error?: string };
-    throw new Error(payload.error ?? "リクエストに失敗しました");
-  }
-  return response.status === 204 ? undefined as T : await response.json() as T;
+// The desktop app (apps/desktop/src/desktop-api.js) installs this API before the screen loads.
+// Without it the screen has no vault to talk to.
+function desktop(): PasswordManagerDesktopApi {
+  const api = typeof window === "undefined" ? undefined : window.passwordManager;
+  if (!api) throw new Error("CIPHER VAULTのアプリから開いてください");
+  return api;
 }
 
 async function readStatus() {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      getDesktopApi()?.fetchVaultStatus() ?? request<VaultStatus>("/vault/status", { signal: AbortSignal.timeout(5000) }),
+      desktop().fetchVaultStatus(),
       new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("保管庫の状態を確認できませんでした")), 5000); })
     ]);
   } finally { clearTimeout(timer); }
@@ -41,21 +29,20 @@ async function readStatus() {
 export function fetchVaultStatus() { return session.readStatus(readStatus); }
 
 export function runVaultMaintenance(payload: VaultMaintenancePayload) {
-  return session.maintain((id) => getDesktopApi()?.runVaultMaintenance(payload, id) ?? request<VaultStatus>("/vault/maintenance",
-    { method: "POST", body: JSON.stringify(payload), signal: AbortSignal.timeout(315000) }, id), readStatus);
+  return session.maintain((id) => desktop().runVaultMaintenance(payload, id), readStatus);
 }
 
 export async function cancelVaultMaintenance(sourceSessionId: string) {
   const state = await fetchVaultStatus();
   if (state.sessionId !== sourceSessionId && state.maintenance?.sourceSessionId !== sourceSessionId) return { state, requested: false };
-  return { state: await session.change(() => getDesktopApi()?.lockVault(state.sessionId) ?? request<VaultStatus>("/vault/lock", { method: "POST" }, state.sessionId)), requested: true };
+  return { state: await session.change(() => desktop().lockVault(state.sessionId)), requested: true };
 }
 
 export function observeVaultStatus(listener: (state: VaultStatus) => void) {
   let alive = true;
   let reading = false;
   const unsubscribe = session.subscribe(listener);
-  const desktopUnsubscribe = getDesktopApi()?.onVaultState((state) => { session.observe(state); });
+  const desktopUnsubscribe = window.passwordManager?.onVaultState((state) => { session.observe(state); });
   const poll = async () => {
     if (reading || !alive) return;
     reading = true;
@@ -79,64 +66,56 @@ export function observeVaultStatus(listener: (state: VaultStatus) => void) {
 }
 
 export function setupVault(payload: VaultSetupPayload) {
-  return session.change((id) => getDesktopApi()?.setupVault(payload, id) ?? request<VaultStatus>("/vault/setup", { method: "POST", body: JSON.stringify(payload) }, id));
+  return session.change((id) => desktop().setupVault(payload, id));
 }
 export function unlockVault(payload: VaultUnlockPayload) {
-  return session.change((id) => getDesktopApi()?.unlockVault(payload, id) ?? request<VaultStatus>("/vault/unlock", { method: "POST", body: JSON.stringify(payload) }, id));
+  return session.change((id) => desktop().unlockVault(payload, id));
 }
 export function resetVault(payload: VaultResetPayload) {
-  return session.change((id) => getDesktopApi()?.resetVault(payload, id) ?? request<VaultStatus>("/vault/reset", { method: "POST", body: JSON.stringify(payload) }, id));
+  return session.change((id) => desktop().resetVault(payload, id));
 }
 export function lockVault() {
   const id = session.requireSessionId();
   session.lockLocally();
-  return session.change(() => getDesktopApi()?.lockVault(id) ?? request<VaultStatus>("/vault/lock", { method: "POST" }, id));
+  return session.change(() => desktop().lockVault(id));
 }
 
 function run<T>(action: (sessionId: string) => Promise<T>) { return session.run(action, readStatus); }
 
 export function recordVaultActivity() {
-  return run((id) => getDesktopApi()?.recordVaultActivity(id) ?? request<VaultStatus>("/vault/activity", { method: "POST" }, id));
+  return run((id) => desktop().recordVaultActivity(id));
 }
 export function fetchEntries() {
-  return run((id) => getDesktopApi()?.fetchEntries(id) ?? request<{ items: VaultEntrySummary[] }>("/entries", undefined, id));
+  return run((id) => desktop().fetchEntries(id));
 }
 export function fetchEntry(entryId: string) {
-  return run((id) => getDesktopApi()?.fetchEntry(entryId, id) ?? request<VaultEntry>(`/entries/${entryId}`, undefined, id));
+  return run((id) => desktop().fetchEntry(entryId, id));
 }
 export function createEntry(payload: VaultEntryUpsertPayload) {
-  return run((id) => getDesktopApi()?.createEntry(payload, id) ?? request<VaultEntry>("/entries", { method: "POST", body: JSON.stringify(payload) }, id));
+  return run((id) => desktop().createEntry(payload, id));
 }
 export function updateEntry(entryId: string, payload: VaultEntryUpsertPayload) {
-  return run((id) => getDesktopApi()?.updateEntry(entryId, payload, id) ?? request<VaultEntry>(`/entries/${entryId}`, { method: "PUT", body: JSON.stringify(payload) }, id));
+  return run((id) => desktop().updateEntry(entryId, payload, id));
 }
 export function deleteEntry(entryId: string) {
-  return run((id) => getDesktopApi()?.deleteEntry(entryId, id) ?? request<{ success: boolean }>(`/entries/${entryId}`, { method: "DELETE" }, id));
+  return run((id) => desktop().deleteEntry(entryId, id));
 }
 export function setEntriesGroup(payload: EntriesGroupPayload) {
   // Rewriting a large v2 vault one entry at a time can outlast the default request timeout.
-  return run((id) => getDesktopApi()?.setEntriesGroup(payload, id) ?? request<{ updatedCount: number }>("/entries/group",
-    { method: "POST", body: JSON.stringify(payload), signal: AbortSignal.timeout(315000) }, id));
+  return run((id) => desktop().setEntriesGroup(payload, id));
 }
 export function generatePassword(options: PasswordGenerationOptions = {}) {
-  return run((id) => getDesktopApi()?.generatePassword(options, id) ?? request<PasswordGenerationResult>("/password/generate", { method: "POST", body: JSON.stringify(options) }, id));
+  return run((id) => desktop().generatePassword(options, id));
 }
 export function exportBackup(payload: BackupExportPayload) {
-  return run((id) => getDesktopApi()?.exportBackup(payload, id) ?? request<BackupFile>("/vault/backup/export", { method: "POST", body: JSON.stringify(payload) }, id));
+  return run((id) => desktop().exportBackup(payload, id));
 }
 export function restoreBackup(payload: BackupRestorePayload) {
-  return run((id) => getDesktopApi()?.restoreBackup(payload, id) ?? request<{ restoredCount: number }>("/vault/backup/restore", { method: "POST", body: JSON.stringify(payload) }, id));
+  return run((id) => desktop().restoreBackup(payload, id));
 }
 export function auditVault() {
-  return run((id) => getDesktopApi()?.auditVault(id) ?? request<SecurityAudit>("/vault/audit", { method: "POST" }, id));
+  return run((id) => desktop().auditVault(id));
 }
 export function copyText(value: string) {
-  return run(async (id) => {
-    const desktop = getDesktopApi();
-    if (desktop) return desktop.copyText(value, id);
-    const state = await fetchVaultStatus();
-    if (!state.isUnlocked || state.sessionId !== id) throw new VaultSessionChangedError();
-    await navigator.clipboard.writeText(value);
-  });
+  return run((id) => desktop().copyText(value, id));
 }
-

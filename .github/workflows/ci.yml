@@ -18,10 +18,10 @@ defaults:
     shell: pwsh
 
 jobs:
-  regression:
-    name: Windows regression
+  web:
+    name: Screen (React)
     runs-on: windows-2025
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -33,52 +33,8 @@ jobs:
           cache-dependency-path: package-lock.json
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
-      - name: Build desktop once for all regression tests
-        run: npm run build:desktop
-      - name: Renderer boundaries
-        run: node --test tests/renderer-security.test.mjs tests/renderer-hardening.test.mjs
-      - name: API, storage and Web packaging
-        run: node scripts/run-api-tests.mjs
-      - name: Session, KDF, input and clipboard contracts
-        run: node --import tsx --test tests/vault-session.test.mjs tests/web-session.test.mjs tests/vault-lifecycle.test.mjs tests/vault-kdf.test.mjs tests/input-validation.test.mjs tests/expiring-clipboard.test.mjs tests/desktop-platform.test.mjs
-      - name: Manual updater
-        run: node --test tests/manual-updater.test.mjs
-      - name: Built desktop integration
-        run: node scripts/run-desktop-tests.mjs
-      - name: Migrated v2 desktop integration
-        run: node scripts/run-desktop-tests.mjs --v2
-      - name: Login, API key and card desktop integration
-        run: node scripts/run-desktop-tests.mjs --item-types
-      - name: Interrupted vault recovery integration
-        run: node scripts/run-desktop-tests.mjs --maintenance
-      - name: Vite desktop integration and HMR
-        run: node scripts/run-desktop-tests.mjs --dev
-      - name: Production HTTP policy integration
-        run: node scripts/run-desktop-tests.mjs --web
-
-  desktop-package:
-    name: Windows desktop package
-    runs-on: windows-2025
-    timeout-minutes: 30
-    env:
-      CSC_IDENTITY_AUTO_DISCOVERY: "false"
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: package-lock.json
-      - name: Install locked dependencies
-        run: npm ci --no-audit --no-fund
-      - name: Package inclusion contracts
-        run: npm run test:packaging-contract
-      - name: Build the unpacked Windows application without publishing
-        run: npm run build:desktop && node node_modules/electron-builder/cli.js --win --dir --publish never
-      - name: Packaged sandbox, migration, restart and key cleanup
-        run: npm run test:desktop-package
+      - name: Screen session rules, CSP and bundled fonts
+        run: npm run test:web
 
   rust:
     name: Rust app (Tauri)
@@ -96,15 +52,10 @@ jobs:
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
       # The Tauri build embeds this screen, so it must exist before Cargo compiles the app.
-      - name: Build the screen with the Tauri CSP
-        run: npm run build:web:tauri
+      - name: Build the screen
+        run: npm run build:web
       - name: Rust workspace tests
         run: cargo test --workspace --locked
-      # The same calls on the Rust core and the TypeScript services, compared answer by answer.
-      - name: Differential test against the Node services
-        run: |
-          npm run build:api
-          cargo test -p cipher-vault-core --test node_parity --locked -- --ignored
       - name: Shell window, CSP and vault through the screen
         run: |
           cargo build -p cipher-vault --features e2e --locked

@@ -35,7 +35,7 @@ impl From<rusqlite::Error> for StorageError {
     }
 }
 
-const SCHEMA: &str = "
+pub(crate) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS vault_metadata (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   password_salt TEXT NOT NULL,

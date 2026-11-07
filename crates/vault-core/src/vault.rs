@@ -1062,7 +1062,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    const SCHEMA: &str = include_str!("../../../apps/api/src/db/schema.sql");
+    use crate::legacy::SCHEMA;
     const MASTER: &str = "synthetic-master-password";
 
     #[test]

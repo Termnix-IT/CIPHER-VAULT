@@ -1,109 +1,27 @@
 {
   "name": "password-manager",
   "productName": "CIPHER VAULT",
-  "description": "Local-first desktop password manager built with Electron, React, and SQLite.",
+  "description": "Local-first Windows password manager built with Tauri, Rust, React, and SQLite.",
   "author": "lugep",
   "private": true,
   "version": "0.9.0",
-  "main": "apps/electron/dist/apps/electron/src/main.js",
   "workspaces": [
-    "apps/*",
-    "packages/*"
+    "apps/web",
+    "packages/shared"
   ],
-  "dependencies": {
-    "@password-manager/shared": "*",
-    "@zxcvbn-ts/core": "^4.2.0",
-    "@zxcvbn-ts/language-common": "^4.1.3",
-    "@zxcvbn-ts/language-en": "^4.1.1",
-    "better-sqlite3": "^13.0.3",
-    "electron-updater": "^6.8.9"
-  },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.4",
-    "concurrently": "^9.2.5",
-    "electron-builder": "^26.18.1"
+    "tsx": "^4.23.15"
   },
   "scripts": {
-    "dev": "npm run build:shared && concurrently -n api,web -c yellow,cyan \"npm run dev:api\" \"npm run dev:web\"",
-    "dev:desktop": "npm run build:api && concurrently -n web,electron -c cyan,green \"npm run dev:web\" \"npm --workspace apps/electron run dev\"",
-    "dev:web": "npm run build:shared && npm --workspace apps/web run dev",
-    "dev:api": "npm run build:shared && npm --workspace apps/api run dev",
     "build:shared": "npm --workspace packages/shared run build",
     "build:web": "npm run build:shared && npm --workspace apps/web run build",
-    "build:api": "npm run build:shared && npm --workspace apps/api run build",
-    "build:electron": "npm run build:shared && npm --workspace apps/electron run build",
-    "build": "npm run build:shared && npm --workspace apps/web run build && npm --workspace apps/api run build",
-    "build:desktop": "npm run build && npm --workspace apps/electron run build",
-    "build:web:tauri": "npm run build:shared && npm --workspace apps/web run build:tauri",
-    "build:tauri": "npm run build:web:tauri && cargo build --release -p cipher-vault",
-    "package:tauri": "npm run build:web:tauri && node scripts/package-tauri.mjs",
-    "test:tauri-update": "npm run build:web:tauri && node scripts/verify-tauri-update.mjs",
-    "test:tauri-migration": "npm run build:desktop && npm run build:web:tauri && node scripts/verify-tauri-migration.mjs",
-    "test:rust": "cargo test --workspace",
-    "test:rust-parity": "npm run build:api && cargo test -p cipher-vault-core --test node_parity -- --ignored",
-    "test:tauri-shell": "npm run build:web:tauri && cargo build -p cipher-vault --features e2e && node scripts/verify-tauri-shell.mjs target/debug/cipher-vault.exe target/e2e-screenshots",
-    "package:desktop": "npm run build:desktop && electron-builder --win nsis portable --publish never",
-    "test:desktop-package": "node scripts/test-packaged-desktop.mjs",
-    "test:packaging-contract": "node --test tests/desktop-packaging.test.mjs",
-    "test:updates": "npm run build:electron && node --test tests/manual-updater.test.mjs",
-    "test:security": "npm run build:desktop && node --test tests/renderer-security.test.mjs tests/renderer-hardening.test.mjs",
-    "test:sessions": "npm run build:api && npm run build:electron && node --import tsx --test tests/vault-session.test.mjs tests/web-session.test.mjs tests/vault-lifecycle.test.mjs tests/vault-kdf.test.mjs tests/input-validation.test.mjs tests/expiring-clipboard.test.mjs tests/desktop-platform.test.mjs",
-    "test:desktop-session": "npm run build:desktop && node scripts/run-desktop-tests.mjs",
-    "test:desktop-v2": "npm run build:desktop && node scripts/run-desktop-tests.mjs --v2",
-    "test:desktop-item-types": "npm run build:desktop && node scripts/run-desktop-tests.mjs --item-types",
-    "test:desktop-maintenance": "npm run build:desktop && node scripts/run-desktop-tests.mjs --maintenance",
-    "test:desktop-dev": "npm run build:desktop && node scripts/run-desktop-tests.mjs --dev",
-    "test:web-policy": "npm run build && node scripts/run-desktop-tests.mjs --web",
-    "test:api": "npm run build:api && node scripts/run-api-tests.mjs",
-    "test:core": "npm run build:api && node scripts/run-api-tests.mjs --core",
-    "test:windows-release": "npm run build:api && node scripts/run-api-tests.mjs --windows-release",
-    "start": "npm --workspace apps/api run start",
-    "start:desktop": "npm --workspace apps/electron run start",
-    "package": "npm run build && pwsh -File scripts/package-release.ps1"
-  },
-  "build": {
-    "appId": "com.lugep.ciphervault",
-    "npmRebuild": false,
-    "publish": {
-      "provider": "github",
-      "owner": "Termnix-IT",
-      "repo": "CIPHER-VAULT"
-    },
-    "icon": "build/icon.ico",
-    "directories": {
-      "output": "dist-desktop"
-    },
-    "files": [
-      "apps/electron/dist/**/*",
-      "apps/api/dist/**/*",
-      "apps/web/dist/**/*",
-      "build/icon.png",
-      "package.json"
-    ],
-    "asarUnpack": [
-      "**/*.node",
-      "node_modules/better-sqlite3/**/*"
-    ],
-    "artifactName": "CIPHER-VAULT-${version}-${arch}.${ext}",
-    "win": {
-      "signAndEditExecutable": true,
-      "target": [
-        "nsis",
-        "portable"
-      ]
-    },
-    "nsis": {
-      "artifactName": "CIPHER-VAULT-${version}-${arch}-setup.${ext}",
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "runAfterFinish": false,
-      "installerIcon": "build/icon.ico",
-      "uninstallerIcon": "build/icon.ico",
-      "installerHeaderIcon": "build/icon.ico"
-    },
-    "portable": {
-      "artifactName": "CIPHER-VAULT-${version}-${arch}-portable.${ext}"
-    }
+    "build:tauri": "npm run build:web && cargo build --release -p cipher-vault",
+    "package:tauri": "npm run build:web && node scripts/package-tauri.mjs",
+    "test:web": "npm run build:web && node --import tsx --test tests/web-session.test.mjs tests/renderer-policy.test.mjs",
+    "test:rust": "npm run build:web && cargo test --workspace",
+    "test:tauri-shell": "npm run build:web && cargo build -p cipher-vault --features e2e && node scripts/verify-tauri-shell.mjs target/debug/cipher-vault.exe target/e2e-screenshots",
+    "test:tauri-update": "npm run build:web && node scripts/verify-tauri-update.mjs",
+    "test:dependencies": "node scripts/audit-dependencies.mjs"
   }
 }

@@ -1,5 +1,7 @@
-//! The CIPHER VAULT core for the Rust app. It follows the TypeScript services in apps/api, which
-//! stay the reference until the Rust app replaces them, and returns the same results and messages.
+//! The CIPHER VAULT core for the Rust app. It was ported from the TypeScript services of the
+//! Electron app and returns the same results and messages, so the formats and the screen did not
+//! change. Those services were removed after v0.9.0; the TypeScript files and functions that the
+//! module comments name are in `apps/api` and `apps/electron` at the git tag v0.9.0.
 
 pub mod audit;
 pub mod backup;

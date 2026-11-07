@@ -1,4 +1,4 @@
-// Stands in for apps/electron/src/preload.ts, so apps/web runs unchanged.
+// The screen API (window.passwordManager) that the Electron preload script used to provide, so apps/web runs unchanged.
 // The arguments keep the preload's order and reach the commands by name.
 (() => {
   const isWellFormed = (value) => {

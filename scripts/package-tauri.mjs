@@ -3,7 +3,7 @@
 // apps/desktop/tauri.conf.json. With TAURI_SIGNING_PRIVATE_KEY (the key file's path) and
 // TAURI_SIGNING_PRIVATE_KEY_PASSWORD set, it also signs the setup and writes latest.json, which
 // the installed app reads from the latest GitHub release. --notes <file> puts that file's text in
-// latest.json as the release notes the app shows. Run after npm run build:web:tauri.
+// latest.json as the release notes the app shows. Run after npm run build:web.
 // Usage: node scripts/package-tauri.mjs [--notes <file>]
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";

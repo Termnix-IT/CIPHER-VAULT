@@ -3,10 +3,8 @@ import { spawnSync } from "node:child_process";
 
 // Advisories accepted only while no upstream fix exists. Each entry must stay reachable only through `via`,
 // and is rejected once expired or no longer reported, so the exception cannot outlive its reason.
-const accepted = [{
-  advisory: "GHSA-g3hv-75wg-m249", packageName: "minimatch", via: ["electron-builder"], until: "2026-12-31",
-  reason: "Build-time packaging only, with glob patterns from this repository; electron-builder, @electron/asar and dir-compare have no minimatch 11 release yet."
-}];
+// Add an entry as { advisory, packageName, via: [direct dependencies], until: "YYYY-MM-DD", reason }.
+const accepted = [];
 
 function npm(args) {
   // npm exits non-zero when findings exist, so read its JSON instead of the exit code.

@@ -43,9 +43,10 @@ Var CipherVaultRunning
 
 !macro CIPHER_VAULT_REMOVE_ELECTRON ROOT
   ; Defined here, where PRODUCTNAME exists: the setup defines it after including this file.
-  ; electron-builder names the key with a UUID made from the appId. The test product of
-  ; scripts/verify-tauri-migration.mjs has its own appId, so it never meets the released app. Other
-  ; product names, such as the update check's, have no Electron app to remove.
+  ; electron-builder names the key with a UUID made from the appId. The test product of the
+  ; migration check (scripts/verify-tauri-migration.mjs at the git tag v0.9.0, which still has the
+  ; Electron app to install) has its own appId, so it never meets the released app. Other product
+  ; names, such as the update check's, have no Electron app to remove.
   !ifndef CIPHER_VAULT_UNINSTALLER
     !if "${PRODUCTNAME}" == "CIPHER VAULT"
       ; appId com.lugep.ciphervault

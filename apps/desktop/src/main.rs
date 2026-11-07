@@ -1,7 +1,8 @@
-//! CIPHER VAULT on Tauri. It shows the existing React screen from `apps/web` and replaces
-//! `apps/electron` and the Node services step by step. The vault commands run the Rust core in
-//! `crates/vault-core`. The desktop adds what the Electron main process did: the expiring
-//! clipboard, locking on screen lock and sleep, one app per vault folder and manual updates.
+//! CIPHER VAULT on Tauri. It shows the React screen from `apps/web`, and the vault commands run
+//! the Rust core in `crates/vault-core`. It replaced the Electron app (removed after v0.9.0; the
+//! TypeScript files the comments name are in `apps/electron` at the git tag v0.9.0). The desktop
+//! adds what the Electron main process did: the expiring clipboard, locking on screen lock and
+//! sleep, one app per vault folder and manual updates.
 //!
 //! The `e2e` feature exists for automated checks only. It keeps the WebView2 debugging port
 //! available, replaces the clipboard with a fake one and reports events on stdout. Never distribute it.

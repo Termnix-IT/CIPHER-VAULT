@@ -3,7 +3,7 @@ name = "cipher-vault"
 version = "0.0.0"
 edition = "2024"
 publish = false
-description = "CIPHER VAULT on Tauri. It replaces apps/electron and the Node services step by step."
+description = "CIPHER VAULT on Tauri: the window, OS integration and manual updates around the vault core."
 
 [build-dependencies]
 tauri-build = { version = "2.7", features = [] }

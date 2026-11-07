@@ -6,7 +6,7 @@
 // signature but one byte added (both refused after the download), and the new version as signed. Declining the unsaved-edits question keeps the app as it is; accepting
 // it locks the vault, runs the installer and exits. The installer must restart the app as 0.0.2,
 // and the same password must open the same entry. The test install is removed at the end.
-// Usage: node scripts/verify-tauri-update.mjs (after npm run build:web:tauri)
+// Usage: node scripts/verify-tauri-update.mjs (after npm run build:web)
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
