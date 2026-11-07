@@ -119,3 +119,11 @@ export function auditVault() {
 export function copyText(value: string) {
   return run((id) => desktop().copyText(value, id));
 }
+
+// The title bar's window buttons. They need no session, as they never reach the vault.
+export const windowControls = {
+  minimize: () => desktop().minimizeWindow(),
+  toggleMaximize: () => desktop().toggleMaximizeWindow(),
+  close: () => desktop().closeWindow(),
+  isMaximized: () => desktop().isWindowMaximized()
+};

@@ -148,6 +148,10 @@ export type PasswordManagerDesktopApi = {
   setEntriesGroup: (payload: EntriesGroupPayload, sessionId: string) => Promise<{ updatedCount: number }>;
   generatePassword: (options: PasswordGenerationOptions, sessionId: string) => Promise<PasswordGenerationResult>;
   copyText: (value: string, sessionId: string) => Promise<void>;
+  minimizeWindow: () => Promise<void>;
+  toggleMaximizeWindow: () => Promise<void>;
+  closeWindow: () => Promise<void>;
+  isWindowMaximized: () => Promise<boolean>;
 };
 
 export type BackupExportPayload = { passphrase: string };

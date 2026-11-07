@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { VaultMaintenanceOperation, VaultStatus } from "@password-manager/shared/types";
 import { cancelVaultMaintenance, fetchVaultStatus, runVaultMaintenance } from "../lib/api";
 import { CloseIcon } from "./Icons";
+import { showModalDialog } from "../lib/modal";
 
 const empty = () => ({ master: "", next: "", nextConfirm: "", backup: "", backupConfirm: "" });
 const titles: Record<VaultMaintenanceOperation, string> = {
@@ -43,7 +44,7 @@ export function VaultMaintenance({ status, requested, opened, onClose }: { statu
         clearSecrets(); setError(""); setMessage("");
         setOperation(status.maintenance?.state === "recovery-required" ? "recover" : status.maintenance?.operation ?? requested ?? fallback());
       }
-      if (!dialog.current?.open) dialog.current?.showModal();
+      if (dialog.current && !dialog.current.open) showModalDialog(dialog.current);
       if (!processing) firstInput.current?.focus();
     } else { dialog.current?.close(); clearSecrets(); }
     wasOpened.current = opened;

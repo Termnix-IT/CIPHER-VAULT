@@ -412,6 +412,9 @@ fn main() {
                 .title(single_instance::WINDOW_TITLE)
                 .inner_size(880.0, 780.0)
                 .min_inner_size(780.0, 680.0)
+                // The screen draws the title bar: the menus with the window buttons, as the Electron app had.
+                .decorations(false)
+                .shadow(true)
                 .initialization_script(include_str!("desktop-api.js"))
                 .on_navigation(is_application_url)
                 .on_new_window(|_url, _features| NewWindowResponse::Deny)

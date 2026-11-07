@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { AuditIssue, SecurityAudit } from "@password-manager/shared/types";
 import { auditVault, exportBackup, restoreBackup } from "../lib/api";
 import { CloseIcon, FileIcon } from "./Icons";
+import { showModalDialog } from "../lib/modal";
 
 const labels: Record<AuditIssue, string> = {
   weak: "推測されやすい", duplicate: "使い回し", oldPassword: "1年以上変更なし",
@@ -56,7 +57,7 @@ export function VaultTools({ entryCount, disabled, onRefresh, onSelect, renderTr
   function open(next: "audit" | "backup") {
     if (disabled || busy) return;
     setPanel(next); setBackupTab("export"); setError(""); setMessage(""); setFilter(null); setAudit(null); clearSecrets();
-    dialog.current?.showModal();
+    if (dialog.current) showModalDialog(dialog.current);
     if (next === "audit") void scan();
   }
 

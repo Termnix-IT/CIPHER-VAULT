@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { UNGROUPED_GROUP_NAME } from "@password-manager/shared";
 import type { VaultEntrySummary } from "@password-manager/shared/types";
 import { CloseIcon, SearchIcon } from "./Icons";
+import { showModalDialog } from "../lib/modal";
 
 // The service limit, checked here so a long name is explained before the dialog closes.
 const MAX_GROUP_NAME_BYTES = 1024;
@@ -37,7 +38,7 @@ export function GroupDialog({ entries, groupNames, initialIds, onSubmit, onClose
 
   useEffect(() => {
     alive.current = true;
-    if (!dialog.current?.open) dialog.current?.showModal();
+    if (dialog.current && !dialog.current.open) showModalDialog(dialog.current);
     nameInput.current?.focus();
     return () => { alive.current = false; };
   }, []);

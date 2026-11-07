@@ -173,14 +173,27 @@ try {
   assert.equal(await screenHas(page, "ファイルの保存を始めました"), true);
   result.backupSaved = { version: envelope.version, name: "CIPHER-VAULT-<time>.cvault" };
   await screenshot(page, screenshotDirectory, "tauri-shell-backup");
-  await click(page, 'button[aria-label="閉じる"]');
+  // An open dialog blocks the rest of the screen, the menus included, but not the window buttons of
+  // the title bar, and Escape still closes it.
+  result.dialogBlocking = await page.evaluate(`({
+    menus: !!document.querySelector(".app-menu-bar").closest("[inert]"),
+    list: !!document.querySelector(".vault-sidebar").closest("[inert]"),
+    windowButtons: !!document.querySelector(".window-controls").closest("[inert]"),
+    dialog: !!document.querySelector("dialog[open]").closest("[inert]")
+  })`);
+  assert.deepEqual(result.dialogBlocking, { menus: true, list: true, windowButtons: false, dialog: false });
+  await page.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+  await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+  await until("the closed dialog", () => page.evaluate(`!document.querySelector("dialog[open]") && !document.querySelector("[inert]") && !document.querySelector(".modal-backdrop")`));
 
   // A download the screen did not make is refused and nothing is saved. A data: link is stopped by
   // the navigation guard before WebView2 starts a download; the download guard covers the rest.
   await page.evaluate(`(() => { const anchor = document.createElement("a"); anchor.href = "data:application/octet-stream,x"; anchor.download = "other.cvault"; document.body.append(anchor); anchor.click(); anchor.remove(); })()`);
   await sleep(1500);
   assert.deepEqual(readdirSync(downloads), [backupName]);
-  assert.equal(events.filter((event) => event.startsWith("download-finished")).length, 1);
+  // Whichever guard stops it, only the backup finished saving; a download the guard refused ends as unsaved.
+  assert.equal(events.filter((event) => event === "download-finished true").length, 1);
+  assert.equal(events.filter((event) => event === "download-finished false").length, events.filter((event) => event === "download-refused").length);
   result.otherDownloadRefused = true;
 
   const unlocked = await status(page);
@@ -200,7 +213,7 @@ try {
   await type(page, '#backup-restore input[type="password"]', BACKUP_PASSPHRASE);
   await click(page, 'button[form="backup-restore"]');
   await until("the restore", () => screenHas(page, "1件を読み込みました。"));
-  await click(page, 'button[aria-label="閉じる"]');
+  await click(page, 'dialog[open] button[aria-label="閉じる"]');
   await until("the restored entry", () => screenHas(page, "画面で追加"));
   const restoredSession = (await status(page)).sessionId;
   const [restored] = (await page.evaluate(`window.passwordManager.fetchEntries(${JSON.stringify(restoredSession)})`)).items;
@@ -219,7 +232,7 @@ try {
   assert.equal(JSON.stringify(result.audit).includes(generated), false, "the audit never carries a password");
   result.audit = { score: result.audit.score, total: result.audit.total, counts: result.audit.counts };
   await screenshot(page, screenshotDirectory, "tauri-shell-audit");
-  await click(page, 'button[aria-label="閉じる"]');
+  await click(page, 'dialog[open] button[aria-label="閉じる"]');
 
   // ---- Migration to the v2 format, through the screen. The vault locks and opens with the new password only.
   await menu(page, "ツール", "保管庫を更新…");
@@ -331,6 +344,15 @@ try {
   assert.ok(result.outsideFetch.error, "an outside connection must fail");
   result.ungrantedCommand = await settle(page, `window.__TAURI_INTERNALS__.invoke("plugin:window|set_title", { label: "main", value: "changed" })`);
   assert.ok(result.ungrantedCommand.error, "a command no capability grants must be refused");
+  // The window has no native frame: the screen's title bar maximizes and restores it through the
+  // window operations its capability grants, while every other window command stays refused.
+  assert.deepEqual(await page.evaluate(`[...document.querySelectorAll(".window-control")].map((node) => node.getAttribute("aria-label"))`), ["最小化", "最大化", "閉じる"]);
+  await page.evaluate("window.passwordManager.toggleMaximizeWindow()");
+  await until("the maximized window", () => page.evaluate("window.passwordManager.isWindowMaximized()"));
+  await until("the restore button", () => page.evaluate(`!!document.querySelector('.window-control[aria-label="元に戻す"]')`));
+  await page.evaluate("window.passwordManager.toggleMaximizeWindow()");
+  await until("the restored window", async () => !(await page.evaluate("window.passwordManager.isWindowMaximized()")));
+  result.windowControls = true;
   result.unknownCommand = await settle(page, `window.__TAURI_INTERNALS__.invoke("update_apply", {})`);
   assert.ok(result.unknownCommand.error);
   result.newWindow = await page.evaluate(`window.open("https://example.test/") === null`);
@@ -360,7 +382,8 @@ try {
   // ---- Closing the window locks the vault, clears this app's copy and exits.
   assert.deepEqual(await copy(), { value: null });
   mark = events.length;
-  powershell(`[void](Get-Process -Id ${child.pid}).CloseMainWindow()`);
+  // The window has no native frame, so it closes through the title bar's own button.
+  await page.evaluate(`document.querySelector(".window-control--close").click()`).catch(() => undefined);
   await until("the app to exit", () => child.exitCode !== null);
   const exitReports = [...new Set(events.slice(mark).filter((event) => event !== "renderer-gone"))];
   result.exit = { exitCode: child.exitCode, reports: exitReports };

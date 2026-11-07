@@ -54,7 +54,12 @@
     checkForUpdates: () => call("update_check"),
     downloadUpdate: () => call("update_download"),
     installUpdate: (hasUnsavedChanges) => call("update_install", { hasUnsavedChanges }),
-    openReleasePage: () => call("update_open_releases")
+    openReleasePage: () => call("update_open_releases"),
+    // The title bar's buttons. They act on this window only and never reach the vault.
+    minimizeWindow: () => call("plugin:window|minimize", { label: "main" }),
+    toggleMaximizeWindow: () => call("plugin:window|toggle_maximize", { label: "main" }),
+    closeWindow: () => call("plugin:window|close", { label: "main" }),
+    isWindowMaximized: () => call("plugin:window|is_maximized", { label: "main" })
   };
   Object.defineProperty(window, "passwordManager", { value: Object.freeze(api) });
 })();

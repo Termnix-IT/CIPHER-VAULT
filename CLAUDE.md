@@ -17,7 +17,7 @@
 Windowsのデスクトップアプリで、Tauri 2 + Rust、React + Vite、SQLite（rusqlite）を使用する。v0.9.0でElectron版から切り替え、その後にElectron版（`apps/electron`）・Node.jsのサービス（`apps/api`）・Web/API版を削除した（必要ならタグ `v0.9.0` を参照する）。設計判断は [設計](docs/設計.md#rust版の設計判断) を正とする。
 
 - `crates/vault-core/`: 中核（Tauri非依存）。暗号形式、保存、セッション、初期設定・解除・ロック・リセット、エントリ操作、パスワード生成、バックアップ、監査、移行・鍵更新・リセット・復旧。入力検証もここで行う。
-- `apps/desktop/`: Tauriのデスクトップアプリ。画面に公開するコマンドは `build.rs` の一覧と `tauri.conf.json` の `capabilities` の両方に書く。CSPは `packages/shared/src/renderer-policy.ts` と `tauri.conf.json` の `csp` を同じ文字列にする。クリップボード・画面ロックとスリープの連動・多重起動の防止・Electron版の起動中の拒否・署名付きの手動更新もここが受け持つ。setupは `windows/installer-hooks.nsh` でElectron版を削除する。
+- `apps/desktop/`: Tauriのデスクトップアプリ。画面に公開するコマンドは `build.rs` の一覧と `tauri.conf.json` の `capabilities` の両方に書く（タイトルバー用のTauri本体のウィンドウ操作は `capabilities` だけに個別に書く）。CSPは `packages/shared/src/renderer-policy.ts` と `tauri.conf.json` の `csp` を同じ文字列にする。クリップボード・画面ロックとスリープの連動・多重起動の防止・Electron版の起動中の拒否・署名付きの手動更新もここが受け持つ。setupは `windows/installer-hooks.nsh` でElectron版を削除する。
 - `apps/desktop/src/desktop-api.js`: 画面の `window.passwordManager` を用意し、各メソッドをコマンドへ渡す。
 - `apps/web/src/lib/api.ts`: `window.passwordManager` を呼ぶ。保管庫の処理は持たない。
 - `apps/web/src/App.tsx`: 保管庫状態、一覧・選択、自動ロックの画面反映を管理する。

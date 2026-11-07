@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { PasswordEntry, VaultEntry, VaultMaintenanceOperation, VaultMaintenanceState } from "@password-manager/shared/types";
 import type { DesignMode } from "../lib/design-mode";
+import { windowControls } from "../lib/api";
+import { MaximizeIcon, MinimizeIcon, RestoreIcon, WindowCloseIcon } from "./Icons";
 import { AppInfo } from "./AppInfo";
 import { VaultTools } from "./VaultTools";
 
@@ -37,6 +39,18 @@ export function AppMenu(props: AppMenuProps) {
   const barRef = useRef<HTMLDivElement>(null);
   const triggerRefs = useRef<Partial<Record<MenuName, HTMLButtonElement | null>>>({});
   const disabled = !props.isUnlocked || props.isBusy;
+  const [isMaximized, setIsMaximized] = useState(false);
+
+  // The maximize button shows "restore" while the window is maximized; any resize may change that.
+  // A drag resize fires many events, so the window is asked once it settles.
+  useEffect(() => {
+    let active = true, timer: ReturnType<typeof setTimeout> | undefined;
+    const read = () => { windowControls.isMaximized().then((value) => { if (active) setIsMaximized(value); }, () => undefined); };
+    const settled = () => { clearTimeout(timer); timer = setTimeout(read, 150); };
+    read();
+    window.addEventListener("resize", settled);
+    return () => { active = false; clearTimeout(timer); window.removeEventListener("resize", settled); };
+  }, []);
   const toolsDisabled = disabled || props.hasUnsavedChanges || props.isLoading;
 
   useEffect(() => {
@@ -86,7 +100,8 @@ export function AppMenu(props: AppMenuProps) {
     onClose={() => triggerRefs.current.help?.focus()} renderTrigger={(openInfo) => (
     <VaultTools key={props.isUnlocked ? "unlocked" : "locked"} entryCount={props.entryCount} disabled={toolsDisabled} onRefresh={props.onRefresh}
       onSelect={props.onSelectEntry} onClose={() => triggerRefs.current.tools?.focus()} renderTrigger={(openTool) => (
-        <div className="app-titlebar" role="banner">
+        // The empty parts of the bar move the window, and a double click maximizes it (data-tauri-drag-region).
+        <div className="app-titlebar" role="banner" data-tauri-drag-region>
           <div className="app-menu-bar" aria-label="アプリメニュー" ref={barRef} onBlur={(event) => {
             if (!event.currentTarget.contains(event.relatedTarget)) setOpened(null);
           }}>
@@ -120,7 +135,15 @@ export function AppMenu(props: AppMenuProps) {
             ])}
             {group("help", "ヘルプ", [{ label: "バージョンと更新", action: openInfo }])}
           </div>
-          <div className="app-titlebar-spacer" aria-hidden="true" />
+          <div className="app-titlebar-spacer" aria-hidden="true" data-tauri-drag-region />
+          <div className="window-controls" aria-label="ウィンドウ">
+            <button type="button" className="window-control" aria-label="最小化" title="最小化"
+              onClick={() => { void windowControls.minimize().catch(() => undefined); }}><MinimizeIcon /></button>
+            <button type="button" className="window-control" aria-label={isMaximized ? "元に戻す" : "最大化"} title={isMaximized ? "元に戻す" : "最大化"}
+              onClick={() => { void windowControls.toggleMaximize().catch(() => undefined); }}>{isMaximized ? <RestoreIcon /> : <MaximizeIcon />}</button>
+            <button type="button" className="window-control window-control--close" aria-label="閉じる" title="閉じる"
+              onClick={() => { void windowControls.close().catch(() => undefined); }}><WindowCloseIcon /></button>
+          </div>
         </div>
       )} />
   )} />;

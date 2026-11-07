@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AppUpdateState } from "@password-manager/shared/types";
 import { releaseNotesToText } from "../lib/release-notes";
 import { CloseIcon } from "./Icons";
+import { showModalDialog } from "../lib/modal";
 
 export function AppInfo({ hasUnsavedChanges, isSaving, renderTrigger, onClose }: {
   hasUnsavedChanges: boolean;
@@ -31,7 +32,7 @@ export function AppInfo({ hasUnsavedChanges, isSaving, renderTrigger, onClose }:
   }
   const status = state?.status;
   const close = () => dialogRef.current?.close();
-  const open = () => { if (!dialogRef.current?.open) dialogRef.current?.showModal(); };
+  const open = () => { if (!dialogRef.current?.open) { if (dialogRef.current) showModalDialog(dialogRef.current); } };
   const latest = state?.latestVersion && ["available", "downloading", "downloaded", "installing"].includes(status ?? "") ? `バージョン ${state.latestVersion} があります` : "";
   const stateText = status === "checking" ? "確認しています…"
     : status === "current" ? "最新のバージョンです"

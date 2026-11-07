@@ -12,7 +12,7 @@
       "capabilities": [
         {
           "identifier": "main-window",
-          "description": "The only window, showing the bundled screen. It may call the app commands listed in build.rs and nothing else.",
+          "description": "The only window, showing the bundled screen. It may call the app commands listed in build.rs and the window operations its title bar needs, and nothing else.",
           "windows": [
             "main"
           ],
@@ -39,7 +39,13 @@
             "allow-update-check",
             "allow-update-download",
             "allow-update-install",
-            "allow-update-open-releases"
+            "allow-update-open-releases",
+            "core:window:allow-minimize",
+            "core:window:allow-toggle-maximize",
+            "core:window:allow-internal-toggle-maximize",
+            "core:window:allow-close",
+            "core:window:allow-start-dragging",
+            "core:window:allow-is-maximized"
           ]
         }
       ],

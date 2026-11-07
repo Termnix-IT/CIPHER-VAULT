@@ -15,6 +15,8 @@ Windows用の実行ファイルは [GitHub Releases](https://github.com/Termnix-
 
 どちらも保管庫は `%APPDATA%\CIPHER VAULT\data` に保存します。v0.8.0までのElectron版と同じ場所なので、Rust版へ切り替えても同じ保管庫を開きます。画面の表示にはMicrosoft Edge WebView2を使います。Windows 11には標準で入っており、入っていない環境ではsetupがインストールします。portable版はWebView2を入れないため、事前にインストールが必要です。portable版もexeの隣にDBを保存する方式ではなく、exeを移動するだけでは保管庫データを移せません。別端末への移行には[暗号化バックアップ](#暗号化バックアップと復元)を使います。
 
+配布物はコード署名していないため、起動時に「WindowsによってPCが保護されました」と表示されることがあります。[GitHub Releases](https://github.com/Termnix-IT/CIPHER-VAULT/releases)から入手したファイルであることを確かめてから、「詳細情報」→「実行」で起動してください。
+
 ソースコードからの起動は[開発する場合](#開発する場合)を参照してください。
 
 ## 主な機能
@@ -28,6 +30,7 @@ Windows用の実行ファイルは [GitHub Releases](https://github.com/Termnix-
 - ログインのパスワードの弱さ・使い回しなどを端末内で調べるパスワードの点検（v0.2.2以降）
 - setup版での手動アップデート
 - 「表示」メニューからのシンプル・ルミナスのデザイン切り替え（v0.7.0以降）
+- メニューの列を兼ねた1段のタイトルバー（v1.0.0以降）
 
 ## 基本操作と画面
 
