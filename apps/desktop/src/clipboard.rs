@@ -85,14 +85,22 @@ impl ExpiringClipboard {
 
     /// Called periodically. A clipboard that was busy at the deadline is retried here.
     pub fn tick(&self) {
-        self.tick_at(Stamp::now());
+        self.tick_with(Stamp::now);
     }
 
+    #[cfg(test)]
     fn tick_at(&self, now: Stamp) {
+        self.tick_with(|| now);
+    }
+
+    /// The time is read once the lease is held. A time read before that can be older than the
+    /// start of a copy that finished meanwhile, which would look like a clock moving backwards
+    /// and clear the new copy at once.
+    fn tick_with(&self, now: impl Fn() -> Stamp) {
         let Ok(mut lease) = self.lease.try_lock() else {
             return;
         };
-        if lease.as_ref().is_some_and(|current| current.expired_at(now)) {
+        if lease.as_ref().is_some_and(|current| current.expired_at(now())) {
             self.clear_lease(&mut lease);
         }
     }
@@ -181,6 +189,21 @@ mod tests {
         assert_eq!(text_of(&port).as_deref(), Some("synthetic"));
         clipboard.tick_at(later(start, CLEAR_AFTER));
         assert_eq!(text_of(&port), None);
+    }
+
+    #[test]
+    fn the_periodic_check_reads_the_time_while_it_holds_the_lease() {
+        let (clipboard, port) = fixture();
+        let start = Stamp::now();
+        clipboard.copy_at("synthetic", current, || start).unwrap();
+        let read = Cell::new(false);
+        clipboard.tick_with(|| {
+            read.set(true);
+            assert!(clipboard.lease.try_lock().is_err(), "no copy can finish between the reading and the check");
+            later(start, Duration::from_secs(1))
+        });
+        assert!(read.get());
+        assert_eq!(text_of(&port).as_deref(), Some("synthetic"));
     }
 
     #[test]
