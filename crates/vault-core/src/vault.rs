@@ -797,7 +797,9 @@ impl Vault {
             let database = self.legacy().ok_or_else(|| self.fail())?;
             let existing = database.lock().unwrap().get(&id).map_err(|_| self.fail())?.ok_or_else(not_found)?;
             let key = self.key(&session)?;
-            let now = now_iso();
+            // Never before the entry's own dates, as in a v2 vault: an entry that was changed
+            // before it was created could no longer be backed up or migrated.
+            let now = [existing.updated_at.clone(), existing.created_at.clone(), existing.password_changed_at.clone().unwrap_or_default()].into_iter().fold(now_iso(), String::max);
             let same_password = Self::open_legacy(&key, &existing.encrypted_password)?.as_str() == login["password"].as_str().unwrap_or_default();
             let changed_at = if same_password { existing.password_changed_at.clone() } else { Some(now.clone()) };
             let tags = login["tags"].to_string();
@@ -1211,6 +1213,54 @@ mod tests {
         let status = vault.status().unwrap();
         assert_eq!((status["isUnlocked"].clone(), status.get("lockReason")), (json!(true), None));
         assert_eq!(id(&status), session);
+    }
+
+    #[test]
+    fn a_legacy_entry_never_moves_before_its_own_dates() {
+        let (directory, legacy) = legacy_directory(false);
+        let vault = Vault::open(&directory.0).unwrap();
+        let session = id(&unlocked(&vault, s(&legacy["password"])));
+        let later = "2999-01-01T00:00:00.000Z";
+        let dated = |vault: &Vault| -> Vec<Value> {
+            let ids: Vec<Value> = ["first", "second"].iter().map(|name| {
+                let mut fields = login();
+                fields["serviceName"] = json!(name);
+                vault.create_entry(some(&session), some(&fields)).unwrap()["id"].clone()
+            }).collect();
+            // Saved while the computer's clock was ahead.
+            vault.legacy_connection(|connection| connection.execute("UPDATE password_entries SET created_at = ?1, updated_at = ?1, password_changed_at = ?1 WHERE service_name IN ('first', 'second')", [later]).unwrap());
+            ids
+        };
+        let ids = dated(&vault);
+        let mut fields = login();
+        fields["serviceName"] = json!("first");
+        let kept = vault.update_entry(some(&session), some(&ids[0]), some(&fields)).unwrap();
+        assert_eq!((kept["updatedAt"].clone(), kept["passwordChangedAt"].clone()), (json!(later), json!(later)));
+        fields["password"] = json!("synthetic-other-secret");
+        let changed = vault.update_entry(some(&session), some(&ids[0]), some(&fields)).unwrap();
+        assert_eq!((changed["updatedAt"].clone(), changed["passwordChangedAt"].clone()), (json!(later), json!(later)));
+        vault.set_entries_group(some(&session), some(&json!({ "ids": [ids[1]], "group": "moved" }))).unwrap();
+        let moved = vault.get_entry(some(&session), some(&ids[1])).unwrap();
+        assert_eq!((moved["group"].clone(), moved["updatedAt"].clone()), (json!("moved"), json!(later)));
+        // Every entry still passes the check a backup and a migration apply.
+        vault.export_backup(some(&session), some(&json!({ "passphrase": "synthetic-backup-passphrase" }))).unwrap();
+    }
+
+    #[test]
+    fn a_switch_waits_for_a_call_that_still_holds_the_closed_vault() {
+        let (directory, _legacy) = legacy_directory(false);
+        let vault = Vault::open(&directory.0).unwrap();
+        let held = vault.legacy().unwrap();
+        let file = Arc::downgrade(&held);
+        let previous = std::mem::replace(&mut *vault.storage.write().unwrap(), Arc::new(Storage::RecoveryRequired { operation: None }));
+        std::thread::scope(|scope| {
+            scope.spawn(move || {
+                std::thread::sleep(Duration::from_millis(200));
+                drop(held);
+            });
+            switch::release(previous);
+        });
+        assert!(file.upgrade().is_none(), "the file is closed before the switch reads it");
     }
 
     #[test]

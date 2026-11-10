@@ -327,9 +327,13 @@ pub fn group_of(transaction: &Transaction<'_>, id: &str) -> rusqlite::Result<Opt
     transaction.query_row("SELECT group_name FROM password_entries WHERE id = ?1", [id], |row| row.get(0)).optional()
 }
 
-/// Only plain columns change, so the secrets and their change date stay untouched.
+/// Only plain columns change, so the secrets and their change date stay untouched. The entry
+/// never moves before its own dates, which sort as text in the one form the app writes.
 pub fn set_group(transaction: &Transaction<'_>, id: &str, group: Option<&str>, now: &str) -> rusqlite::Result<()> {
-    transaction.execute("UPDATE password_entries SET group_name = ?2, updated_at = ?3 WHERE id = ?1", params![id, group, now])?;
+    transaction.execute(
+        "UPDATE password_entries SET group_name = ?2, updated_at = max(?3, updated_at, created_at, coalesce(password_changed_at, '')) WHERE id = ?1",
+        params![id, group, now],
+    )?;
     Ok(())
 }
 
