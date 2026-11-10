@@ -70,10 +70,10 @@ impl Vault {
         let previous = std::mem::replace(&mut *self.storage.write().unwrap(), Arc::new(running));
         self.lock_for(LockReason::Manual);
         release(previous);
-        let generation = self.session.lock().unwrap().id(self.now());
+        let generation = self.session_at(|session, now| session.id(now));
 
         let credentials = Credentials { master: &request.master_password, new: &request.new_master_password, passphrase: &request.backup_passphrase };
-        let aborted = || self.session.lock().unwrap().id(self.now()) != generation;
+        let aborted = || self.session_at(|session, now| session.id(now)) != generation;
         let outer = || -> Outcome<()> { if aborted() { Err(Stop::Error(VaultError::conflict(CANCELLED))) } else { Ok(()) } };
         let inner = || -> Outcome<()> { if aborted() { Err(Stop::Code(Code::Busy)) } else { Ok(()) } };
         let guarded = |action: &dyn Fn() -> Result<Secret>| self.guard.run(|| self.now().monotonic, action);

@@ -202,6 +202,15 @@ impl Vault {
         (self.clock)()
     }
 
+    /// Runs `action` on the session with a time read while the session's lock is held. A time
+    /// read before the lock can be older than one another thread has already recorded, which the
+    /// session would take for a clock moving backwards, and lock.
+    fn session_at<T>(&self, action: impl FnOnce(&mut Session, Stamp) -> T) -> T {
+        let mut session = self.session.lock().unwrap();
+        let now = self.now();
+        action(&mut session, now)
+    }
+
     fn storage(&self) -> Arc<Storage> {
         self.storage.read().unwrap().clone()
     }
@@ -219,8 +228,7 @@ impl Vault {
 
     /// Whether a key is in memory, for the desktop's decisions. Expiry is applied first.
     pub fn is_unlocked(&self) -> bool {
-        let now = self.now();
-        self.session.lock().unwrap().state(now).is_unlocked
+        self.session_at(|session, now| session.state(now).is_unlocked)
     }
 
     /// Whether a switch is still running, so that quitting can give it a moment to stop.
@@ -298,7 +306,7 @@ impl Vault {
 
     /// getVaultStatus
     pub fn status(&self) -> Result<Value> {
-        let state = self.session.lock().unwrap().state(self.now());
+        let state = self.session_at(|session, now| session.state(now));
         let maintenance = match &*self.storage() {
             Storage::Legacy { .. } => json!({ "state": "ready", "format": "legacy" }),
             Storage::V2 { .. } => json!({ "state": "ready", "format": "v2" }),
@@ -321,8 +329,7 @@ impl Vault {
 
     /// Destroys an expired key even when the screen sends nothing. The desktop calls it every second.
     pub fn expire(&self) {
-        let now = self.now();
-        self.session.lock().unwrap().expire(now);
+        self.session_at(|session, now| session.expire(now));
     }
 
     /// A lock the app decided on, such as closing the window. It also cancels an unlock in progress,
@@ -332,23 +339,19 @@ impl Vault {
     }
 
     fn require_generation(&self, expected: &str) -> Result<()> {
-        let now = self.now();
-        self.session.lock().unwrap().require_generation(expected, now)
+        self.session_at(|session, now| session.require_generation(expected, now))
     }
 
     fn require_unlocked(&self, expected: Option<&str>) -> Result<String> {
-        let now = self.now();
-        self.session.lock().unwrap().require_unlocked(expected, now)
+        self.session_at(|session, now| session.require_unlocked(expected, now))
     }
 
     fn key(&self, session: &str) -> Result<Secret> {
-        let now = self.now();
-        self.session.lock().unwrap().key(session, now)
+        self.session_at(|current, now| current.key(session, now))
     }
 
     fn install_key(&self, key: Secret) {
-        let now = self.now();
-        self.session.lock().unwrap().unlock(key, now);
+        self.session_at(|session, now| session.unlock(key, now));
     }
 
     /// requireUnlockedVault in entry-service.ts.
@@ -404,8 +407,7 @@ impl Vault {
     pub fn record_activity(&self, session_id: Option<&Value>) -> Result<Value> {
         self.available()?;
         let expected = parse_session_id(session_id)?;
-        let now = self.now();
-        self.session.lock().unwrap().record_activity(&expected, now)?;
+        self.session_at(|session, now| session.record_activity(&expected, now))?;
         self.status()
     }
 
@@ -459,7 +461,7 @@ impl Vault {
                 return Err(VaultError::conflict("保管庫はすでに設定済みです"));
             }
             let password = Zeroizing::new(input::parse_master_password(payload, true)?);
-            let intent = self.session.lock().unwrap().id(self.now());
+            let intent = self.session_at(|session, now| session.id(now));
             self.guard.run(|| self.now().monotonic, || {
                 let salt = STANDARD.encode(random_bytes::<16>()?.as_ref());
                 let key = crypto::derive_legacy_key(password.as_bytes(), &salt).map_err(|_| VaultError::new(500, KDF_FAILED))?;
@@ -493,7 +495,7 @@ impl Vault {
                 return Err(VaultError::bad_request("未対応の保管庫形式です"));
             }
             let raw_verifier = verifier_algorithm.is_none();
-            let intent = self.session.lock().unwrap().id(self.now());
+            let intent = self.session_at(|session, now| session.id(now));
             self.guard.run(|| self.now().monotonic, || {
                 let key = crypto::derive_legacy_key(password.as_bytes(), &metadata.salt).map_err(|_| VaultError::new(500, KDF_FAILED))?;
                 self.require_generation(&intent)?;
@@ -518,7 +520,7 @@ impl Vault {
     /// unlockV2Vault: no key is installed until every current entry authenticates and validates.
     fn unlock_v2(&self, store: &Mutex<V2Store>, payload: Option<&Value>) -> Result<()> {
         let password = Zeroizing::new(input::parse_master_password(payload, false)?);
-        let intent = self.session.lock().unwrap().id(self.now());
+        let intent = self.session_at(|session, now| session.id(now));
         let (slot, vault_id, key_id) = {
             let store = store.lock().unwrap();
             (store.password_slot().to_string(), store.vault_id().to_string(), store.key_id().to_string())
@@ -1188,6 +1190,27 @@ mod tests {
         }
         let locked = vault.lock(some(&session)).unwrap();
         vault.unlock(some(&id(&locked)), some(&password(s(&legacy["password"])))).unwrap();
+    }
+
+    #[test]
+    fn checks_from_several_threads_never_look_like_a_clock_moving_backwards() {
+        let (directory, legacy) = legacy_directory(false);
+        let vault = Vault::open(&directory.0).unwrap();
+        let session = id(&unlocked(&vault, s(&legacy["password"])));
+        // The desktop's watchdog and the commands check the session at the same time.
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    for _ in 0..50_000 {
+                        vault.expire();
+                        let _ = vault.is_unlocked();
+                    }
+                });
+            }
+        });
+        let status = vault.status().unwrap();
+        assert_eq!((status["isUnlocked"].clone(), status.get("lockReason")), (json!(true), None));
+        assert_eq!(id(&status), session);
     }
 
     #[test]
