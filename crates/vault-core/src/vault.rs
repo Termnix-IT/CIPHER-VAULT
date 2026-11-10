@@ -647,10 +647,8 @@ impl Vault {
         let key = self.key(&session)?;
         let result = if !write {
             action(&mut store.lock().unwrap(), &key, &reading)
-        } else if active().is_ok() && !self.writing.swap(true, Ordering::SeqCst) {
-            let result = action(&mut store.lock().unwrap(), &key, &active);
-            self.writing.store(false, Ordering::SeqCst);
-            result
+        } else if let Some(_writing) = active().ok().and_then(|()| Busy::claim(&self.writing)) {
+            action(&mut store.lock().unwrap(), &key, &active)
         } else {
             Err(StoreError::Conflict.into())
         };
