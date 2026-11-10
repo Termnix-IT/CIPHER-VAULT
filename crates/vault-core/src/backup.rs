@@ -4,7 +4,8 @@
 //! file that cannot be parsed is "unsupported or damaged", and anything that fails after the key
 //! is derived is "wrong passphrase or damaged", so the two cases never reveal more than that.
 
-use crate::crypto::{self, Secret};
+// The names in a file's header are the ones its AAD is built from.
+use crate::crypto::{self, BACKUP_KDF as KDF, CIPHER, Secret};
 use crate::error::{Result, VaultError};
 use crate::input::{self, BACKUP_FILE_BYTES, BACKUP_PLAINTEXT_BYTES, MAX_ENTRIES};
 use base64::Engine;
@@ -13,8 +14,6 @@ use serde_json::{Map, Value, json};
 use std::collections::HashSet;
 use zeroize::Zeroizing;
 
-const KDF: &str = "scrypt-N131072-r8-p1";
-const CIPHER: &str = "aes-256-gcm";
 const UNSUPPORTED: &str = "未対応または破損したバックアップファイルです";
 const WRONG_PASSPHRASE: &str = "パスフレーズが違うか、バックアップファイルが破損しています";
 const LOGIN_FIELDS: [&str; 11] = ["id", "serviceName", "loginId", "password", "notes", "url", "tags", "group", "createdAt", "updatedAt", "passwordChangedAt"];
