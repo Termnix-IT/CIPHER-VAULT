@@ -4,7 +4,7 @@
   "description": "Local-first Windows password manager built with Tauri, Rust, React, and SQLite.",
   "author": "lugep",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "workspaces": [
     "apps/web",
     "packages/shared"
