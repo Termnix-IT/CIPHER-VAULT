@@ -135,17 +135,27 @@ impl Vault {
 }
 
 /// Waits until no call that began before the switch still holds the closed vault, so its file
-/// is closed before the switch reads it.
-fn release(mut storage: Arc<Storage>) {
-    let started = Instant::now();
+/// is closed before the switch reads it. Such a call holds the file itself rather than the
+/// storage around it, so both are waited for.
+pub(super) fn release(storage: Arc<Storage>) {
+    let deadline = Instant::now() + RELEASE_WAIT;
+    match sole(storage, deadline) {
+        Some(Storage::Legacy { database, .. }) => drop(sole(database, deadline)),
+        Some(Storage::V2 { store, .. }) => drop(sole(store, deadline)),
+        _ => {}
+    }
+}
+
+/// The value once nothing else holds it, or None when it is still shared at the deadline.
+fn sole<T>(mut shared: Arc<T>, deadline: Instant) -> Option<T> {
     loop {
-        match Arc::try_unwrap(storage) {
-            Ok(storage) => return drop(storage),
-            Err(shared) if started.elapsed() < RELEASE_WAIT => {
-                storage = shared;
+        match Arc::try_unwrap(shared) {
+            Ok(value) => return Some(value),
+            Err(still) if Instant::now() < deadline => {
+                shared = still;
                 std::thread::sleep(Duration::from_millis(10));
             }
-            Err(_) => return,
+            Err(_) => return None,
         }
     }
 }
