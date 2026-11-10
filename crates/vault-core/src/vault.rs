@@ -29,6 +29,7 @@ use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -38,6 +39,8 @@ const DECRYPT_FAILED: &str = "保存済みのデータを復号できません�
 const KDF_FAILED: &str = "鍵を導出できませんでした";
 const EMPTY_ONLY: &str = "復元できるのは空の保管庫のみです";
 const SWITCH_PENDING: &str = "保管庫の切り替えが完了するまでお待ちください";
+/// How long the steps of one read go on without looking at the vault's files again.
+const READ_CONTEXT_INTERVAL: Duration = Duration::from_millis(50);
 
 enum Storage {
     Legacy { database: Arc<Mutex<LegacyDatabase>>, identity: FileIdentity },
@@ -109,6 +112,8 @@ pub struct Vault {
     auditing: AtomicBool,
     switching: AtomicBool,
     availability: OnceLock<Availability>,
+    #[cfg(test)]
+    context_checks: std::sync::atomic::AtomicUsize,
 }
 
 /// Holds a one-at-a-time flag until dropped, also when the work fails.
@@ -195,7 +200,7 @@ impl Vault {
         let mut session = Session::new(clock());
         session.lock(LockReason::Manual);
         let session = Mutex::new(session);
-        Ok(Self { root, storage, session, guard: UnlockGuard::default(), clock, failed: AtomicBool::new(false), writing: AtomicBool::new(false), backing_up: AtomicBool::new(false), auditing: AtomicBool::new(false), switching: AtomicBool::new(false), availability: OnceLock::new() })
+        Ok(Self { root, storage, session, guard: UnlockGuard::default(), clock, failed: AtomicBool::new(false), writing: AtomicBool::new(false), backing_up: AtomicBool::new(false), auditing: AtomicBool::new(false), switching: AtomicBool::new(false), availability: OnceLock::new(), #[cfg(test)] context_checks: Default::default() })
     }
 
     fn now(&self) -> Stamp {
@@ -250,6 +255,8 @@ impl Vault {
     }
 
     fn context_is_current(&self) -> files::Checked<bool> {
+        #[cfg(test)]
+        self.context_checks.fetch_add(1, Ordering::SeqCst);
         match &*self.storage() {
             Storage::Legacy { identity, .. } => {
                 let file = files::safe_path(&self.root, &[selection::LEGACY_DATABASE], false, false)?;
@@ -616,6 +623,11 @@ impl Vault {
     ///
     /// A write is refused while another one runs, before it waits for the store, so that no
     /// request waits in memory with its secrets.
+    ///
+    /// Every step checks the session. A write also checks the vault's files at every step, since
+    /// nothing may be written after a switch. A read of many entries would spend most of its time
+    /// on those checks, so between its first and last step it looks at the files only now and then;
+    /// the last check still comes before anything is returned.
     fn v2_operation<T>(&self, store: &Mutex<V2Store>, write: bool, action: impl FnOnce(&mut V2Store, &[u8], &dyn Fn() -> Result<()>) -> std::result::Result<T, Failure>) -> Result<T> {
         let session = self.require_unlocked(None)?;
         self.assert_current()?;
@@ -623,9 +635,18 @@ impl Vault {
             self.require_unlocked(Some(&session))?;
             self.assert_current()
         };
+        let checked = std::cell::Cell::new(Instant::now());
+        let reading = || -> Result<()> {
+            self.require_unlocked(Some(&session))?;
+            if checked.get().elapsed() >= READ_CONTEXT_INTERVAL {
+                self.assert_current()?;
+                checked.set(Instant::now());
+            }
+            Ok(())
+        };
         let key = self.key(&session)?;
         let result = if !write {
-            action(&mut store.lock().unwrap(), &key, &active)
+            action(&mut store.lock().unwrap(), &key, &reading)
         } else if active().is_ok() && !self.writing.swap(true, Ordering::SeqCst) {
             let result = action(&mut store.lock().unwrap(), &key, &active);
             self.writing.store(false, Ordering::SeqCst);
@@ -679,8 +700,7 @@ impl Vault {
                     active()?;
                     items.push(v2_summary(&Self::read_v2(store, root, &id)?.0));
                 }
-                let text = |value: &Value, field: &str| value[field].as_str().unwrap_or_default().to_string();
-                items.sort_by(|a, b| text(b, "updatedAt").cmp(&text(a, "updatedAt")).then_with(|| locale_order(&text(a, "id"), &text(b, "id"))));
+                list_order(&mut items);
                 Ok(json!({ "items": items }))
             });
         }
@@ -690,6 +710,21 @@ impl Vault {
         let items: Vec<Value> = rows.iter().map(legacy::summary).collect();
         self.require_unlocked_vault(Some(&session))?;
         Ok(json!({ "items": items }))
+    }
+
+    /// Every entry of a v2 vault in list order, read and opened once in one operation. The backup
+    /// and the audit need them all, and one operation per entry would check the vault's files and
+    /// open each entry again every time.
+    fn v2_entries(&self, store: &Mutex<V2Store>) -> Result<Vec<Value>> {
+        self.v2_operation(store, false, |store, root, active| {
+            let mut entries = Vec::new();
+            for (id, _) in store.entries()? {
+                active()?;
+                entries.push(Self::read_v2(store, root, &id)?.0);
+            }
+            list_order(&mut entries);
+            Ok(entries)
+        })
     }
 
     /// getEntryById
@@ -910,12 +945,17 @@ impl Vault {
             let passphrase = Zeroizing::new(passphrase);
             let salt = random_bytes::<16>()?;
             self.with_backup_key(&passphrase, salt.as_ref(), |key| {
-                let summaries = self.entry_list()?;
-                let summaries = summaries["items"].as_array().cloned().unwrap_or_default();
-                if summaries.len() > MAX_ENTRIES {
+                let entries = match self.v2() {
+                    Some(store) => self.v2_entries(&store)?,
+                    None => {
+                        let summaries = self.entry_list()?;
+                        let summaries = summaries["items"].as_array().cloned().unwrap_or_default();
+                        summaries.iter().map(|summary| self.entry(Some(&summary["id"]))).collect::<Result<Vec<_>>>()?
+                    }
+                };
+                if entries.len() > MAX_ENTRIES {
                     return Err(VaultError::bad_request("バックアップは10000件まで対応しています"));
                 }
-                let entries = summaries.iter().map(|summary| self.entry(Some(&summary["id"]))).collect::<Result<Vec<_>>>()?;
                 let content = backup::encode(entries, key, salt.as_ref(), random_bytes::<12>()?.as_ref())?;
                 Ok(json!({ "fileName": backup::file_name(&now_iso()), "content": content }))
             })
@@ -999,12 +1039,10 @@ impl Vault {
     /// The logins to audit: in list order for v2, and in table order for the legacy format. API
     /// keys, cards and bank accounts are left out, as their secrets are not passwords.
     fn audit_rows(&self, session: &str) -> Result<Vec<audit::Row>> {
-        if self.v2().is_some() {
-            let list = self.entry_list()?;
-            let logins = list["items"].as_array().into_iter().flatten().filter(|summary| !matches!(summary["type"].as_str(), Some("apiKey" | "creditCard" | "financial")));
+        if let Some(store) = self.v2() {
+            let logins = self.v2_entries(&store)?.into_iter().filter(|entry| !matches!(entry["type"].as_str(), Some("apiKey" | "creditCard" | "financial")));
             return logins
-                .map(|summary| {
-                    let mut entry = self.entry(Some(&summary["id"]))?;
+                .map(|mut entry| {
                     let text = |field: &str| entry[field].as_str().map(str::to_string);
                     let (id, service_name, login_id, url, updated_at, password_changed_at) =
                         (text("id"), text("serviceName"), text("loginId"), text("url"), text("updatedAt"), text("passwordChangedAt"));
@@ -1046,6 +1084,12 @@ impl Vault {
     pub(crate) fn legacy_connection<T>(&self, action: impl FnOnce(&rusqlite::Connection) -> T) -> T {
         action(self.legacy().unwrap().lock().unwrap().connection())
     }
+}
+
+/// The order of the list: the latest change first, and entries changed at the same time by id.
+fn list_order(items: &mut [Value]) {
+    let text = |value: &Value, field: &str| value[field].as_str().unwrap_or_default().to_string();
+    items.sort_by(|a, b| text(b, "updatedAt").cmp(&text(a, "updatedAt")).then_with(|| locale_order(&text(a, "id"), &text(b, "id"))));
 }
 
 /// String.prototype.localeCompare for entry ids, which hold only ASCII hex digits and dashes. ICU
@@ -1311,6 +1355,33 @@ mod tests {
         assert_eq!(vault.delete_entry(some(&session), some(&created["id"])).unwrap_err(), not_found());
         let password = vault.generate_password(some(&session), None).unwrap();
         assert_eq!(password["password"].as_str().unwrap().len(), 20);
+    }
+
+    #[test]
+    fn reading_a_whole_v2_vault_does_not_check_its_files_for_every_entry() {
+        let (directory, _, v2) = v2_directory();
+        let vault = Vault::open(&directory.0).unwrap();
+        let session = id(&unlocked(&vault, s(&v2["masterPassword"])));
+        for _ in 0..30 {
+            vault.create_entry(some(&session), some(&login())).unwrap();
+        }
+        let checks = |action: &dyn Fn() -> Value| {
+            vault.context_checks.store(0, Ordering::SeqCst);
+            (action(), vault.context_checks.load(Ordering::SeqCst))
+        };
+        let (list, listing) = checks(&|| vault.list_entries(some(&session)).unwrap());
+        assert_eq!(list["items"].as_array().unwrap().len(), 31);
+        let (backup, exporting) = checks(&|| vault.export_backup(some(&session), some(&json!({ "passphrase": "synthetic-backup-passphrase" }))).unwrap());
+        let (audit, auditing) = checks(&|| vault.audit_vault(some(&session)).unwrap());
+        assert_eq!(audit["total"], 31);
+        // One check per entry would be at least 31 each; the scrypt of the backup takes a moment.
+        assert!(listing < 10 && exporting < 20 && auditing < 20, "{listing} {exporting} {auditing}");
+
+        // The backup still holds every entry, in list order.
+        let envelope = backup::parse(s(&backup["content"])).unwrap();
+        let key = crypto::derive_strong_key(b"synthetic-backup-passphrase", &envelope.salt).unwrap();
+        let ids = |items: &[Value]| items.iter().map(|item| item["id"].clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&backup::decode(&envelope, &key).unwrap()), ids(list["items"].as_array().unwrap()));
     }
 
     #[test]
