@@ -1,7 +1,7 @@
 //! Expiring clipboard, following apps/electron/src/expiring-clipboard.ts. Only a digest and a
 //! random owner token are retained, never the copied text.
 
-use crate::clock::Stamp;
+use cipher_vault_core::session::Stamp;
 use sha2::{Digest, Sha256};
 use std::sync::Mutex;
 use std::time::Duration;

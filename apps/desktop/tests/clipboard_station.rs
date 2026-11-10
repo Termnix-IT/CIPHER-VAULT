@@ -5,8 +5,6 @@
 
 #[path = "../src/clipboard.rs"]
 mod clipboard;
-#[path = "../src/clock.rs"]
-mod clock;
 #[path = "../src/windows_clipboard.rs"]
 mod windows_clipboard;
 

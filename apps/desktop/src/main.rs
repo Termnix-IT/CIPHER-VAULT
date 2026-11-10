@@ -11,7 +11,6 @@
 
 mod backup_download;
 mod clipboard;
-mod clock;
 mod data_directory;
 mod electron_guard;
 mod os_events;
