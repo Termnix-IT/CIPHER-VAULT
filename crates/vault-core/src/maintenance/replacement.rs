@@ -4,7 +4,7 @@
 //! files beside the new one. A journal names both vaults and the hashes of every file before the
 //! pointer moves, so an interrupted switch can only be finished, after all of it checks again.
 
-use super::migration::{copy_database, encode_backup, locker, refuses, same_receipt};
+use super::common::{self, copy_database, encode_backup, locker, refuses, same_receipt};
 use super::recovery_check;
 use super::state_files::{self, Retained};
 use super::{Active, Code, Context, Credentials, Outcome, Stop, failed, open_store, pointer, random, receipt, same};
@@ -140,7 +140,7 @@ fn read_entries(store: &V2Store, root: &[u8], active: Active<'_>, fresh: bool, o
 }
 
 fn verify_backup(file: &Path, passphrase: &str, expected: &[Value], active: Active<'_>) -> Outcome<()> {
-    let entries = recovery_check::verify(&state_files::load_backup(file)?, passphrase.as_bytes(), active, true)?;
+    let entries = recovery_check::verify(&state_files::load_backup(file)?, passphrase.as_bytes(), active)?;
     active()?;
     same(&entries.as_slice(), &expected)
 }
@@ -326,7 +326,7 @@ fn replace_checked(
         export_backup(&files.backup, &original, credentials.passphrase, active)?;
         active()?;
         // The copy is read through its own read-only connection, never through the locker.
-        let snapshot_reader = super::legacy_source::open(&source_path)?;
+        let snapshot_reader = common::open(&source_path)?;
         copy_database(&snapshot_reader, &files.snapshot, page_size, SNAPSHOT_BYTES, active)?;
         drop(snapshot_reader);
         state_files::sync_file(&files.snapshot)?;

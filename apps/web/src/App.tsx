@@ -3,7 +3,7 @@ import { CLIPBOARD_CLEAR_AFTER_MS } from "@password-manager/shared";
 import type { EntryIcon, VaultEntry, VaultEntrySummary, VaultEntryUpsertPayload, VaultMaintenanceOperation, VaultStatus } from "@password-manager/shared/types";
 import {
   copyText, createEntry, deleteEntry, fetchEntries, fetchEntry, fetchEntryIcons, generatePassword, setEntryIcon,
-  lockVault, observeVaultStatus, recordVaultActivity, resetVault, setEntriesGroup, setupVault, unlockVault, updateEntry
+  lockVault, observeVaultStatus, recordVaultActivity, setEntriesGroup, setupVault, unlockVault, updateEntry
 } from "./lib/api";
 import { LockScreen } from "./pages/LockScreen";
 import { VaultDashboard, type CopyNotice } from "./pages/VaultDashboard";
@@ -152,18 +152,6 @@ export function App() {
     try { await lockVault(); }
     catch (error) {
       if (statusRef.current?.isUnlocked) setErrorMessage(error instanceof Error ? error.message : "ロックできませんでした");
-    }
-  }
-
-  async function handleResetVault() {
-    const request = ++submission.current;
-    setIsSubmitting(true); setErrorMessage("");
-    try { await resetVault({ confirmation: "RESET_ALL_DATA" }); }
-    catch (error) {
-      if (request === submission.current) setErrorMessage(error instanceof Error ? error.message : "保管庫をリセットできませんでした");
-      throw error;
-    } finally {
-      if (request === submission.current) setIsSubmitting(false);
     }
   }
 
@@ -357,7 +345,6 @@ export function App() {
     onSidebarCollapsedChange={handleSidebarCollapsedChange}
     designMode={designMode}
     onDesignModeChange={handleDesignModeChange}
-    vaultFormat={vaultStatus?.maintenance?.format ?? "unknown"}
     onSelectEntry={handleSelectEntry}
     onCopy={handleCopyToClipboard}
     onMaintenance={handleOpenMaintenance}
@@ -382,8 +369,6 @@ export function App() {
       <Tooltip />
       {maintenanceRequired ? <div className="status-shell"><p role="status">前回の変更を確認しています…</p></div> : vaultStatus.isUnlocked ? (
         <VaultDashboard key={`vault-${vaultStatus.sessionId}`}
-          vaultFormat={vaultStatus.maintenance?.format ?? "unknown"}
-          onOpenMaintenance={() => handleOpenMaintenance("migrate")}
           hasUnsavedChanges={hasUnsavedChanges}
           isFormOpen={isFormOpen}
           onFormOpenChange={setIsFormOpen}
@@ -419,12 +404,11 @@ export function App() {
         <LockScreen
           onDirtyChange={setHasUnsavedChanges}
           isConfigured={vaultStatus.isConfigured}
-          allowReset={vaultStatus.maintenance?.format !== "v2"}
+          legacyVaultFound={vaultStatus.legacyVaultFound}
           isSubmitting={isSubmitting}
           errorMessage={errorMessage}
           notice={lockNotice}
           onSubmit={handleVaultSubmit}
-          onReset={handleResetVault}
         />
       )}
       <VaultMaintenance status={vaultStatus} requested={maintenanceRequest} opened={maintenanceOpened || maintenanceRequired} onClose={() => setMaintenanceOpened(false)} />

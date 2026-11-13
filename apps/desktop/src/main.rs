@@ -183,11 +183,6 @@ async fn vault_maintenance(vault: State<'_, Shared>, session_id: Option<Value>, 
 }
 
 #[tauri::command]
-async fn vault_reset(vault: State<'_, Shared>, session_id: Option<Value>, payload: Option<Value>) -> Result<Value, String> {
-    run(vault, move |vault| vault.reset(session_id.as_ref(), payload.as_ref())).await
-}
-
-#[tauri::command]
 async fn entries_list(vault: State<'_, Shared>, session_id: Option<Value>) -> Result<Value, String> {
     run(vault, move |vault| vault.list_entries(session_id.as_ref())).await
 }
@@ -394,7 +389,6 @@ fn main() {
             vault_setup,
             vault_unlock,
             vault_lock,
-            vault_reset,
             vault_maintenance,
             entries_list,
             entries_get,

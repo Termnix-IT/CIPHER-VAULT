@@ -6,22 +6,20 @@ import { showModalDialog } from "../lib/modal";
 
 const empty = () => ({ master: "", next: "", nextConfirm: "", backup: "", backupConfirm: "" });
 const titles: Record<VaultMaintenanceOperation, string> = {
-  migrate: "保管庫を更新", rekey: "マスターパスワードを変更", reset: "保管庫を空にする", recover: "前回の変更を完了させてください"
+  rekey: "マスターパスワードを変更", reset: "保管庫を空にする", recover: "前回の変更を完了させてください"
 };
 const leads: Record<VaultMaintenanceOperation, string> = {
-  migrate: "APIキーとカードを保存できる形式にします。あわせてマスターパスワードも新しくします。更新前の保管庫はこのパソコンに残ります。",
   rekey: "変更前の保管庫は、前のパスワードで開ける状態のまま、このパソコンに残ります。",
   reset: "一覧が空になります。今のデータはこのパソコンに残ります。",
   recover: "途中で止まった変更を、そのとき入力したパスワードで完了させます。"
 };
-const submitLabels: Record<VaultMaintenanceOperation, string> = { migrate: "更新する", rekey: "変更する", reset: "空にする", recover: "完了させる" };
+const submitLabels: Record<VaultMaintenanceOperation, string> = { rekey: "変更する", reset: "空にする", recover: "完了させる" };
 
 export function VaultMaintenance({ status, requested, opened, onClose }: { status: VaultStatus; requested?: VaultMaintenanceOperation | null; opened: boolean; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null), form = useRef<HTMLFormElement>(null), firstInput = useRef<HTMLInputElement>(null);
   const busyRef = useRef(false), alive = useRef(true), source = useRef(""), wasOpened = useRef(false);
   const cancelRequested = useRef(false);
-  // Same rule as the Tools menu and the editor notice: only a known v2 vault offers rekey.
-  const fallback = (): VaultMaintenanceOperation => status.maintenance?.format === "v2" ? "rekey" : "migrate";
+  const fallback = (): VaultMaintenanceOperation => "rekey";
   const [operation, setOperation] = useState<VaultMaintenanceOperation>(status.maintenance?.state === "recovery-required" ? "recover" : fallback());
   const [fields, setFields] = useState(empty), [acknowledged, setAcknowledged] = useState(false);
   const [busy, setBusy] = useState(false), [cancelBusy, setCancelBusy] = useState(false), [error, setError] = useState(""), [message, setMessage] = useState("");

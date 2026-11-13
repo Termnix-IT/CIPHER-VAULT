@@ -1,16 +1,14 @@
-//! The CIPHER VAULT byte formats: legacy secrets and verifiers, `.cvault` backups and the v2
-//! entry and password-slot envelopes. It covers the bytes only, not storage, sessions, nonce
-//! reservation or migration. Every format must stay readable by the TypeScript app.
+//! The CIPHER VAULT byte formats: `.cvault` backups and the v2 entry and password-slot envelopes.
+//! It covers the bytes only, not storage, sessions or nonce reservation. The legacy format's
+//! secrets and verifiers were removed with that format.
 
 use aes_gcm::aead::{Aead, KeyInit, Nonce, Payload};
 use aes_gcm::Aes256Gcm;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use hkdf::Hkdf;
-use hmac::{Hmac, Mac};
 use serde_json::{Map, Value, json};
 use sha2::Sha256;
-use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
 pub type Secret = Zeroizing<Vec<u8>>;
@@ -19,9 +17,7 @@ const KEY_BYTES: usize = 32;
 const IV_BYTES: usize = 12;
 const TAG_BYTES: usize = 16;
 const SALT_BYTES: usize = 16;
-const LEGACY_LOG_N: u8 = 14;
 const STRONG_LOG_N: u8 = 17;
-const VERIFIER_LABEL: &[u8] = b"CIPHER VAULT password verifier v1";
 pub(crate) const BACKUP_KDF: &str = "scrypt-N131072-r8-p1";
 pub(crate) const CIPHER: &str = "aes-256-gcm";
 const V2_PROFILE: &str = "scrypt-n17-r8-p1-k32";
@@ -49,36 +45,9 @@ fn scrypt_key(password: &[u8], salt: &[u8], log_n: u8) -> Result<Secret> {
     Ok(key)
 }
 
-/// Legacy KDF. The Base64 salt TEXT is the input, never its decoded bytes.
-pub fn derive_legacy_key(password: &[u8], salt_text: &str) -> Result<Secret> {
-    scrypt_key(password, salt_text.as_bytes(), LEGACY_LOG_N)
-}
-
 /// KDF shared by `.cvault` backups and the v2 password slot. Uses decoded salt bytes.
 pub fn derive_strong_key(password: &[u8], salt: &[u8]) -> Result<Secret> {
     scrypt_key(password, salt, STRONG_LOG_N)
-}
-
-/// Verifier stored by v0.2.1 and later: Base64 of HMAC-SHA256 over a fixed label.
-pub fn legacy_verifier(key: &[u8]) -> Result<String> {
-    let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(key).map_err(|_| CryptoError::Kdf)?;
-    mac.update(VERIFIER_LABEL);
-    Ok(STANDARD.encode(mac.finalize().into_bytes()))
-}
-
-/// Constant-time check of a stored verifier. Before v0.2.1 the verifier was the raw key.
-pub fn verify_legacy_key(key: &[u8], verifier: &str, raw_verifier: bool) -> bool {
-    let Ok(expected) = STANDARD.decode(verifier) else {
-        return false;
-    };
-    if raw_verifier {
-        return key.ct_eq(&expected).into();
-    }
-    let Ok(mut mac) = <Hmac<Sha256> as KeyInit>::new_from_slice(key) else {
-        return false;
-    };
-    mac.update(VERIFIER_LABEL);
-    mac.verify_slice(&expected).is_ok()
 }
 
 /// HKDF-SHA256 with the 16 UUID bytes as salt and a per-purpose info string.
@@ -146,12 +115,6 @@ fn seal(key: &[u8], iv: &[u8], plaintext: &[u8], aad: &[u8]) -> Result<(Vec<u8>,
     Ok((sealed, tag))
 }
 
-/// Legacy DB column layout. The caller supplies a fresh random IV for every call.
-pub fn seal_legacy_secret(key: &[u8], iv: &[u8], plaintext: &[u8]) -> Result<String> {
-    let (ciphertext, tag) = seal(key, iv, plaintext, b"")?;
-    Ok(STANDARD.encode([iv, &tag, &ciphertext].concat()))
-}
-
 /// Seals one v2 entry into its stored JSON envelope. The IV must already be durably reserved
 /// in `vault_nonces`: without that, a crash could lead to reusing it under the same key.
 pub fn seal_v2_entry(root: &[u8], iv: &[u8], plaintext: &[u8], vault_id: &str, key_id: &str, entry_id: &str, revision: u64) -> Result<String> {
@@ -172,17 +135,6 @@ pub fn decode_base64(value: &str, exact_bytes: Option<usize>) -> Result<Vec<u8>>
         Some(length) if bytes.len() != length => Err(CryptoError::Format),
         _ => Ok(bytes),
     }
-}
-
-/// Legacy DB column layout: Base64 of `IV(12) || tag(16) || ciphertext`, with no AAD.
-pub fn open_legacy_secret(key: &[u8], payload: &str) -> Result<Secret> {
-    let bytes = decode_base64(payload, None)?;
-    if bytes.len() < IV_BYTES + TAG_BYTES {
-        return Err(CryptoError::Format);
-    }
-    let (iv, rest) = bytes.split_at(IV_BYTES);
-    let (tag, ciphertext) = rest.split_at(TAG_BYTES);
-    open(key, iv, tag, ciphertext, b"")
 }
 
 /// Seals a `.cvault` payload. The caller supplies a fresh random IV: each backup has its own

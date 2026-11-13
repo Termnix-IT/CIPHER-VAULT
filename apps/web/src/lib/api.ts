@@ -2,7 +2,7 @@ import type {
   BackupExportPayload, BackupRestorePayload, BackupFile, EntriesGroupPayload, EntryIcon, SecurityAudit,
   PasswordGenerationOptions, PasswordGenerationResult, PasswordManagerDesktopApi,
   VaultEntry, VaultEntrySummary, VaultEntryUpsertPayload,
-  VaultResetPayload, VaultSetupPayload, VaultStatus, VaultUnlockPayload, VaultMaintenancePayload
+  VaultSetupPayload, VaultStatus, VaultUnlockPayload, VaultMaintenancePayload
 } from "@password-manager/shared/types";
 import { VaultClientSession, VaultSessionChangedError } from "./vault-client-session";
 
@@ -70,9 +70,6 @@ export function setupVault(payload: VaultSetupPayload) {
 }
 export function unlockVault(payload: VaultUnlockPayload) {
   return session.change((id) => desktop().unlockVault(payload, id));
-}
-export function resetVault(payload: VaultResetPayload) {
-  return session.change((id) => desktop().resetVault(payload, id));
 }
 export function lockVault() {
   const id = session.requireSessionId();

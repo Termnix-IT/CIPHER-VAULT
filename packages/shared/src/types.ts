@@ -87,15 +87,17 @@ export type VaultSessionState = {
 
 export type VaultStatus = VaultSessionState & {
   isConfigured: boolean;
+  /** Only before setup: a vault of the legacy format is in the data folder, which this version cannot open. */
+  legacyVaultFound?: boolean;
   maintenance?: VaultMaintenanceState;
 };
 
-export type VaultMaintenanceOperation = "migrate" | "rekey" | "reset" | "recover";
+export type VaultMaintenanceOperation = "rekey" | "reset" | "recover";
 export type VaultMaintenanceState = {
   state: "ready" | "running" | "recovery-required";
-  format: "legacy" | "v2" | "unknown";
+  format: "v2" | "unknown";
   operation?: VaultMaintenanceOperation;
-  recoveryOperation?: "migrate" | "rekey" | "reset";
+  recoveryOperation?: "rekey" | "reset";
   sourceSessionId?: string;
 };
 export type VaultMaintenancePayload = {
@@ -114,10 +116,6 @@ export type VaultSetupPayload = {
 
 export type VaultUnlockPayload = {
   masterPassword: string;
-};
-
-export type VaultResetPayload = {
-  confirmation: "RESET_ALL_DATA";
 };
 
 export type VaultMetadataRecord = {
@@ -146,7 +144,6 @@ export type PasswordManagerDesktopApi = {
   setupVault: (payload: VaultSetupPayload, sessionId: string) => Promise<VaultStatus>;
   unlockVault: (payload: VaultUnlockPayload, sessionId: string) => Promise<VaultStatus>;
   lockVault: (sessionId: string) => Promise<VaultStatus>;
-  resetVault: (payload: VaultResetPayload, sessionId: string) => Promise<VaultStatus>;
   fetchEntries: (sessionId: string) => Promise<{ items: VaultEntrySummary[] }>;
   fetchEntry: (id: string, sessionId: string) => Promise<VaultEntry>;
   createEntry: (payload: VaultEntryUpsertPayload, sessionId: string) => Promise<VaultEntry>;

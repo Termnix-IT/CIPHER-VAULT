@@ -12,14 +12,12 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 getrandom = "0.4"
 hex = "0.4"
 hkdf = "0.13"
-hmac = "0.13"
 # The backup API copies a database page by page for the recovery snapshots.
 rusqlite = { version = "0.41", features = ["bundled", "backup"] }
 scrypt = { version = "0.12", default-features = false }
 # Keeps object keys in the order written, as JSON.stringify does.
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.11"
-subtle = "2"
 uuid = { version = "1", features = ["v4"] }
 zeroize = "1"
 # Password strength for the audit. The Electron app used zxcvbn-ts; docs/設計.md lists the differences.

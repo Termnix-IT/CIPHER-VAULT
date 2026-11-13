@@ -38,7 +38,6 @@
     setupVault: (payload, sessionId) => call("vault_setup", { sessionId, payload }),
     unlockVault: (payload, sessionId) => call("vault_unlock", { sessionId, payload }),
     lockVault: (sessionId) => call("vault_lock", { sessionId }),
-    resetVault: (payload, sessionId) => call("vault_reset", { sessionId, payload }),
     fetchEntries: (sessionId) => call("entries_list", { sessionId }),
     fetchEntry: (id, sessionId) => call("entries_get", { sessionId, id }),
     createEntry: (payload, sessionId) => call("entries_create", { sessionId, payload }),

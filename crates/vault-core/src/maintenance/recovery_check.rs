@@ -2,15 +2,12 @@
 //! typed-backup-recovery.ts: the file is opened with its own passphrase, restored into a separate
 //! vault under another key, read back, and compared with what it should hold.
 
-use super::legacy_source;
 use super::{Active, Code, Context, Outcome, failed, random, same};
 use crate::backup;
 use crate::crypto;
-use crate::legacy;
 use crate::v2::{StoreError, V2Store};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use rusqlite::{Connection, params};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -27,53 +24,10 @@ fn decoded(content: &str, passphrase: &[u8], active: Active<'_>) -> Outcome<(u64
     Ok((envelope.version, entries))
 }
 
-/// verifyBackupRecovery. A legacy migration accepts only a version 1 file; a v2 switch accepts
-/// any version (`typed`).
-pub fn verify(content: &str, passphrase: &[u8], active: Active<'_>, typed: bool) -> Outcome<Vec<Value>> {
-    let (version, entries) = decoded(content, passphrase, active)?;
-    match version {
-        1 => verify_in_legacy(entries, active),
-        _ if typed => verify_in_v2(entries, active),
-        _ => failed(),
-    }
-}
-
-/// The entries restored into an in-memory legacy vault with a random password, and read back.
-fn verify_in_legacy(entries: Vec<Value>, active: Active<'_>) -> Outcome<Vec<Value>> {
-    let password = Zeroizing::new(STANDARD.encode(random::<32>()?.as_ref()));
-    let salt = STANDARD.encode(random::<16>()?.as_ref());
-    let key = crypto::derive_legacy_key(password.as_bytes(), &salt).or_else(|_| failed())?;
-    active()?;
-    let mut scratch = Connection::open_in_memory()?;
-    legacy::initialize(&scratch)?;
-    let now = crate::input::now_iso();
-    let verifier = crypto::legacy_verifier(&key).or_else(|_| failed())?;
-    scratch.execute(
-        "INSERT INTO vault_metadata VALUES (1, ?1, ?2, ?3, ?4, ?5)",
-        params![salt, verifier, r#"{"algorithm":"scrypt","keyLength":32,"verifierAlgorithm":"hmac-sha256-v1"}"#, now, now],
-    )?;
-    let metadata = legacy_source::metadata(&scratch)?;
-    if !crypto::verify_legacy_key(&key, &metadata.verifier, false) {
-        return failed();
-    }
-    let seal = |text: &str| -> Outcome<String> {
-        active()?;
-        crypto::seal_legacy_secret(&key, random::<12>()?.as_ref(), text.as_bytes()).or_else(|_| failed())
-    };
-    let transaction = scratch.transaction()?;
-    for entry in &entries {
-        let text = |field: &str| entry[field].as_str().map(str::to_string);
-        let (password, notes, tags) = (seal(&text("password").unwrap_or_default())?, seal(&text("notes").unwrap_or_default())?, entry["tags"].to_string());
-        let (service_name, login_id, url, group) = (text("serviceName").unwrap_or_default(), text("loginId").unwrap_or_default(), text("url"), text("group"));
-        let login = legacy::SealedLogin { service_name: &service_name, login_id: &login_id, password: &password, notes: Some(&notes), url: url.as_deref(), tags: &tags, group: group.as_deref() };
-        let changed = text("passwordChangedAt");
-        legacy::insert_restored(&transaction, &text("id").unwrap_or_default(), &login, &text("createdAt").unwrap_or_default(), &text("updatedAt").unwrap_or_default(), changed.as_deref())?;
-    }
-    transaction.commit()?;
-    active()?;
-    let (restored, _) = legacy_source::entries(&scratch, &key, active)?;
-    same(&restored, &entries)?;
-    Ok(entries)
+/// verifyBackupRecovery: every version is restored into a temporary v2 vault.
+pub fn verify(content: &str, passphrase: &[u8], active: Active<'_>) -> Outcome<Vec<Value>> {
+    let (_, entries) = decoded(content, passphrase, active)?;
+    verify_in_v2(entries, active)
 }
 
 /// The scratch folder of a typed check, removed again whatever happens.

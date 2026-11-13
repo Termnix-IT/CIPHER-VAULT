@@ -1,7 +1,7 @@
 // Checks the Tauri app in apps/desktop through its `e2e` build: it refuses to start without a test
-// folder or on a folder holding real data, the screen sets up, adds to, locks and unlocks a vault
+// folder or on a folder holding real data, the screen sets up a v2 vault, adds to, locks and unlocks it
 // in a temporary folder through the Rust core, saves a backup and restores it into the emptied
-// vault, audits it, migrates it to the v2 format and opens it with the new password. It copies through the
+// vault, audits it, changes its master password and opens it with the new one. It copies through the
 // e2e build's fake clipboard (the user's clipboard is never written), checks that copies expire and that
 // screen lock and sleep notifications lock the vault and clear the copy, that a second launch on the same
 // folder exits, and that closing the window locks, clears and exits. This build is not the setup, so the
@@ -24,7 +24,7 @@ const VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.u
 const RELEASE_PAGE = "https://github.com/Termnix-IT/CIPHER-VAULT/releases/latest";
 const PASSWORD = "synthetic-shell-check-password";
 const BACKUP_PASSPHRASE = "synthetic-shell-backup-passphrase";
-const MIGRATED_PASSWORD = "synthetic-shell-migrated-password";
+const NEW_PASSWORD = "synthetic-shell-changed-password";
 const AWAY_MESSAGE = "画面ロック・スリープ中は保管庫を操作できません。OSへ戻ってから解除してください";
 const CLIPBOARD_CLEAR_AFTER_MS = 30000;
 // The messages Windows sends for a screen lock and for sleep (WM_WTSSESSION_CHANGE, WM_POWERBROADCAST).
@@ -151,9 +151,12 @@ try {
   await until("the unlocked list", async () => !(await lockScreenShown(page)) && (await screenHas(page, "画面で追加")));
   result.unlockedAgain = true;
 
-  // The vault file sits in the test folder, and the password is not stored as plain text.
-  const file = readFileSync(path.join(data, "password-manager.db"));
-  result.passwordInPlainText = file.includes(Buffer.from(generated));
+  // Setup made a v2 vault in the test folder, selected by its pointer, with no legacy file, and
+  // neither the password nor the names are stored as plain text.
+  const vaultFiles = () => readdirSync(data, { recursive: true }).map((name) => path.join(data, name)).filter((file) => statSync(file).isFile());
+  assert.ok(vaultFiles().some((file) => path.basename(file) === "vault-current.json"), "the v2 vault is selected");
+  assert.equal(vaultFiles().some((file) => path.basename(file) === "password-manager.db"), false, "no legacy file is made");
+  result.passwordInPlainText = vaultFiles().some((file) => ["synthetic-shell-id", "画面で追加", generated].some((text) => readFileSync(file).includes(Buffer.from(text))));
   assert.equal(result.passwordInPlainText, false);
 
   // ---- A backup, saved through the screen and restored into the emptied vault
@@ -234,30 +237,28 @@ try {
   await screenshot(page, screenshotDirectory, "tauri-shell-audit");
   await click(page, 'dialog[open] button[aria-label="閉じる"]');
 
-  // ---- Migration to the v2 format, through the screen. The vault locks and opens with the new password only.
-  await menu(page, "ツール", "保管庫を更新…");
+  // ---- A new master password, through the screen. The vault locks and opens with the new password only.
+  await menu(page, "ツール", "マスターパスワードを変更…");
   await until("the maintenance form", () => page.evaluate(`!!document.querySelector("#maintenance-form")`));
   const maintenanceField = (index) => `#maintenance-form .maintenance-fields label:nth-of-type(${index}) input`;
-  for (const [index, text] of [PASSWORD, MIGRATED_PASSWORD, MIGRATED_PASSWORD, BACKUP_PASSPHRASE, BACKUP_PASSPHRASE].entries()) {
+  for (const [index, text] of [PASSWORD, NEW_PASSWORD, NEW_PASSWORD, BACKUP_PASSPHRASE, BACKUP_PASSPHRASE].entries()) {
     await type(page, maintenanceField(index + 1), text);
   }
   await click(page, 'button[form="maintenance-form"]');
-  await until("the migration", () => screenHas(page, "変更しました。新しいマスターパスワードで開いてください。"), 120000);
-  const migrated = await status(page);
-  assert.deepEqual({ isUnlocked: migrated.isUnlocked, maintenance: migrated.maintenance }, { isUnlocked: false, maintenance: { state: "ready", format: "v2" } });
-  await screenshot(page, screenshotDirectory, "tauri-shell-migrated");
+  await until("the new password", () => screenHas(page, "変更しました。新しいマスターパスワードで開いてください。"), 120000);
+  const rekeyed = await status(page);
+  assert.deepEqual({ isUnlocked: rekeyed.isUnlocked, maintenance: rekeyed.maintenance }, { isUnlocked: false, maintenance: { state: "ready", format: "v2" } });
+  await screenshot(page, screenshotDirectory, "tauri-shell-rekeyed");
   await click(page, '.vault-maintenance-dialog button[aria-label="閉じる"]');
   await submitPassword(page, PASSWORD, false);
   await until("the refusal of the old password", () => screenHas(page, "マスターパスワードが正しくありません"));
-  await submitPassword(page, MIGRATED_PASSWORD, false);
-  await until("the migrated list", async () => !(await lockScreenShown(page)) && (await screenHas(page, "画面で追加")));
-  const migratedSession = (await status(page)).sessionId;
-  const [carried] = (await page.evaluate(`window.passwordManager.fetchEntries(${JSON.stringify(migratedSession)})`)).items;
-  assert.equal((await page.evaluate(`window.passwordManager.fetchEntry(${JSON.stringify(carried.id)}, ${JSON.stringify(migratedSession)})`)).password, generated);
-  const files = readdirSync(data, { recursive: true }).map((name) => path.join(data, name)).filter((file) => statSync(file).isFile());
-  assert.ok(files.some((file) => path.basename(file) === "vault-current.json"), "the v2 vault is selected");
-  result.migratedThroughScreen = { format: "v2", passwordInPlainText: files.some((file) => readFileSync(file).includes(Buffer.from(generated))) };
-  assert.equal(result.migratedThroughScreen.passwordInPlainText, false);
+  await submitPassword(page, NEW_PASSWORD, false);
+  await until("the list after the new password", async () => !(await lockScreenShown(page)) && (await screenHas(page, "画面で追加")));
+  const rekeyedSession = (await status(page)).sessionId;
+  const [carried] = (await page.evaluate(`window.passwordManager.fetchEntries(${JSON.stringify(rekeyedSession)})`)).items;
+  assert.equal((await page.evaluate(`window.passwordManager.fetchEntry(${JSON.stringify(carried.id)}, ${JSON.stringify(rekeyedSession)})`)).password, generated);
+  result.rekeyedThroughScreen = { passwordInPlainText: vaultFiles().some((file) => readFileSync(file).includes(Buffer.from(generated))) };
+  assert.equal(result.rekeyedThroughScreen.passwordInPlainText, false);
 
   // ---- The title bar shows icons only, each named for tooltips and screen readers.
   result.titleBar = await page.evaluate(`({
@@ -324,7 +325,7 @@ try {
 
   result.osEvents = {};
   for (const scenario of OS_SCENARIOS) {
-    await submitPassword(page, MIGRATED_PASSWORD, false);
+    await submitPassword(page, NEW_PASSWORD, false);
     await until("the unlocked list", async () => (await status(page)).isUnlocked);
     assert.deepEqual(await copy(), { value: null });
     mark = events.length;
@@ -332,7 +333,7 @@ try {
     await until("the cleared copy", () => events.slice(mark).includes("clipboard-clear"));
     const away = await status(page);
     // While away, unlocking is refused even with the right password.
-    const refused = await settle(page, `window.passwordManager.unlockVault({ masterPassword: ${JSON.stringify(MIGRATED_PASSWORD)} }, ${JSON.stringify(away.sessionId)})`);
+    const refused = await settle(page, `window.passwordManager.unlockVault({ masterPassword: ${JSON.stringify(NEW_PASSWORD)} }, ${JSON.stringify(away.sessionId)})`);
     sendOsMessage(osWindow, scenario.back);
     const back = await status(page);
     result.osEvents[scenario.name] = { reports: reportsSince(mark), awayReason: away.lockReason, refused: refused.error, backReason: back.lockReason };
@@ -341,7 +342,7 @@ try {
   }
 
   // A copy clears itself after 30 seconds while the vault stays open.
-  await submitPassword(page, MIGRATED_PASSWORD, false);
+  await submitPassword(page, NEW_PASSWORD, false);
   await until("the unlocked list", async () => (await status(page)).isUnlocked);
   assert.deepEqual(await copy(), { value: null });
   mark = events.length;

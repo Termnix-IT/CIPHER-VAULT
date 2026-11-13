@@ -207,19 +207,8 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .lock-message--error { color: var(--danger); }
 .lock-message--notice { color: var(--text-dim); }
 .lock-hint { margin-top: 16px; font-size: 13px; color: var(--text-dim); }
-.reset-entry-link { margin-top: 16px; height: auto; border: 0; background: transparent; color: var(--text-dim); font-size: 13px; }
-.reset-entry-link:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
-.reset-flow { display: grid; gap: 16px; text-align: left; }
-.reset-flow h2 { font-size: 18px; font-weight: 500; }
-.reset-flow p { color: var(--text-dim); font-size: 13px; }
-.reset-acknowledgement { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; }
-.reset-acknowledgement input { margin-top: 3px; }
-.reset-code {
-  display: block; padding: 12px; border-radius: var(--radius); background: var(--raised);
-  font: 500 24px var(--font-mono); letter-spacing: .3em; text-align: center; user-select: none;
-}
-.reset-code-input { text-align: center; letter-spacing: .3em; font-family: var(--font-mono); }
-.reset-actions { display: flex; justify-content: flex-end; gap: 12px; }
+.lock-legacy { margin-bottom: 20px; padding: 12px 14px; display: grid; gap: 6px; text-align: left; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--raised); font-size: 13px; }
+.lock-legacy p + p { color: var(--text-dim); }
 
 /* =============================
    DASHBOARD
@@ -389,9 +378,6 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
   border-top: 1px solid var(--border);
 }
 .editor-actions-spacer { flex: 1; }
-.entry-migration-notice { margin-top: 16px; padding: 24px; display: grid; gap: 16px; justify-items: start; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
-.entry-migration-notice h2 { font-size: 16px; font-weight: 500; }
-.entry-migration-notice p { color: var(--text-dim); font-size: 13px; }
 
 .tooltip {
   position: fixed; z-index: 100; top: 0; left: 0; max-width: 280px; padding: 4px 8px; visibility: hidden; pointer-events: none;
@@ -665,7 +651,7 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 [data-design="luminous"] .vault-tool-dialog,
 [data-design="luminous"] .app-info-dialog { border-radius: 16px; }
 [data-design="luminous"] .file-drop,
-[data-design="luminous"] .entry-migration-notice { border-radius: var(--radius-lg); }
+[data-design="luminous"] .lock-legacy { border-radius: var(--radius-lg); }
 
 /* =============================
    NARROW WINDOWS

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { PasswordEntry, VaultEntry, VaultMaintenanceOperation, VaultMaintenanceState } from "@password-manager/shared/types";
+import type { PasswordEntry, VaultEntry, VaultMaintenanceOperation } from "@password-manager/shared/types";
 import type { DesignMode } from "../lib/design-mode";
 import { windowControls } from "../lib/api";
 import { EntriesIcon, EyeIcon, HelpIcon, LockIcon, MaximizeIcon, MinimizeIcon, RestoreIcon, SidebarIcon, WindowCloseIcon, WrenchIcon } from "./Icons";
@@ -25,7 +25,6 @@ type AppMenuProps = {
   onSidebarCollapsedChange: (collapsed: boolean) => void;
   designMode: DesignMode;
   onDesignModeChange: (mode: DesignMode) => void;
-  vaultFormat: VaultMaintenanceState["format"];
   onRefresh: () => Promise<void>;
   onLock: () => Promise<void>;
   onNewEntry: () => void;
@@ -142,10 +141,8 @@ export function AppMenu(props: AppMenuProps) {
               { label: "パスワードの点検", disabled: toolsDisabled, action: () => openTool("audit") },
               { label: "バックアップ", disabled: toolsDisabled, action: () => openTool("backup") },
               "separator",
-              ...(props.vaultFormat !== "v2"
-                ? [{ label: "保管庫を更新…", disabled: toolsDisabled, action: () => props.onMaintenance("migrate") }]
-                : [{ label: "マスターパスワードを変更…", disabled: toolsDisabled, action: () => props.onMaintenance("rekey") },
-                  { label: "保管庫を空にする…", disabled: toolsDisabled, action: () => props.onMaintenance("reset") }])
+              { label: "マスターパスワードを変更…", disabled: toolsDisabled, action: () => props.onMaintenance("rekey") },
+              { label: "保管庫を空にする…", disabled: toolsDisabled, action: () => props.onMaintenance("reset") }
             ])}
             <button type="button" className="app-menu-trigger" ref={helpRef} aria-label="バージョンと更新" data-tooltip="バージョンと更新"
               onClick={() => { setOpened(null); openInfo(); }}><HelpIcon /></button>

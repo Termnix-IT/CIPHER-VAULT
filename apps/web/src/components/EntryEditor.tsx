@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useId, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import type { FinancialExtraSecret, VaultEntry, VaultEntryType, VaultEntryUpsertPayload, VaultMaintenanceState } from "@password-manager/shared/types";
+import type { FinancialExtraSecret, VaultEntry, VaultEntryType, VaultEntryUpsertPayload } from "@password-manager/shared/types";
 import { CheckIcon, CloseIcon, CopyIcon, EyeIcon, GripIcon } from "./Icons";
 
 type Draft = {
@@ -14,8 +14,6 @@ type SecretField = DraftSecret | `extra-${number}`;
 type Visibility = "hidden" | "armed" | "visible";
 type EntryEditorProps = {
   entry: VaultEntry | null;
-  vaultFormat: VaultMaintenanceState["format"];
-  onOpenMaintenance: () => void;
   isEditing: boolean;
   busy: boolean;
   isSaving: boolean;
@@ -48,7 +46,7 @@ function toDraft(entry: VaultEntry | null, type: VaultEntryType = "login"): Draf
     expiryMonth: entry?.type === "creditCard" ? entry.card.expiryMonth ?? "" : "", securityCode: entry?.type === "creditCard" ? entry.card.securityCode : "" };
 }
 
-export function EntryEditor({ entry, vaultFormat, onOpenMaintenance, isEditing, busy, isSaving, isGenerating, onDirtyChange, onGenerate, onCopy, onSave, onDelete, onCancel }: EntryEditorProps) {
+export function EntryEditor({ entry, isEditing, busy, isSaving, isGenerating, onDirtyChange, onGenerate, onCopy, onSave, onDelete, onCancel }: EntryEditorProps) {
   const [initial, setInitial] = useState(() => toDraft(entry));
   const [draft, setDraft] = useState(initial);
   const [copiedLabel, setCopiedLabel] = useState<string | null>(null);
@@ -58,7 +56,6 @@ export function EntryEditor({ entry, vaultFormat, onOpenMaintenance, isEditing, 
   const alive = useRef(true);
   const fieldId = useId();
   const editing = isEditing || !entry;
-  const migrationRequired = draft.type !== "login" && vaultFormat !== "v2";
   const dirty = editing && (Object.keys(initial) as (keyof Draft)[]).some((key) => key === "extraSecrets"
     ? JSON.stringify(draft.extraSecrets) !== JSON.stringify(initial.extraSecrets) : draft[key] !== initial[key]);
 
@@ -117,7 +114,7 @@ export function EntryEditor({ entry, vaultFormat, onOpenMaintenance, isEditing, 
     } catch { /* The app displays the operation error; do not show success feedback. */ }
   }
   async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (!editing || busy || isGenerating || migrationRequired) return;
+    event.preventDefault(); if (!editing || busy || isGenerating) return;
     setVisibility(hiddenSecrets());
     const common = { serviceName: draft.serviceName, url: draft.url, notes: draft.notes,
       tags: draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean), group: draft.group.trim() || undefined };
@@ -248,10 +245,7 @@ export function EntryEditor({ entry, vaultFormat, onOpenMaintenance, isEditing, 
             disabled={busy || isGenerating} onClick={() => changeType(type)}>{label}</button>)}
         </div>
       </div>}
-      {editing && migrationRequired ? <div className="entry-migration-notice" role="status">
-        <h2>APIキー・カード・銀行/証券を保存するには、保管庫の更新が必要です</h2>
-        <button className="btn btn--primary" type="button" disabled={busy} onClick={onOpenMaintenance}>保管庫を更新</button>
-      </div> : editing ? <div className="editor-fields">
+      {editing ? <div className="editor-fields">
         {field("serviceName", draft.type === "login" ? "サービス" : "名前", true)}
         {draft.type === "login" ? <>
           {field("loginId", "ログインID", true)}
@@ -317,7 +311,7 @@ export function EntryEditor({ entry, vaultFormat, onOpenMaintenance, isEditing, 
       {entry && onDelete && <button className="text-btn text-btn--danger entry-delete" type="button" disabled={busy || isGenerating} onClick={onDelete}>削除</button>}
       <span className="editor-actions-spacer" />
       <button className="btn" type="button" disabled={busy || isGenerating} onClick={onCancel}>キャンセル</button>
-      <button className="btn btn--primary editor-save-btn" type="submit" disabled={busy || isGenerating || migrationRequired}>{isSaving ? "保存中…" : "保存"}</button>
+      <button className="btn btn--primary editor-save-btn" type="submit" disabled={busy || isGenerating}>{isSaving ? "保存中…" : "保存"}</button>
     </div>}
   </form>;
 }

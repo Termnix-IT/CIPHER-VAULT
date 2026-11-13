@@ -40,10 +40,8 @@ impl Vault {
         } else {
             (None, Some(maintenance::selected(&self.root).map_err(translate)?))
         };
-        if let Some(selected) = &selected
-            && (request.operation == Operation::Migrate) != selected.is_none()
-        {
-            return Err(VaultError::conflict("保管庫の形式に対応する操作を選択してください"));
+        if selected.as_ref().is_some_and(Option::is_none) {
+            return Err(VaultError::conflict("保管庫を作成してから操作してください"));
         }
         let reset_hint = hint.as_ref().is_some_and(|hint| hint.mode() == "reset");
         if reset_hint && !request.confirmation {
@@ -61,11 +59,7 @@ impl Vault {
         };
 
         // closeVaultStorage, then the running state the screen shows.
-        let format = match &selected {
-            Some(None) => "legacy",
-            Some(Some(_)) => "v2",
-            None => "unknown",
-        };
+        let format = if selected.is_some() { "v2" } else { "unknown" };
         let running = Storage::Running { format, operation: request.operation.as_str(), source_session_id: expected.clone() };
         let previous = std::mem::replace(&mut *self.storage.write().unwrap(), Arc::new(running));
         self.lock_for(LockReason::Manual);
@@ -82,27 +76,7 @@ impl Vault {
         let outcome = (|| -> Result<()> {
             outer().map_err(translate)?;
             match (&hint, &selected) {
-                (Some(Hint::Legacy { .. }), _) | (_, Some(None)) => self.guard.run(|| self.now().monotonic, || {
-                    let migrate = || -> Outcome<()> {
-                        let key = authenticate_legacy(root, credentials.master, &outer)?;
-                        if let Some(owner) = &owner_key
-                            && key.as_slice() != owner.as_slice()
-                        {
-                            return Err(VaultError::new(401, "保管庫の認証に失敗しました").into());
-                        }
-                        outer()?;
-                        match &hint {
-                            Some(Hint::Legacy { target }) => maintenance::activate(root, target, &credentials, &key, true, &inner),
-                            _ => {
-                                let context = maintenance::stage(root, &credentials, &inner)?;
-                                outer()?;
-                                maintenance::activate(root, &context, &credentials, &key, false, &inner)
-                            }
-                        }
-                    };
-                    migrate().map_err(translate)
-                }),
-                (Some(Hint::V2 { source, target, reset }), _) => {
+                (Some(Hint { source, target, reset }), _) => {
                     let key = self.guard.run(|| self.now().monotonic, || authenticate_v2(root, source, credentials.master, &outer).map_err(translate))?;
                     outer().map_err(translate)?;
                     let start = Start::Recover { source: source.clone(), target: target.clone(), reset: *reset };
@@ -113,17 +87,15 @@ impl Vault {
                     let owner = owner_key.as_ref().ok_or_else(error::locked)?;
                     maintenance::replace(root, start, &credentials, owner, &guarded, &inner).map_err(translate)
                 }
-                (None, None) => Err(translate(Code::Failed.into())),
+                (None, _) => Err(translate(Code::Failed.into())),
             }
         })();
         drop(owner_key);
 
         // Whatever the files now select, opened locked; a vault that disappeared needs recovery.
-        let switched = selected.as_ref().is_some_and(Option::is_some) || hint.is_some();
         let reopened = match selection::inspect(root) {
-            Ok(Selection::Legacy { .. }) if switched => None,
-            Err(_) => None,
-            Ok(_) => open_storage(root, false).ok().filter(|storage| matches!(storage, Storage::Legacy { .. } | Storage::V2 { .. })),
+            Ok(Selection::V2 { .. }) => open_storage(root).ok().filter(|storage| matches!(storage, Storage::V2 { .. })),
+            _ => None,
         };
         self.failed.store(false, Ordering::SeqCst);
         *self.storage.write().unwrap() = Arc::new(reopened.unwrap_or_else(|| recovery_required(root)));
@@ -139,10 +111,8 @@ impl Vault {
 /// storage around it, so both are waited for.
 pub(super) fn release(storage: Arc<Storage>) {
     let deadline = Instant::now() + RELEASE_WAIT;
-    match sole(storage, deadline) {
-        Some(Storage::Legacy { database, .. }) => drop(sole(database, deadline)),
-        Some(Storage::V2 { store, .. }) => drop(sole(store, deadline)),
-        _ => {}
+    if let Some(Storage::V2 { store, .. }) = sole(storage, deadline) {
+        drop(sole(store, deadline));
     }
 }
 
@@ -158,18 +128,6 @@ fn sole<T>(mut shared: Arc<T>, deadline: Instant) -> Option<T> {
             Err(_) => return None,
         }
     }
-}
-
-/// authenticateSource for a legacy vault: the master password must open it.
-fn authenticate_legacy(root: &std::path::Path, master: &str, active: maintenance::Active<'_>) -> Outcome<Secret> {
-    active()?;
-    let (key, verified) = maintenance::legacy_key(root, master)?;
-    active()?;
-    if !verified {
-        return Err(VaultError::new(401, error::WRONG_PASSWORD).into());
-    }
-    active()?;
-    Ok(key)
 }
 
 /// authenticateSource for the source of an interrupted replacement.

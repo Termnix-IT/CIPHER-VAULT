@@ -1,6 +1,7 @@
 //! Which vault the data directory holds, following inspectVaultSelection, readReceipt and
-//! readPointer in apps/api/src/migration/active-pointer.ts. Without a pointer or receipt it is the
-//! legacy file; with both, and a committed receipt naming the same vault, it is that v2 vault.
+//! readPointer in apps/api/src/migration/active-pointer.ts. Without a pointer or receipt no vault
+//! has been created yet; with both, and a committed receipt naming the same vault, it is that v2
+//! vault. A file of the legacy format, which this release no longer opens, is only reported.
 //! Anything else, including an interrupted switch, needs recovery and is never guessed at.
 
 use crate::files::{Checked, FileCheckFailed, bounded_read, present, safe_path};
@@ -16,7 +17,9 @@ const MAX_RECEIPT_ENTRIES: u64 = 10000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Selection {
-    Legacy { database: PathBuf },
+    /// No vault yet. `legacy_found` tells that a legacy file is there, which only an earlier
+    /// release can open and back up.
+    Empty { legacy_found: bool },
     V2 { database: PathBuf, vault_id: String, key_id: String },
 }
 
@@ -88,7 +91,7 @@ pub fn inspect(root: &Path) -> Checked<Selection> {
     }
     let (has_marker, has_pointer) = (present(&marker)?, present(&pointer)?);
     if !has_marker && !has_pointer {
-        return Ok(Selection::Legacy { database: safe_path(root, &[LEGACY_DATABASE], false, true)? });
+        return Ok(Selection::Empty { legacy_found: present(&safe_path(root, &[LEGACY_DATABASE], false, true)?)? });
     }
     if !has_marker || !has_pointer {
         return Err(FileCheckFailed);
@@ -101,8 +104,8 @@ pub fn inspect(root: &Path) -> Checked<Selection> {
     Ok(Selection::V2 { database, vault_id: receipt.vault_id, key_id: receipt.key_id })
 }
 
-/// The legacy file stays in use only while nothing announces a switch to v2.
-pub fn legacy_namespace_is_clear(root: &Path) -> Checked<bool> {
+/// No vault is selected while none of the state files is there.
+pub fn is_unclaimed(root: &Path) -> Checked<bool> {
     for name in [POINTER, RECEIPT, TRANSITION] {
         if present(&safe_path(root, &[name], false, true)?)? {
             return Ok(false);
@@ -138,10 +141,12 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_directory_is_the_legacy_vault() {
+    fn an_empty_directory_has_no_vault_and_tells_of_a_legacy_file() {
         let root = TemporaryDirectory::new();
-        assert_eq!(inspect(&root.0).unwrap(), Selection::Legacy { database: root.0.join(LEGACY_DATABASE) });
-        assert!(legacy_namespace_is_clear(&root.0).unwrap());
+        assert_eq!(inspect(&root.0).unwrap(), Selection::Empty { legacy_found: false });
+        assert!(is_unclaimed(&root.0).unwrap());
+        fs::write(root.0.join(LEGACY_DATABASE), b"").unwrap();
+        assert_eq!(inspect(&root.0).unwrap(), Selection::Empty { legacy_found: true });
     }
 
     #[test]
@@ -149,7 +154,7 @@ mod tests {
         let root = v2_root();
         let expected = Selection::V2 { database: root.0.join("vaults").join(VAULT).join("vault.sqlite"), vault_id: VAULT.into(), key_id: KEY.into() };
         assert_eq!(inspect(&root.0).unwrap(), expected);
-        assert!(!legacy_namespace_is_clear(&root.0).unwrap());
+        assert!(!is_unclaimed(&root.0).unwrap());
     }
 
     #[test]

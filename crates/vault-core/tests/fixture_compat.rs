@@ -28,84 +28,6 @@ fn flip_first_byte(value: &Value) -> String {
 }
 
 #[test]
-fn legacy_kdf_pins_salt_text_unicode_form_and_both_verifiers() {
-    let fixture = fixture();
-    let legacy = &fixture["legacy"];
-    let password = s(&legacy["password"]);
-    let salt = s(&legacy["salt"]);
-    let key = derive_legacy_key(password.as_bytes(), salt).unwrap();
-    assert_eq!(hex::encode(&*key), s(&legacy["keyHex"]));
-
-    // No Unicode normalization: the precomposed spelling must derive a different key.
-    let nfc = password.replace("e\u{301}", "\u{e9}");
-    assert_ne!(nfc, password);
-    let nfc_key = derive_legacy_key(nfc.as_bytes(), salt).unwrap();
-    assert_eq!(hex::encode(&*nfc_key), s(&legacy["nfcKeyHex"]));
-
-    // The Base64 text is the salt. Decoding it first must give the other pinned key.
-    let decoded = scrypt_with_decoded_salt(password, salt);
-    assert_eq!(hex::encode(&*decoded), s(&legacy["decodedSaltKeyHex"]));
-    assert_ne!(*key, *decoded);
-
-    assert_eq!(legacy_verifier(&key).unwrap(), s(&legacy["verifier"]));
-    assert_eq!(STANDARD.encode(&*key), s(&legacy["metadata"]["passwordVerifier"]));
-
-    assert!(verify_legacy_key(&key, s(&legacy["verifier"]), false));
-    assert!(verify_legacy_key(&key, s(&legacy["metadata"]["passwordVerifier"]), true));
-    assert!(!verify_legacy_key(&key, s(&legacy["metadata"]["passwordVerifier"]), false));
-    assert!(!verify_legacy_key(&nfc_key, s(&legacy["verifier"]), false));
-    assert!(!verify_legacy_key(&nfc_key, s(&legacy["metadata"]["passwordVerifier"]), true));
-}
-
-fn scrypt_with_decoded_salt(password: &str, salt_text: &str) -> Secret {
-    let params = scrypt::Params::new(14, 8, 1).unwrap();
-    let mut key = zeroize::Zeroizing::new(vec![0u8; 32]);
-    scrypt::scrypt(password.as_bytes(), &decode_base64(salt_text, None).unwrap(), &params, &mut key).unwrap();
-    key
-}
-
-#[test]
-fn legacy_rows_decrypt_to_the_expected_entries() {
-    let fixture = fixture();
-    let legacy = &fixture["legacy"];
-    let key = hex::decode(s(&legacy["keyHex"])).unwrap();
-    let rows = legacy["rows"].as_array().unwrap();
-    let entries = legacy["entries"].as_array().unwrap();
-    assert_eq!(rows.len(), entries.len());
-    for (row, entry) in rows.iter().zip(entries) {
-        assert_eq!(row["id"], entry["id"]);
-        let password = open_legacy_secret(&key, s(&row["encrypted_password"])).unwrap();
-        assert_eq!(std::str::from_utf8(&password).unwrap(), s(&entry["password"]));
-        // A NULL notes column reads back as the empty string.
-        let notes = match row["encrypted_notes"].as_str() {
-            Some(payload) => open_legacy_secret(&key, payload).unwrap().to_vec(),
-            None => Vec::new(),
-        };
-        assert_eq!(std::str::from_utf8(&notes).unwrap(), s(&entry["notes"]));
-    }
-    assert!(open_legacy_secret(&key, s(&legacy["emptyCiphertext"])).unwrap().is_empty());
-}
-
-#[test]
-fn legacy_packing_rejects_altered_short_and_wrong_key_input() {
-    let fixture = fixture();
-    let legacy = &fixture["legacy"];
-    let key = hex::decode(s(&legacy["keyHex"])).unwrap();
-    let payload = s(&legacy["rows"][0]["encrypted_password"]);
-    let packed = decode_base64(payload, None).unwrap();
-    for offset in [0, 12, 28] {
-        let mut changed = packed.clone();
-        changed[offset] ^= 1;
-        assert_eq!(open_legacy_secret(&key, &STANDARD.encode(changed)).unwrap_err(), CryptoError::Authentication);
-    }
-    for length in [0, 11, 12, 13] {
-        assert_eq!(open_legacy_secret(&key, &STANDARD.encode(&packed[..length])).unwrap_err(), CryptoError::Format);
-    }
-    assert_eq!(open_legacy_secret(&key, &STANDARD.encode(&packed[..28])).unwrap_err(), CryptoError::Authentication);
-    assert_eq!(open_legacy_secret(&[0u8; 32], payload).unwrap_err(), CryptoError::Authentication);
-}
-
-#[test]
 fn backup_v1_decrypts_and_rejects_every_kind_of_change() {
     let fixture = fixture();
     let backup = &fixture["backupV1"];
@@ -212,9 +134,6 @@ fn v2_entry_reproduces_bytes_and_binds_identity_revision_and_purpose() {
         let opened = open(&key, &iv, &tag, &data, changed.to_string().as_bytes());
         assert_eq!(opened.unwrap_err(), CryptoError::Authentication, "AAD index {index}");
     }
-    // A v2 record must not open through the legacy path, which uses no AAD.
-    let packed = [iv.as_slice(), tag.as_slice(), data.as_slice()].concat();
-    assert_eq!(open_legacy_secret(&key, &STANDARD.encode(packed)).unwrap_err(), CryptoError::Authentication);
 
     let root = hex::decode(s(&v2["rootKeyHex"])).unwrap();
     let envelope = json!({ "cryptoVersion": 2, "cipher": "aes-256-gcm", "vaultId": vault, "keyId": key_id,
@@ -222,24 +141,6 @@ fn v2_entry_reproduces_bytes_and_binds_identity_revision_and_purpose() {
     assert_eq!(std::str::from_utf8(&open_v2_entry(&root, &envelope, vault, key_id, entry_id, revision).unwrap()).unwrap(), plaintext);
     assert_eq!(open_v2_entry(&root, &envelope, vault, key_id, entry_id, revision + 1).unwrap_err(), CryptoError::ContextMismatch);
     assert_eq!(open_v2_entry(&[0u8; 32], &envelope, vault, key_id, entry_id, revision).unwrap_err(), CryptoError::Authentication);
-}
-
-#[test]
-fn legacy_sealing_reproduces_the_stored_bytes() {
-    let fixture = fixture();
-    let legacy = &fixture["legacy"];
-    let key = hex::decode(s(&legacy["keyHex"])).unwrap();
-    let mut compared = 0;
-    for row in legacy["rows"].as_array().unwrap() {
-        let entry = legacy["entries"].as_array().unwrap().iter().find(|entry| entry["id"] == row["id"]).unwrap();
-        for (payload, plaintext) in [(&row["encrypted_password"], &entry["password"]), (&row["encrypted_notes"], &entry["notes"])] {
-            let Some(payload) = payload.as_str() else { continue };
-            let iv = &decode_base64(payload, None).unwrap()[..12];
-            assert_eq!(seal_legacy_secret(&key, iv, s(plaintext).as_bytes()).unwrap(), payload);
-            compared += 1;
-        }
-    }
-    assert!(compared >= 2);
 }
 
 #[test]

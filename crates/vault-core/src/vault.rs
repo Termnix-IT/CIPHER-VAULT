@@ -16,15 +16,12 @@ use crate::error::{self, Result, VaultError, changed, context_failed, not_found}
 use crate::files::{self, FileIdentity};
 use crate::icons;
 use crate::input::{self, MAX_ENTRIES, now_iso};
-use crate::legacy::{self, LegacyDatabase, SealedLogin};
 use crate::maintenance;
 use crate::password;
 use crate::selection::{self, Selection};
 use crate::session::{IDLE_TIMEOUT, LockReason, Session, Stamp, parse_session_id};
 use crate::unlock_guard::UnlockGuard;
 use crate::v2::{StoreError, V2Store};
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
 use chrono::Utc;
 use serde_json::{Map, Value, json};
 use std::collections::HashSet;
@@ -35,9 +32,6 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-const LEGACY_KDF_PARAMS: &str = r#"{"algorithm":"scrypt","keyLength":32,"verifierAlgorithm":"hmac-sha256-v1"}"#;
-const LEGACY_VERIFIER: &str = "hmac-sha256-v1";
-const DECRYPT_FAILED: &str = "保存済みのデータを復号できませんでした";
 const KDF_FAILED: &str = "鍵を導出できませんでした";
 const EMPTY_ONLY: &str = "復元できるのは空の保管庫のみです";
 const SWITCH_PENDING: &str = "保管庫の切り替えが完了するまでお待ちください";
@@ -45,7 +39,8 @@ const SWITCH_PENDING: &str = "保管庫の切り替えが完了するまでお�
 const READ_CONTEXT_INTERVAL: Duration = Duration::from_millis(50);
 
 enum Storage {
-    Legacy { database: Arc<Mutex<LegacyDatabase>>, identity: FileIdentity },
+    /// No vault has been created yet. A legacy file may be there, which this release does not open.
+    Empty { legacy_found: bool },
     V2 { store: Arc<Mutex<V2Store>>, identity: FileIdentity, vault_id: String, key_id: String },
     /// A switch between formats was interrupted, or the files do not agree. The vault stays locked.
     /// `operation` names the switch that can finish it, when the files tell.
@@ -54,18 +49,10 @@ enum Storage {
     Running { format: &'static str, operation: &'static str, source_session_id: String },
 }
 
-/// The vault the data directory selects. `create` makes an empty legacy file when there is none,
-/// as at startup; after a switch the file must already be there.
-fn open_storage(root: &Path, create: bool) -> Result<Storage> {
+/// The vault the data directory selects.
+fn open_storage(root: &Path) -> Result<Storage> {
     Ok(match selection::inspect(root) {
-        Ok(Selection::Legacy { database }) => {
-            if !create && !database.exists() {
-                return Err(open_failed());
-            }
-            let opened = LegacyDatabase::open(&database, &|| selection::legacy_namespace_is_clear(root).unwrap_or(false)).map_err(|error| VaultError::new(500, error.message()))?;
-            let identity = files::identity(&database).map_err(|_| open_failed())?;
-            Storage::Legacy { database: Arc::new(Mutex::new(opened)), identity }
-        }
+        Ok(Selection::Empty { legacy_found }) => Storage::Empty { legacy_found },
         Ok(Selection::V2 { database, vault_id, key_id }) => match V2Store::open(&database, &vault_id, &key_id) {
             Some(store) => Storage::V2 { identity: files::identity(&database).map_err(|_| open_failed())?, store: Arc::new(Mutex::new(store)), vault_id, key_id },
             None => recovery_required(root),
@@ -142,7 +129,7 @@ fn random_bytes<const N: usize>() -> Result<Zeroizing<[u8; N]>> {
 }
 
 fn open_failed() -> VaultError {
-    VaultError::new(500, legacy::StorageError::OpenFailed.message())
+    VaultError::new(500, "保管庫の保存先を開けません。アクセス権・使用状況・復旧の必要性を確認してください")
 }
 
 /// The newer of now and the stored time, so an entry never moves back in time. ISO text in this
@@ -188,8 +175,8 @@ fn invalid_entry() -> VaultError {
 }
 
 impl Vault {
-    /// Opens the vault in `data_directory`, creating the directory and an empty legacy file when
-    /// there is none, as the app does at startup. A vault that needs recovery opens locked.
+    /// Opens the vault in `data_directory`, creating the directory when there is none. Without a
+    /// vault the app waits for setup, and a vault that needs recovery opens locked.
     pub fn open(data_directory: &Path) -> Result<Self> {
         Self::open_with_clock(data_directory, Box::new(Stamp::now))
     }
@@ -199,7 +186,7 @@ impl Vault {
             std::fs::create_dir_all(data_directory).map_err(|_| open_failed())?;
         }
         let root = files::data_root(data_directory).map_err(|_| open_failed())?;
-        let storage = RwLock::new(Arc::new(open_storage(&root, true)?));
+        let storage = RwLock::new(Arc::new(open_storage(&root)?));
         // Opening the storage locks once, as openVaultStorage does, so the first status says "manual".
         let mut session = Session::new(clock());
         session.lock(LockReason::Manual);
@@ -262,11 +249,7 @@ impl Vault {
         #[cfg(test)]
         self.context_checks.fetch_add(1, Ordering::SeqCst);
         match &*self.storage() {
-            Storage::Legacy { identity, .. } => {
-                let file = files::safe_path(&self.root, &[selection::LEGACY_DATABASE], false, false)?;
-                let found = files::identity(&file)?;
-                Ok(selection::legacy_namespace_is_clear(&self.root)? && (found.volume, found.index) == (identity.volume, identity.index))
-            }
+            Storage::Empty { .. } => selection::is_unclaimed(&self.root),
             Storage::V2 { identity, vault_id, key_id, .. } => {
                 if files::present(&files::safe_path(&self.root, &[selection::TRANSITION], false, true)?)? {
                     return Ok(false);
@@ -301,16 +284,7 @@ impl Vault {
     }
 
     fn is_configured(&self) -> Result<bool> {
-        match &*self.storage() {
-            Storage::Legacy { database, .. } => {
-                if self.failed.load(Ordering::SeqCst) {
-                    return Ok(true);
-                }
-                let metadata = database.lock().unwrap().metadata();
-                metadata.map(|metadata| metadata.is_some()).map_err(|_| self.fail())
-            }
-            Storage::V2 { .. } | Storage::RecoveryRequired { .. } | Storage::Running { .. } => Ok(true),
-        }
+        Ok(!matches!(*self.storage(), Storage::Empty { .. }))
     }
 
     // ---- Status and session.
@@ -319,8 +293,7 @@ impl Vault {
     pub fn status(&self) -> Result<Value> {
         let state = self.session_at(|session, now| session.state(now));
         let maintenance = match &*self.storage() {
-            Storage::Legacy { .. } => json!({ "state": "ready", "format": "legacy" }),
-            Storage::V2 { .. } => json!({ "state": "ready", "format": "v2" }),
+            Storage::Empty { .. } | Storage::V2 { .. } => json!({ "state": "ready", "format": "v2" }),
             Storage::RecoveryRequired { operation } => {
                 let mut state = json!({ "state": "recovery-required", "format": "unknown", "operation": "recover" });
                 if let Some(operation) = operation {
@@ -335,6 +308,9 @@ impl Vault {
             status["lockReason"] = json!(reason.as_str());
         }
         status["maintenance"] = maintenance;
+        if matches!(*self.storage(), Storage::Empty { legacy_found: true }) {
+            status["legacyVaultFound"] = json!(true);
+        }
         Ok(status)
     }
 
@@ -432,38 +408,9 @@ impl Vault {
 
     // ---- Setup, unlock and reset.
 
-    fn legacy(&self) -> Option<Arc<Mutex<LegacyDatabase>>> {
-        match &*self.storage() {
-            Storage::Legacy { database, .. } => Some(database.clone()),
-            _ => None,
-        }
-    }
-
-    /// The check a legacy write repeats under the lock. `session` is the session that must still
-    /// be unlocked, or None for setup and unlock, which install the key afterwards.
-    fn legacy_write<T>(&self, session: Option<&str>, intent: Option<&str>, action: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<T>) -> Result<T> {
-        let database = self.legacy().ok_or_else(|| self.fail())?;
-        let check = || -> Result<()> {
-            if let Some(intent) = intent {
-                self.require_generation(intent)?;
-            }
-            if let Some(session) = session {
-                self.require_unlocked(Some(session))?;
-            }
-            self.assert_current()
-        };
-        // A storage error means the file is not behaving as expected.
-        struct WriteFailure(VaultError);
-        impl From<rusqlite::Error> for WriteFailure {
-            fn from(_: rusqlite::Error) -> Self {
-                Self(context_failed())
-            }
-        }
-        let result = database.lock().unwrap().write(&|| check().map_err(WriteFailure), |transaction| action(transaction).map_err(WriteFailure));
-        result.map_err(|WriteFailure(error)| if error == context_failed() { self.fail() } else { error })
-    }
-
-    /// setupVault: creates a legacy vault. A v2 vault always counts as configured.
+    /// setupVault: creates the first vault, a v2 vault selected by its pointer files, and unlocks
+    /// it. A lock during the key derivation stops it before anything is written; a lock after
+    /// that leaves the new vault selected and locked.
     pub fn setup(&self, session_id: Option<&Value>, payload: Option<&Value>) -> Result<Value> {
         self.control(session_id, || {
             self.assert_maintenance_ready()?;
@@ -474,57 +421,41 @@ impl Vault {
             let password = Zeroizing::new(input::parse_master_password(payload, true)?);
             let intent = self.session_at(|session, now| session.id(now));
             self.guard.run(|| self.now().monotonic, || {
-                let salt = STANDARD.encode(random_bytes::<16>()?.as_ref());
-                let key = crypto::derive_legacy_key(password.as_bytes(), &salt).map_err(|_| VaultError::new(500, KDF_FAILED))?;
-                let verifier = crypto::legacy_verifier(&key).map_err(|_| VaultError::new(500, KDF_FAILED))?;
-                let now = now_iso();
-                self.legacy_write(None, Some(&intent), |transaction| legacy::save_metadata(transaction, &salt, &verifier, LEGACY_KDF_PARAMS, &now, &now).map_err(|_| context_failed()))?;
-                self.install_key(key);
+                let current = || -> Result<()> {
+                    self.require_generation(&intent)?;
+                    self.assert_current()
+                };
+                let created = maintenance::create(&self.root, &password, &|| current().map_err(maintenance::Stop::Error));
+                let (_, root) = match created {
+                    Ok(created) => created,
+                    Err(maintenance::Stop::Error(error)) => return Err(error),
+                    Err(_) => {
+                        // A selection that was only partly written is found again here.
+                        *self.storage.write().unwrap() = Arc::new(open_storage(&self.root).unwrap_or_else(|_| recovery_required(&self.root)));
+                        return Err(VaultError::new(500, "保管庫を作成できませんでした"));
+                    }
+                };
+                let opened = open_storage(&self.root)?;
+                let ready = matches!(opened, Storage::V2 { .. });
+                *self.storage.write().unwrap() = Arc::new(opened);
+                if !ready {
+                    return Err(self.fail());
+                }
+                self.require_generation(&intent)?;
+                self.install_key(root);
                 self.status()
             })
         })
     }
 
-    /// unlockVault. A legacy vault with the old raw verifier is upgraded to the HMAC verifier on
-    /// a successful unlock, as the app does.
+    /// unlockVault
     pub fn unlock(&self, session_id: Option<&Value>, payload: Option<&Value>) -> Result<Value> {
         self.control(session_id, || {
             self.assert_maintenance_ready()?;
             self.assert_current()?;
-            if let Some(store) = self.v2() {
-                self.unlock_v2(&store, payload)?;
-                return self.status();
-            }
-            let password = Zeroizing::new(input::parse_master_password(payload, false)?);
-            let database = self.legacy().ok_or_else(|| self.fail())?;
-            let metadata = database.lock().unwrap().metadata().map_err(|_| self.fail())?.ok_or_else(|| VaultError::bad_request("保管庫はまだ設定されていません"))?;
-            let mut params: Value = serde_json::from_str(&metadata.kdf_params).map_err(|_| VaultError::bad_request("保管庫の形式情報が壊れています"))?;
-            let verifier_algorithm = params.get("verifierAlgorithm");
-            if params.get("algorithm").and_then(Value::as_str) != Some("scrypt") || params.get("keyLength").and_then(Value::as_f64) != Some(32.0)
-                || verifier_algorithm.is_some_and(|algorithm| algorithm.as_str() != Some(LEGACY_VERIFIER))
-            {
-                return Err(VaultError::bad_request("未対応の保管庫形式です"));
-            }
-            let raw_verifier = verifier_algorithm.is_none();
-            let intent = self.session_at(|session, now| session.id(now));
-            self.guard.run(|| self.now().monotonic, || {
-                let key = crypto::derive_legacy_key(password.as_bytes(), &metadata.salt).map_err(|_| VaultError::new(500, KDF_FAILED))?;
-                self.require_generation(&intent)?;
-                self.assert_current()?;
-                if !crypto::verify_legacy_key(&key, &metadata.verifier, raw_verifier) {
-                    return Err(VaultError::new(401, error::WRONG_PASSWORD));
-                }
-                if raw_verifier {
-                    let verifier = crypto::legacy_verifier(&key).map_err(|_| VaultError::new(500, KDF_FAILED))?;
-                    params["verifierAlgorithm"] = json!(LEGACY_VERIFIER);
-                    let now = now_iso();
-                    self.legacy_write(None, Some(&intent), |transaction| {
-                        legacy::save_metadata(transaction, &metadata.salt, &verifier, &params.to_string(), &metadata.created_at, &now).map_err(|_| context_failed())
-                    })?;
-                }
-                self.install_key(key);
-                self.status()
-            })
+            let store = self.v2().ok_or_else(|| VaultError::bad_request("保管庫はまだ設定されていません"))?;
+            self.unlock_v2(&store, payload)?;
+            self.status()
         })
     }
 
@@ -569,30 +500,12 @@ impl Vault {
         })
     }
 
-    /// resetVault: deletes every legacy entry and the metadata. A v2 vault is not reset here.
-    pub fn reset(&self, session_id: Option<&Value>, payload: Option<&Value>) -> Result<Value> {
-        self.control(session_id, || {
-            self.assert_maintenance_ready()?;
-            input::parse_reset_payload(payload)?;
-            self.assert_current()?;
-            self.lock_for(LockReason::Reset);
-            if self.v2().is_some() {
-                return Err(VaultError::conflict("この保管庫の初期化は現在利用できません"));
-            }
-            self.legacy_write(None, None, |transaction| legacy::reset(transaction).map_err(|_| context_failed()))?;
-            // The icons belonged to the vault just emptied.
-            icons::remove(&self.root);
-            self.status()
-        })
-    }
-
     // ---- List icons (icons.rs). They live in a file beside the vault, so the vault formats stay as they are.
 
     fn icon_scope(&self) -> Result<String> {
         match &*self.storage() {
-            Storage::Legacy { .. } => Ok(icons::scope(None)),
             Storage::V2 { vault_id, .. } => Ok(icons::scope(Some(vault_id))),
-            Storage::RecoveryRequired { .. } | Storage::Running { .. } => Err(VaultError::conflict(SWITCH_PENDING)),
+            Storage::Empty { .. } | Storage::RecoveryRequired { .. } | Storage::Running { .. } => Err(VaultError::conflict(SWITCH_PENDING)),
         }
     }
 
@@ -637,42 +550,6 @@ impl Vault {
     }
 
     // ---- Entries.
-
-    fn seal_legacy(key: &[u8], plaintext: &str) -> Result<String> {
-        crypto::seal_legacy_secret(key, random_bytes::<12>()?.as_ref(), plaintext.as_bytes()).map_err(|_| VaultError::new(500, DECRYPT_FAILED))
-    }
-
-    fn open_legacy(key: &[u8], payload: &str) -> Result<Zeroizing<String>> {
-        let bytes = crypto::open_legacy_secret(key, payload).map_err(|_| VaultError::new(500, DECRYPT_FAILED))?;
-        // Buffer.toString("utf8") also replaces invalid sequences.
-        Ok(Zeroizing::new(String::from_utf8_lossy(&bytes).into_owned()))
-    }
-
-    fn legacy_entry(&self, session: &str, id: &str) -> Result<Value> {
-        let database = self.legacy().ok_or_else(|| self.fail())?;
-        let row = database.lock().unwrap().get(id).map_err(|_| self.fail())?.ok_or_else(not_found)?;
-        let key = self.key(session)?;
-        let password = Self::open_legacy(&key, &row.encrypted_password)?;
-        let notes = match row.encrypted_notes.as_deref() {
-            Some(payload) if !payload.is_empty() => Self::open_legacy(&key, payload)?,
-            _ => Zeroizing::new(String::new()),
-        };
-        let mut entry = legacy::summary(&row);
-        entry["password"] = json!(*password);
-        entry["notes"] = json!(*notes);
-        entry["url"] = json!(row.url.clone().unwrap_or_default());
-        entry["createdAt"] = json!(row.created_at);
-        entry["passwordChangedAt"] = json!(row.password_changed_at);
-        Ok(entry)
-    }
-
-    /// getEntryById for a legacy vault, after a write or a read.
-    fn read_legacy_entry(&self, id: &str) -> Result<Value> {
-        let session = self.require_unlocked_vault(None)?;
-        let entry = self.legacy_entry(&session, id)?;
-        self.require_unlocked_vault(Some(&session))?;
-        Ok(entry)
-    }
 
     /// readOperation in v2-vault-service.ts. A lock or switch reports itself even when the action
     /// failed for another reason first.
@@ -731,6 +608,14 @@ impl Vault {
         }
     }
 
+    /// The open vault for an operation of an unlocked session. Only a v2 vault can be unlocked,
+    /// so without one the session is locked or the vault is switching.
+    fn store(&self) -> Result<Arc<Mutex<V2Store>>> {
+        self.require_unlocked(None)?;
+        self.assert_current()?;
+        self.v2().ok_or_else(|| self.fail())
+    }
+
     fn read_v2(store: &V2Store, root: &[u8], id: &str) -> std::result::Result<(Value, u64), Failure> {
         store.read(root, id)?.ok_or_else(|| not_found().into())
     }
@@ -747,23 +632,16 @@ impl Vault {
 
     /// listEntries without the session wrapper, which the backup also uses.
     fn entry_list(&self) -> Result<Value> {
-        if let Some(store) = self.v2() {
-            return self.v2_operation(&store, false, |store, root, active| {
-                let mut items = Vec::new();
-                for (id, _) in store.entries()? {
-                    active()?;
-                    items.push(v2_summary(&Self::read_v2(store, root, &id)?.0));
-                }
-                list_order(&mut items);
-                Ok(json!({ "items": items }))
-            });
-        }
-        let session = self.require_unlocked_vault(None)?;
-        let database = self.legacy().ok_or_else(|| self.fail())?;
-        let rows = database.lock().unwrap().list().map_err(|_| self.fail())?;
-        let items: Vec<Value> = rows.iter().map(legacy::summary).collect();
-        self.require_unlocked_vault(Some(&session))?;
-        Ok(json!({ "items": items }))
+        let store = self.store()?;
+        self.v2_operation(&store, false, |store, root, active| {
+            let mut items = Vec::new();
+            for (id, _) in store.entries()? {
+                active()?;
+                items.push(v2_summary(&Self::read_v2(store, root, &id)?.0));
+            }
+            list_order(&mut items);
+            Ok(json!({ "items": items }))
+        })
     }
 
     /// Every entry of a v2 vault in list order, read and opened once in one operation. The backup
@@ -788,184 +666,89 @@ impl Vault {
 
     /// getEntryById without the session wrapper, which the backup also uses.
     fn entry(&self, id: Option<&Value>) -> Result<Value> {
-        if let Some(store) = self.v2() {
-            return self.v2_operation(&store, false, |store, root, _| Ok(Self::read_v2(store, root, &input::parse_entry_id(id)?)?.0));
-        }
-        let session = self.require_unlocked_vault(None)?;
-        let id = input::parse_entry_id(id)?;
-        let entry = self.legacy_entry(&session, &id)?;
-        self.require_unlocked_vault(Some(&session))?;
-        Ok(entry)
-    }
-
-    /// The sealed password and notes of a parsed login. Empty notes are stored as null.
-    fn seal_login(key: &[u8], login: &Value) -> Result<(String, Option<String>)> {
-        let password = Self::seal_legacy(key, login["password"].as_str().unwrap_or_default())?;
-        let notes = match login["notes"].as_str() {
-            Some(notes) if !notes.is_empty() => Some(Self::seal_legacy(key, notes)?),
-            _ => None,
-        };
-        Ok((password, notes))
-    }
-
-    /// The legacy columns of a parsed login, whose names and URL are already trimmed. An empty URL
-    /// and group are stored as null.
-    fn sealed_login<'a>(login: &'a Value, tags: &'a str, password: &'a str, notes: Option<&'a str>) -> SealedLogin<'a> {
-        SealedLogin {
-            service_name: login["serviceName"].as_str().unwrap_or_default(),
-            login_id: login["loginId"].as_str().unwrap_or_default(),
-            password,
-            notes,
-            url: login["url"].as_str().filter(|url| !url.is_empty()),
-            tags,
-            group: login["group"].as_str(),
-        }
+        let store = self.store()?;
+        self.v2_operation(&store, false, |store, root, _| Ok(Self::read_v2(store, root, &input::parse_entry_id(id)?)?.0))
     }
 
     /// createEntry
     pub fn create_entry(&self, session_id: Option<&Value>, payload: Option<&Value>) -> Result<Value> {
         self.with_session(session_id, |_| {
-            if let Some(store) = self.v2() {
-                self.require_unlocked(None)?;
-                let fields = input::parse_vault_entry(payload)?;
-                return self.v2_mutation(&store, |store, root, active| {
-                    if store.entries()?.len() >= MAX_ENTRIES {
-                        return Err(VaultError::too_large(error::ENTRY_LIMIT).into());
-                    }
-                    let now = now_iso();
-                    let id = Uuid::new_v4().to_string();
-                    let changed = fields.get("type").is_none().then(|| json!(now));
-                    let entry = v2_entry(&id, &fields, &json!(now), &now, changed);
-                    Self::write_v2(store, root, &entry, &id, 1, active)?;
-                    Ok(entry)
-                });
-            }
-            let session = self.require_unlocked_vault(None)?;
-            input::require_legacy_item(payload)?;
-            let login = input::parse_login(payload)?;
-            let key = self.key(&session)?;
-            let tags = login["tags"].to_string();
-            let (password, notes) = Self::seal_login(&key, &login)?;
-            let sealed = Self::sealed_login(&login, &tags, &password, notes.as_deref());
-            let id = Uuid::new_v4().to_string();
-            let now = now_iso();
-            self.legacy_write(Some(&session), None, |transaction| {
-                if legacy::count(transaction).map_err(|_| context_failed())? >= MAX_ENTRIES as i64 {
-                    return Err(VaultError::too_large(error::ENTRY_LIMIT));
+            let store = self.store()?;
+            let fields = input::parse_vault_entry(payload)?;
+            self.v2_mutation(&store, |store, root, active| {
+                if store.entries()?.len() >= MAX_ENTRIES {
+                    return Err(VaultError::too_large(error::ENTRY_LIMIT).into());
                 }
-                legacy::insert(transaction, &id, &sealed, &now).map_err(|_| context_failed())
-            })?;
-            self.read_legacy_entry(&id)
+                let now = now_iso();
+                let id = Uuid::new_v4().to_string();
+                let changed = fields.get("type").is_none().then(|| json!(now));
+                let entry = v2_entry(&id, &fields, &json!(now), &now, changed);
+                Self::write_v2(store, root, &entry, &id, 1, active)?;
+                Ok(entry)
+            })
         })
     }
 
     /// updateEntry. The password change date moves only when the password changes.
     pub fn update_entry(&self, session_id: Option<&Value>, id: Option<&Value>, payload: Option<&Value>) -> Result<Value> {
         self.with_session(session_id, |_| {
-            if let Some(store) = self.v2() {
-                self.require_unlocked(None)?;
-                let id = input::parse_entry_id(id)?;
-                let fields = input::parse_vault_entry(payload)?;
-                return self.v2_mutation(&store, |store, root, active| {
-                    let (existing, revision) = Self::read_v2(store, root, &id)?;
-                    let now = not_before(&existing["updatedAt"]);
-                    let kind = |value: &Value| value["type"].as_str().unwrap_or("login").to_string();
-                    if kind(&existing) != kind(&fields) {
-                        return Err(VaultError::bad_request("保存済みの項目の種類は変更できません").into());
-                    }
-                    let changed = fields.get("type").is_none().then(|| if existing["password"] == fields["password"] { existing["passwordChangedAt"].clone() } else { json!(now) });
-                    let entry = v2_entry(&id, &fields, &existing["createdAt"], &now, changed);
-                    Self::write_v2(store, root, &entry, &id, revision + 1, active)?;
-                    Ok(entry)
-                });
-            }
-            let session = self.require_unlocked_vault(None)?;
-            input::require_legacy_item(payload)?;
+            let store = self.store()?;
             let id = input::parse_entry_id(id)?;
-            let login = input::parse_login(payload)?;
-            let database = self.legacy().ok_or_else(|| self.fail())?;
-            let existing = database.lock().unwrap().get(&id).map_err(|_| self.fail())?.ok_or_else(not_found)?;
-            let key = self.key(&session)?;
-            // Never before the entry's own dates, as in a v2 vault: an entry that was changed
-            // before it was created could no longer be backed up or migrated.
-            let now = [existing.updated_at.clone(), existing.created_at.clone(), existing.password_changed_at.clone().unwrap_or_default()].into_iter().fold(now_iso(), String::max);
-            let same_password = Self::open_legacy(&key, &existing.encrypted_password)?.as_str() == login["password"].as_str().unwrap_or_default();
-            let changed_at = if same_password { existing.password_changed_at.clone() } else { Some(now.clone()) };
-            let tags = login["tags"].to_string();
-            let (password, notes) = Self::seal_login(&key, &login)?;
-            let sealed = Self::sealed_login(&login, &tags, &password, notes.as_deref());
-            self.legacy_write(Some(&session), None, |transaction| legacy::update(transaction, &id, &sealed, changed_at.as_deref(), &now).map(|_| ()).map_err(|_| context_failed()))?;
-            self.read_legacy_entry(&id)
+            let fields = input::parse_vault_entry(payload)?;
+            self.v2_mutation(&store, |store, root, active| {
+                let (existing, revision) = Self::read_v2(store, root, &id)?;
+                let now = not_before(&existing["updatedAt"]);
+                let kind = |value: &Value| value["type"].as_str().unwrap_or("login").to_string();
+                if kind(&existing) != kind(&fields) {
+                    return Err(VaultError::bad_request("保存済みの項目の種類は変更できません").into());
+                }
+                let changed = fields.get("type").is_none().then(|| if existing["password"] == fields["password"] { existing["passwordChangedAt"].clone() } else { json!(now) });
+                let entry = v2_entry(&id, &fields, &existing["createdAt"], &now, changed);
+                Self::write_v2(store, root, &entry, &id, revision + 1, active)?;
+                Ok(entry)
+            })
         })
     }
 
-    /// deleteEntry. A v2 entry keeps its id and revision as a tombstone.
+    /// deleteEntry. The entry keeps its id and revision as a tombstone.
     pub fn delete_entry(&self, session_id: Option<&Value>, id: Option<&Value>) -> Result<Value> {
         self.with_session(session_id, |_| {
-            if let Some(store) = self.v2() {
-                // The app's delete runs as a read whose store refuses it during a write.
-                return self.v2_operation(&store, true, |store, root, active| {
-                    let id = input::parse_entry_id(id)?;
-                    let (_, revision) = Self::read_v2(store, root, &id)?;
-                    active()?;
-                    store.delete(&id, revision, &|| active().map_err(|_| StoreError::Cancelled))?;
-                    Ok(json!({ "success": true }))
-                });
-            }
-            let session = self.require_unlocked_vault(None)?;
-            let id = input::parse_entry_id(id)?;
-            self.legacy_write(Some(&session), None, |transaction| match legacy::delete(transaction, &id) {
-                Ok(0) => Err(not_found()),
-                Ok(_) => Ok(()),
-                Err(_) => Err(context_failed()),
-            })?;
-            Ok(json!({ "success": true }))
+            let store = self.store()?;
+            // The app's delete runs as a read whose store refuses it during a write.
+            self.v2_operation(&store, true, |store, root, active| {
+                let id = input::parse_entry_id(id)?;
+                let (_, revision) = Self::read_v2(store, root, &id)?;
+                active()?;
+                store.delete(&id, revision, &|| active().map_err(|_| StoreError::Cancelled))?;
+                Ok(json!({ "success": true }))
+            })
         })
     }
 
-    /// setEntriesGroup. In a legacy vault an unknown id rolls back every change. In a v2 vault
-    /// each entry has its own envelope, so an unknown id fails before any write, and a later
-    /// failure keeps the entries already rewritten.
+    /// setEntriesGroup. Each entry has its own envelope, so an unknown id fails before any write,
+    /// and a later failure keeps the entries already rewritten.
     pub fn set_entries_group(&self, session_id: Option<&Value>, payload: Option<&Value>) -> Result<Value> {
         self.with_session(session_id, |_| {
-            if let Some(store) = self.v2() {
-                self.require_unlocked(None)?;
-                let (ids, group) = input::parse_group_payload(payload)?;
-                let group = json!(group);
-                return self.v2_mutation(&store, |store, root, active| {
-                    for id in &ids {
-                        store.revision(id)?.ok_or_else(not_found)?;
-                    }
-                    let mut updated = 0;
-                    for id in &ids {
-                        let (mut entry, revision) = Self::read_v2(store, root, id)?;
-                        if entry["group"] == group {
-                            continue;
-                        }
-                        entry["group"] = group.clone();
-                        entry["updatedAt"] = json!(not_before(&entry["updatedAt"]));
-                        Self::write_v2(store, root, &entry, id, revision + 1, active)?;
-                        updated += 1;
-                    }
-                    Ok(json!({ "updatedCount": updated }))
-                });
-            }
-            let session = self.require_unlocked_vault(None)?;
+            let store = self.store()?;
             let (ids, group) = input::parse_group_payload(payload)?;
-            let now = now_iso();
-            let updated = self.legacy_write(Some(&session), None, |transaction| {
+            let group = json!(group);
+            self.v2_mutation(&store, |store, root, active| {
+                for id in &ids {
+                    store.revision(id)?.ok_or_else(not_found)?;
+                }
                 let mut updated = 0;
                 for id in &ids {
-                    let current = legacy::group_of(transaction, id).map_err(|_| context_failed())?.ok_or_else(not_found)?;
-                    if current.as_deref() == group.as_deref() {
+                    let (mut entry, revision) = Self::read_v2(store, root, id)?;
+                    if entry["group"] == group {
                         continue;
                     }
-                    legacy::set_group(transaction, id, group.as_deref(), &now).map_err(|_| context_failed())?;
+                    entry["group"] = group.clone();
+                    entry["updatedAt"] = json!(not_before(&entry["updatedAt"]));
+                    Self::write_v2(store, root, &entry, id, revision + 1, active)?;
                     updated += 1;
                 }
-                Ok(updated)
-            })?;
-            Ok(json!({ "updatedCount": updated }))
+                Ok(json!({ "updatedCount": updated }))
+            })
         })
     }
 
@@ -999,14 +782,8 @@ impl Vault {
             let passphrase = Zeroizing::new(passphrase);
             let salt = random_bytes::<16>()?;
             self.with_backup_key(&passphrase, salt.as_ref(), |key| {
-                let entries = match self.v2() {
-                    Some(store) => self.v2_entries(&store)?,
-                    None => {
-                        let summaries = self.entry_list()?;
-                        let summaries = summaries["items"].as_array().cloned().unwrap_or_default();
-                        summaries.iter().map(|summary| self.entry(Some(&summary["id"]))).collect::<Result<Vec<_>>>()?
-                    }
-                };
+                let store = self.store()?;
+                let entries = self.v2_entries(&store)?;
                 if entries.len() > MAX_ENTRIES {
                     return Err(VaultError::bad_request("バックアップは10000件まで対応しています"));
                 }
@@ -1016,7 +793,8 @@ impl Vault {
         })
     }
 
-    /// restoreBackup: only into an empty vault, keeping each entry's id and dates.
+    /// restoreBackup: only into an empty vault, keeping each entry's id and dates. Every backup
+    /// version, also one an earlier release wrote, comes into the current format.
     pub fn restore_backup(&self, session_id: Option<&Value>, payload: Option<&Value>) -> Result<Value> {
         self.with_session(session_id, |_| {
             self.require_unlocked_vault(None)?;
@@ -1035,39 +813,12 @@ impl Vault {
 
     /// restoreEntriesIntoEmptyVault
     fn restore_entries(&self, entries: &[Value]) -> Result<Value> {
-        if let Some(store) = self.v2() {
-            for entry in entries {
-                input::validate_stored_entry(entry, entry["id"].as_str().unwrap_or_default()).map_err(|_| invalid_entry())?;
-            }
-            let count = self.v2_mutation(&store, |store, root, active| Ok(store.restore(root, entries, &|| active().map_err(|_| StoreError::Cancelled))?))?;
-            return Ok(json!({ "restoredCount": count }));
+        let store = self.store()?;
+        for entry in entries {
+            input::validate_stored_entry(entry, entry["id"].as_str().unwrap_or_default()).map_err(|_| invalid_entry())?;
         }
-        let session = self.require_unlocked_vault(None)?;
-        if entries.iter().any(|entry| matches!(entry["type"].as_str(), Some("apiKey" | "creditCard" | "financial"))) {
-            return Err(VaultError::conflict("このバックアップの復元には新しい形式への移行が必要です"));
-        }
-        let key = self.key(&session)?;
-        // Unlike a new entry, a restored one stores its notes sealed even when they are empty.
-        let sealed = entries
-            .iter()
-            .map(|entry| Ok((entry["tags"].to_string(), Self::seal_legacy(&key, entry["password"].as_str().unwrap_or_default())?, Self::seal_legacy(&key, entry["notes"].as_str().unwrap_or_default())?)))
-            .collect::<Result<Vec<_>>>()?;
-        drop(key);
-        let text = |entry: &'_ Value, field: &str| entry[field].as_str().map(str::to_string);
-        self.legacy_write(Some(&session), None, |transaction| {
-            if legacy::count(transaction).map_err(|_| context_failed())? > 0 {
-                return Err(VaultError::conflict(EMPTY_ONLY));
-            }
-            for (entry, (tags, password, notes)) in entries.iter().zip(&sealed) {
-                let (service_name, login_id, url, group) = (text(entry, "serviceName").unwrap_or_default(), text(entry, "loginId").unwrap_or_default(), text(entry, "url"), text(entry, "group"));
-                let login = SealedLogin { service_name: &service_name, login_id: &login_id, password, notes: Some(notes), url: url.as_deref(), tags, group: group.as_deref() };
-                let changed = text(entry, "passwordChangedAt");
-                legacy::insert_restored(transaction, entry["id"].as_str().unwrap_or_default(), &login, entry["createdAt"].as_str().unwrap_or_default(), entry["updatedAt"].as_str().unwrap_or_default(), changed.as_deref())
-                    .map_err(|_| context_failed())?;
-            }
-            Ok(())
-        })?;
-        Ok(json!({ "restoredCount": entries.len() }))
+        let count = self.v2_mutation(&store, |store, root, active| Ok(store.restore(root, entries, &|| active().map_err(|_| StoreError::Cancelled))?))?;
+        Ok(json!({ "restoredCount": count }))
     }
 
     /// auditVault in audit-service.ts: the logins are scored in this process, and the result holds
@@ -1078,7 +829,7 @@ impl Vault {
             let _busy = Busy::claim(&self.auditing).ok_or_else(|| VaultError::conflict("監査の完了を待ってください"))?;
             let session = self.require_unlocked(None)?;
             let now = Utc::now().timestamp_millis();
-            let rows = self.audit_rows(&session)?;
+            let rows = self.audit_rows()?;
             let result = audit::assess(&rows, now, || {
                 if self.require_unlocked_vault(None)? != session {
                     return Err(VaultError::conflict("保管庫の状態が変わりました。もう一度解析してください"));
@@ -1090,57 +841,34 @@ impl Vault {
         })
     }
 
-    /// The logins to audit: in list order for v2, and in table order for the legacy format. API
-    /// keys, cards and bank accounts are left out, as their secrets are not passwords.
-    fn audit_rows(&self, session: &str) -> Result<Vec<audit::Row>> {
-        if let Some(store) = self.v2() {
-            let logins = self.v2_entries(&store)?.into_iter().filter(|entry| !matches!(entry["type"].as_str(), Some("apiKey" | "creditCard" | "financial")));
-            return logins
-                .map(|mut entry| {
-                    let text = |field: &str| entry[field].as_str().map(str::to_string);
-                    let (id, service_name, login_id, url, updated_at, password_changed_at) =
-                        (text("id"), text("serviceName"), text("loginId"), text("url"), text("updatedAt"), text("passwordChangedAt"));
-                    let password = match entry["password"].take() {
-                        Value::String(password) => Zeroizing::new(password),
-                        _ => Zeroizing::new(String::new()),
-                    };
-                    Ok(audit::Row {
-                        id: id.unwrap_or_default(),
-                        service_name: service_name.unwrap_or_default(),
-                        login_id: login_id.unwrap_or_default(),
-                        password,
-                        url,
-                        updated_at: updated_at.unwrap_or_default(),
-                        password_changed_at,
-                    })
-                })
-                .collect();
-        }
-        let database = self.legacy().ok_or_else(|| self.fail())?;
-        let rows = database.lock().unwrap().all().map_err(|_| self.fail())?;
-        let key = self.key(session)?;
-        rows.into_iter()
-            .map(|row| {
-                Ok(audit::Row {
-                    password: Self::open_legacy(&key, &row.encrypted_password)?,
-                    id: row.id,
-                    service_name: row.service_name,
-                    login_id: row.login_id,
-                    url: row.url,
-                    updated_at: row.updated_at,
-                    password_changed_at: row.password_changed_at,
-                })
+    /// The logins to audit, in list order. API keys, cards and bank accounts are left out, as
+    /// their secrets are not passwords.
+    fn audit_rows(&self) -> Result<Vec<audit::Row>> {
+        let store = self.store()?;
+        let logins = self.v2_entries(&store)?.into_iter().filter(|entry| !matches!(entry["type"].as_str(), Some("apiKey" | "creditCard" | "financial")));
+        Ok(logins
+            .map(|mut entry| {
+                let text = |field: &str| entry[field].as_str().map(str::to_string);
+                let (id, service_name, login_id, url, updated_at, password_changed_at) =
+                    (text("id"), text("serviceName"), text("loginId"), text("url"), text("updatedAt"), text("passwordChangedAt"));
+                let password = match entry["password"].take() {
+                    Value::String(password) => Zeroizing::new(password),
+                    _ => Zeroizing::new(String::new()),
+                };
+                audit::Row {
+                    id: id.unwrap_or_default(),
+                    service_name: service_name.unwrap_or_default(),
+                    login_id: login_id.unwrap_or_default(),
+                    password,
+                    url,
+                    updated_at: updated_at.unwrap_or_default(),
+                    password_changed_at,
+                }
             })
-            .collect()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn legacy_connection<T>(&self, action: impl FnOnce(&rusqlite::Connection) -> T) -> T {
-        action(self.legacy().unwrap().lock().unwrap().connection())
+            .collect())
     }
 }
 
-/// The order of the list: the latest change first, and entries changed at the same time by id.
 fn list_order(items: &mut [Value]) {
     let text = |value: &Value, field: &str| value[field].as_str().unwrap_or_default().to_string();
     items.sort_by(|a, b| text(b, "updatedAt").cmp(&text(a, "updatedAt")).then_with(|| locale_order(&text(a, "id"), &text(b, "id"))));
@@ -1159,12 +887,10 @@ fn locale_order(left: &str, right: &str) -> std::cmp::Ordering {
 mod tests {
     use super::*;
     use crate::files::tests::TemporaryDirectory;
-    use crate::v2::tests::{fixture, s, v2_directory};
-    use rusqlite::{Connection, params};
+    use crate::v2::tests::{s, v2_directory};
     use std::sync::Arc;
     use std::time::Duration;
 
-    use crate::legacy::SCHEMA;
     const MASTER: &str = "synthetic-master-password";
 
     #[test]
@@ -1175,6 +901,7 @@ mod tests {
         ids.sort_by(|a, b| locale_order(a, b));
         assert_eq!(ids, expected);
     }
+
 
     fn id(status: &Value) -> Value {
         status["sessionId"].clone()
@@ -1188,33 +915,18 @@ mod tests {
         json!({ "masterPassword": text })
     }
 
-    /// The fixture's legacy vault. `raw_verifier` keeps the verifier of the oldest releases.
-    fn legacy_directory(raw_verifier: bool) -> (TemporaryDirectory, Value) {
-        let legacy = fixture()["legacy"].clone();
-        let directory = TemporaryDirectory::new();
-        let connection = Connection::open(directory.0.join("password-manager.db")).unwrap();
-        connection.execute_batch(SCHEMA).unwrap();
-        let metadata = &legacy["metadata"];
-        let (verifier, params) = if raw_verifier { (s(&metadata["passwordVerifier"]), s(&metadata["kdfParams"])) } else { (s(&legacy["verifier"]), LEGACY_KDF_PARAMS) };
-        connection
-            .execute("INSERT INTO vault_metadata VALUES (1, ?1, ?2, ?3, ?4, ?5)", params![s(&metadata["passwordSalt"]), verifier, params, s(&metadata["createdAt"]), s(&metadata["updatedAt"])])
-            .unwrap();
-        for row in legacy["rows"].as_array().unwrap() {
-            let text = |field: &str| row[field].as_str().map(str::to_string);
-            connection
-                .execute(
-                    "INSERT INTO password_entries (id, service_name, login_id, encrypted_password, encrypted_notes, url, tags, group_name, created_at, updated_at, password_changed_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                    params![text("id"), text("service_name"), text("login_id"), text("encrypted_password"), text("encrypted_notes"), text("url"), text("tags"), text("group_name"), text("created_at"), text("updated_at"), text("password_changed_at")],
-                )
-                .unwrap();
-        }
-        (directory, legacy)
-    }
-
     fn unlocked(vault: &Vault, master: &str) -> Value {
         let status = vault.status().unwrap();
         vault.unlock(some(&id(&status)), some(&password(master))).unwrap()
+    }
+
+    /// A vault made by setup in a new directory, unlocked, with its session.
+    fn created() -> (TemporaryDirectory, Vault, Value) {
+        let directory = TemporaryDirectory::new();
+        let vault = Vault::open(&directory.0).unwrap();
+        let status = vault.status().unwrap();
+        let session = id(&vault.setup(some(&id(&status)), some(&password(MASTER))).unwrap());
+        (directory, vault, session)
     }
 
     fn login() -> Value {
@@ -1234,69 +946,79 @@ mod tests {
     }
 
     #[test]
-    fn setup_lock_unlock_and_reset_follow_the_app() {
+    fn setup_creates_a_v2_vault_selected_by_its_pointer() {
         let directory = TemporaryDirectory::new();
         let vault = Vault::open(&directory.0).unwrap();
         let first = vault.status().unwrap();
         assert_eq!(first["isConfigured"], false);
-        assert_eq!(first["maintenance"], json!({ "state": "ready", "format": "legacy" }));
+        assert_eq!(first["maintenance"], json!({ "state": "ready", "format": "v2" }));
+        assert!(first.get("legacyVaultFound").is_none());
         assert_eq!(first["lockReason"], "manual", "opening the storage locks once, as in the app");
+        assert_eq!(vault.unlock(some(&id(&first)), some(&password(MASTER))).unwrap_err(), VaultError::bad_request("保管庫はまだ設定されていません"));
         assert_eq!(vault.setup(some(&id(&first)), some(&password("short"))).unwrap_err(), VaultError::bad_request("マスターパスワードは12文字以上で入力してください"));
         assert_eq!(vault.setup(some(&json!("stale")), some(&password(MASTER))).unwrap_err(), changed());
         assert_eq!(vault.setup(None, some(&password(MASTER))).unwrap_err(), VaultError::conflict("保管庫の状態を再取得してください"));
+        assert!(!directory.0.join(selection::POINTER).exists(), "a refused setup writes nothing");
 
         let set = vault.setup(some(&id(&first)), some(&password(MASTER))).unwrap();
         assert_eq!((set["isConfigured"].clone(), set["isUnlocked"].clone()), (json!(true), json!(true)));
         assert_ne!(id(&set), id(&first), "unlocking starts a new session");
-        let params: String = vault.legacy_connection(|connection| connection.query_row("SELECT kdf_params FROM vault_metadata", [], |row| row.get(0)).unwrap());
-        assert_eq!(params, LEGACY_KDF_PARAMS);
+        let selected = selection::inspect(&directory.0).unwrap();
+        assert!(matches!(selected, Selection::V2 { .. }), "{selected:?}");
+        assert!(!directory.0.join(selection::LEGACY_DATABASE).exists(), "no legacy file is made");
         assert_eq!(vault.setup(some(&id(&set)), some(&password(MASTER))).unwrap_err(), VaultError::conflict("保管庫はすでに設定済みです"));
+        let created = vault.create_entry(some(&id(&set)), some(&login())).unwrap();
 
         assert_eq!(vault.lock(some(&id(&first))).unwrap_err(), changed());
         let locked = vault.lock(some(&id(&set))).unwrap();
         assert_eq!((locked["isUnlocked"].clone(), locked["lockReason"].clone()), (json!(false), json!("manual")));
         assert_eq!(vault.unlock(some(&id(&locked)), some(&password("wrong-master-password"))).unwrap_err(), VaultError::new(401, error::WRONG_PASSWORD));
         assert_eq!(vault.unlock(some(&id(&locked)), some(&json!({ "masterPassword": 1 }))).unwrap_err().message, "マスターパスワードは文字列で指定してください");
-        let again = vault.unlock(some(&id(&locked)), some(&password(MASTER))).unwrap();
+        drop(vault);
+        let reopened = Vault::open(&directory.0).unwrap();
+        let again = unlocked(&reopened, MASTER);
         assert_eq!(again["isUnlocked"], true);
         assert!(again.get("lockReason").is_none());
-        vault.create_entry(some(&id(&again)), some(&login())).unwrap();
-
-        assert_eq!(vault.reset(some(&id(&again)), some(&json!({ "confirmation": "yes" }))).unwrap_err(), VaultError::bad_request("保管庫のリセット確認が必要です"));
-        let reset = vault.reset(some(&id(&again)), some(&json!({ "confirmation": "RESET_ALL_DATA" }))).unwrap();
-        assert_eq!((reset["isConfigured"].clone(), reset["isUnlocked"].clone(), reset["lockReason"].clone()), (json!(false), json!(false), json!("reset")));
-        let remaining: i64 = vault.legacy_connection(|connection| connection.query_row("SELECT (SELECT COUNT(*) FROM password_entries) + (SELECT COUNT(*) FROM vault_metadata)", [], |row| row.get(0)).unwrap());
-        assert_eq!(remaining, 0);
-        assert_eq!(vault.unlock(some(&id(&reset)), some(&password(MASTER))).unwrap_err(), VaultError::bad_request("保管庫はまだ設定されていません"));
+        assert_eq!(reopened.get_entry(some(&id(&again)), some(&created["id"])).unwrap(), created);
     }
 
     #[test]
-    fn the_oldest_legacy_verifier_is_upgraded_by_a_successful_unlock_only() {
-        let (directory, legacy) = legacy_directory(true);
-        let vault = Vault::open(&directory.0).unwrap();
-        let before: (String, String) = vault.legacy_connection(|connection| connection.query_row("SELECT password_verifier, kdf_params FROM vault_metadata", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap());
-        let status = vault.status().unwrap();
-        assert_eq!(vault.unlock(some(&id(&status)), some(&password("fixture-wrong-master-password"))).unwrap_err().status, 401);
-        let unchanged: (String, String) = vault.legacy_connection(|connection| connection.query_row("SELECT password_verifier, kdf_params FROM vault_metadata", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap());
-        assert_eq!(unchanged, before);
-        let session = id(&unlocked(&vault, s(&legacy["password"])));
-        let (verifier, params, created): (String, String, String) =
-            vault.legacy_connection(|connection| connection.query_row("SELECT password_verifier, kdf_params, created_at FROM vault_metadata", [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap());
-        assert_eq!(verifier, s(&legacy["verifier"]));
-        assert_eq!(params, LEGACY_KDF_PARAMS, "the app appends the algorithm to the stored parameters");
-        assert_eq!(created, s(&legacy["metadata"]["createdAt"]));
-        for expected in legacy["entries"].as_array().unwrap() {
-            assert_eq!(vault.get_entry(some(&session), some(&expected["id"])).unwrap(), *expected);
+    fn a_lock_during_setup_writes_nothing() {
+        let directory = TemporaryDirectory::new();
+        let vault = Arc::new(Vault::open(&directory.0).unwrap());
+        let session = id(&vault.status().unwrap());
+        let creating = {
+            let vault = Arc::clone(&vault);
+            std::thread::spawn(move || vault.setup(Some(&session), Some(&password(MASTER))))
+        };
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !vault.guard.is_busy() {
+            assert!(std::time::Instant::now() < deadline, "the setup never started");
+            std::thread::yield_now();
         }
-        let locked = vault.lock(some(&session)).unwrap();
-        vault.unlock(some(&id(&locked)), some(&password(s(&legacy["password"])))).unwrap();
+        vault.lock_for(LockReason::Suspend);
+        assert_eq!(creating.join().unwrap().unwrap_err(), changed());
+        assert_eq!(vault.status().unwrap()["isConfigured"], false);
+        assert!(selection::is_unclaimed(&directory.0).unwrap(), "no state file was written");
+    }
+
+    #[test]
+    fn a_legacy_file_is_reported_and_left_alone() {
+        let directory = TemporaryDirectory::new();
+        std::fs::write(directory.0.join(selection::LEGACY_DATABASE), b"synthetic-legacy-bytes").unwrap();
+        let vault = Vault::open(&directory.0).unwrap();
+        let status = vault.status().unwrap();
+        assert_eq!((status["isConfigured"].clone(), status["legacyVaultFound"].clone()), (json!(false), json!(true)));
+        let set = vault.setup(some(&id(&status)), some(&password(MASTER))).unwrap();
+        assert!(set.get("legacyVaultFound").is_none(), "only an empty directory reports it");
+        assert_eq!(std::fs::read(directory.0.join(selection::LEGACY_DATABASE)).unwrap(), b"synthetic-legacy-bytes");
     }
 
     #[test]
     fn checks_from_several_threads_never_look_like_a_clock_moving_backwards() {
-        let (directory, legacy) = legacy_directory(false);
+        let (directory, _, v2) = v2_directory();
         let vault = Vault::open(&directory.0).unwrap();
-        let session = id(&unlocked(&vault, s(&legacy["password"])));
+        let session = id(&unlocked(&vault, s(&v2["masterPassword"])));
         // The desktop's watchdog and the commands check the session at the same time.
         std::thread::scope(|scope| {
             for _ in 0..4 {
@@ -1313,42 +1035,12 @@ mod tests {
         assert_eq!(id(&status), session);
     }
 
-    #[test]
-    fn a_legacy_entry_never_moves_before_its_own_dates() {
-        let (directory, legacy) = legacy_directory(false);
-        let vault = Vault::open(&directory.0).unwrap();
-        let session = id(&unlocked(&vault, s(&legacy["password"])));
-        let later = "2999-01-01T00:00:00.000Z";
-        let dated = |vault: &Vault| -> Vec<Value> {
-            let ids: Vec<Value> = ["first", "second"].iter().map(|name| {
-                let mut fields = login();
-                fields["serviceName"] = json!(name);
-                vault.create_entry(some(&session), some(&fields)).unwrap()["id"].clone()
-            }).collect();
-            // Saved while the computer's clock was ahead.
-            vault.legacy_connection(|connection| connection.execute("UPDATE password_entries SET created_at = ?1, updated_at = ?1, password_changed_at = ?1 WHERE service_name IN ('first', 'second')", [later]).unwrap());
-            ids
-        };
-        let ids = dated(&vault);
-        let mut fields = login();
-        fields["serviceName"] = json!("first");
-        let kept = vault.update_entry(some(&session), some(&ids[0]), some(&fields)).unwrap();
-        assert_eq!((kept["updatedAt"].clone(), kept["passwordChangedAt"].clone()), (json!(later), json!(later)));
-        fields["password"] = json!("synthetic-other-secret");
-        let changed = vault.update_entry(some(&session), some(&ids[0]), some(&fields)).unwrap();
-        assert_eq!((changed["updatedAt"].clone(), changed["passwordChangedAt"].clone()), (json!(later), json!(later)));
-        vault.set_entries_group(some(&session), some(&json!({ "ids": [ids[1]], "group": "moved" }))).unwrap();
-        let moved = vault.get_entry(some(&session), some(&ids[1])).unwrap();
-        assert_eq!((moved["group"].clone(), moved["updatedAt"].clone()), (json!("moved"), json!(later)));
-        // Every entry still passes the check a backup and a migration apply.
-        vault.export_backup(some(&session), some(&json!({ "passphrase": "synthetic-backup-passphrase" }))).unwrap();
-    }
 
     #[test]
     fn a_switch_waits_for_a_call_that_still_holds_the_closed_vault() {
-        let (directory, _legacy) = legacy_directory(false);
+        let (directory, _, _v2) = v2_directory();
         let vault = Vault::open(&directory.0).unwrap();
-        let held = vault.legacy().unwrap();
+        let held = vault.v2().unwrap();
         let file = Arc::downgrade(&held);
         let previous = std::mem::replace(&mut *vault.storage.write().unwrap(), Arc::new(Storage::RecoveryRequired { operation: None }));
         std::thread::scope(|scope| {
@@ -1362,22 +1054,25 @@ mod tests {
     }
 
     #[test]
-    fn legacy_entries_are_created_changed_grouped_and_deleted_like_the_app() {
-        let (directory, legacy) = legacy_directory(false);
-        let vault = Vault::open(&directory.0).unwrap();
-        let session = id(&unlocked(&vault, s(&legacy["password"])));
+    fn logins_are_created_changed_grouped_and_deleted_like_the_app() {
+        let (directory, vault, session) = created();
         let created = vault.create_entry(some(&session), some(&login())).unwrap();
         assert_eq!(created["serviceName"], "合成サービス");
         assert_eq!(created["password"], " synthetic-secret ", "secrets are kept exactly");
         assert_eq!((created["url"].clone(), created["group"].clone(), created["tags"].clone()), (json!("https://example.test"), json!("g"), json!(["a", " b "])));
         assert_eq!(created["passwordChangedAt"], created["createdAt"]);
-        let row: (String, Option<String>) = vault.legacy_connection(|connection| connection.query_row("SELECT encrypted_password, encrypted_notes FROM password_entries WHERE id = ?1", [s(&created["id"])], |row| Ok((row.get(0)?, row.get(1)?))).unwrap());
-        assert!(!row.0.contains("synthetic-secret") && !row.1.unwrap().contains("synthetic-notes"), "secrets are sealed");
+        let sealed = |vault_files: &std::path::Path| {
+            std::fs::read_dir(vault_files.join("vaults")).unwrap().flatten().all(|folder| {
+                let bytes = std::fs::read(folder.path().join("vault.sqlite")).unwrap();
+                !["synthetic-secret", "synthetic-notes", "synthetic-login", "合成サービス"].iter().any(|text| bytes.windows(text.len()).any(|window| window == text.as_bytes()))
+            })
+        };
+        assert!(sealed(&directory.0), "every field is sealed, also the names");
 
+        let second = vault.create_entry(some(&session), some(&json!({ "serviceName": "second", "loginId": "second-login", "password": "x" }))).unwrap();
         let list = vault.list_entries(some(&session)).unwrap();
         let items = list["items"].as_array().unwrap();
-        assert_eq!(items.len(), 3);
-        assert_eq!(items[0]["id"], created["id"], "newest first");
+        assert_eq!(items.len(), 2);
         assert!(items.iter().all(|item| item.get("password").is_none() && item.get("notes").is_none()), "a list never carries secrets");
 
         let mut changed_login = login();
@@ -1391,18 +1086,13 @@ mod tests {
         std::thread::sleep(Duration::from_millis(5));
         let repassworded = vault.update_entry(some(&session), some(&created["id"]), some(&changed_login)).unwrap();
         assert_eq!(repassworded["passwordChangedAt"], repassworded["updatedAt"]);
-
-        let mut card = login();
-        card["type"] = json!("apiKey");
-        assert_eq!(vault.create_entry(some(&session), some(&card)).unwrap_err().status, 409, "a legacy vault stores logins only");
         assert_eq!(vault.update_entry(some(&session), some(&json!("missing")), some(&login())).unwrap_err(), not_found());
         assert_eq!(vault.get_entry(some(&session), some(&json!(""))).unwrap_err(), VaultError::bad_request("エントリIDの形式が正しくありません"));
 
-        let first = &legacy["entries"][0]["id"];
-        let refused = vault.set_entries_group(some(&session), some(&json!({ "ids": [first, "missing"], "group": "new" }))).unwrap_err();
+        let refused = vault.set_entries_group(some(&session), some(&json!({ "ids": [second["id"], "missing"], "group": "new" }))).unwrap_err();
         assert_eq!(refused, not_found());
-        assert_eq!(vault.get_entry(some(&session), some(first)).unwrap()["group"], Value::Null, "an unknown id rolls back every change");
-        let grouped = vault.set_entries_group(some(&session), some(&json!({ "ids": [first, created["id"]], "group": "g" }))).unwrap();
+        assert_eq!(vault.get_entry(some(&session), some(&second["id"])).unwrap()["group"], Value::Null, "an unknown id fails before any write");
+        let grouped = vault.set_entries_group(some(&session), some(&json!({ "ids": [second["id"], created["id"]], "group": "g" }))).unwrap();
         assert_eq!(grouped, json!({ "updatedCount": 1 }), "an entry already in the group is not rewritten");
 
         assert_eq!(vault.delete_entry(some(&session), some(&created["id"])).unwrap(), json!({ "success": true }));
@@ -1413,13 +1103,13 @@ mod tests {
 
     #[test]
     fn entry_icons_follow_the_unlocked_vault_and_its_entries() {
-        let (directory, legacy) = legacy_directory(false);
+        let (directory, _, v2) = v2_directory();
         let vault = Vault::open(&directory.0).unwrap();
         let locked = id(&vault.status().unwrap());
         assert_eq!(vault.entry_icons(some(&locked)).unwrap_err(), error::locked());
-        let session = id(&unlocked(&vault, s(&legacy["password"])));
-        let first = legacy["entries"][0]["id"].clone();
-        let second = legacy["entries"][1]["id"].clone();
+        let session = id(&unlocked(&vault, s(&v2["masterPassword"])));
+        let first = v2["entryId"].clone();
+        let second = vault.create_entry(some(&session), some(&login())).unwrap()["id"].clone();
         assert_eq!(vault.entry_icons(some(&session)).unwrap(), json!({ "icons": {} }));
         let symbol = json!({ "kind": "symbol", "symbol": "bank", "color": "violet" });
         vault.set_entry_icon(some(&session), some(&first), some(&symbol)).unwrap();
@@ -1429,7 +1119,7 @@ mod tests {
         assert_eq!(vault.set_entry_icon(some(&session), some(&first), some(&json!({ "kind": "symbol" }))).unwrap_err().status, 400);
 
         let relocked = id(&vault.lock(some(&session)).unwrap());
-        let session = id(&vault.unlock(some(&relocked), some(&password(s(&legacy["password"])))).unwrap());
+        let session = id(&vault.unlock(some(&relocked), some(&password(s(&v2["masterPassword"])))).unwrap());
         assert_eq!(vault.entry_icons(some(&session)).unwrap()["icons"][s(&first)], symbol, "icons stay after a lock");
         vault.delete_entry(some(&session), some(&second)).unwrap();
         let after = vault.set_entry_icon(some(&session), some(&first), None).unwrap();
@@ -1464,7 +1154,7 @@ mod tests {
     }
 
     #[test]
-    fn v2_entries_keep_their_kind_revisions_and_the_vault_is_not_reset_here() {
+    fn v2_entries_keep_their_kind_and_revisions() {
         let (directory, _, v2) = v2_directory();
         let vault = Vault::open(&directory.0).unwrap();
         let first = vault.status().unwrap();
@@ -1493,9 +1183,6 @@ mod tests {
         assert_eq!(vault.delete_entry(some(&session), some(&created["id"])).unwrap(), json!({ "success": true }));
         assert_eq!(vault.get_entry(some(&session), some(&created["id"])).unwrap_err(), not_found());
 
-        assert_eq!(vault.reset(some(&json!(session)), some(&json!({ "confirmation": "RESET_ALL_DATA" }))).unwrap_err(), VaultError::conflict("この保管庫の初期化は現在利用できません"));
-        let status = vault.status().unwrap();
-        assert_eq!((status["isUnlocked"].clone(), status["lockReason"].clone()), (json!(false), json!("reset")), "the vault locks before refusing");
         drop(vault);
         let reopened = Vault::open(&directory.0).unwrap();
         let session = id(&unlocked(&reopened, s(&v2["masterPassword"])));
@@ -1504,24 +1191,24 @@ mod tests {
 
     #[test]
     fn repeated_wrong_passwords_slow_down_unlocking() {
-        let (directory, legacy) = legacy_directory(false);
+        let (directory, _, v2) = v2_directory();
         let vault = Vault::open(&directory.0).unwrap();
         let session = id(&vault.status().unwrap());
         for _ in 0..5 {
             assert_eq!(vault.unlock(some(&session), some(&password("wrong-master-password"))).unwrap_err().status, 401);
         }
-        let refused = vault.unlock(some(&session), some(&password(s(&legacy["password"])))).unwrap_err();
+        let refused = vault.unlock(some(&session), some(&password(s(&v2["masterPassword"])))).unwrap_err();
         assert_eq!(refused, VaultError::new(429, "認証の失敗が続いています。1秒後にもう一度お試しください"));
         std::thread::sleep(Duration::from_millis(1050));
-        assert!(vault.unlock(some(&session), some(&password(s(&legacy["password"])))).unwrap()["isUnlocked"].as_bool().unwrap());
+        assert!(vault.unlock(some(&session), some(&password(s(&v2["masterPassword"])))).unwrap()["isUnlocked"].as_bool().unwrap());
     }
 
     #[test]
     fn idle_time_locks_the_vault_and_activity_moves_the_deadline() {
-        let (directory, legacy) = legacy_directory(false);
+        let (directory, _, v2) = v2_directory();
         let (offset, clock) = manual_clock();
         let vault = Vault::open_with_clock(&directory.0, clock).unwrap();
-        let session = id(&unlocked(&vault, s(&legacy["password"])));
+        let session = id(&unlocked(&vault, s(&v2["masterPassword"])));
         *offset.lock().unwrap() = Duration::from_secs(4 * 60);
         vault.record_activity(some(&session)).unwrap();
         *offset.lock().unwrap() = Duration::from_secs(8 * 60);
@@ -1558,28 +1245,28 @@ mod tests {
         assert_eq!((status["isUnlocked"].clone(), status["lockReason"].clone()), (json!(false), json!("suspend")));
     }
 
+
     #[test]
     fn a_vault_file_changed_underneath_fails_closed_until_restart() {
-        let (directory, legacy) = legacy_directory(false);
-        let vault = Vault::open(&directory.0).unwrap();
-        let session = id(&unlocked(&vault, s(&legacy["password"])));
-        std::fs::write(directory.0.join("vault-current.json"), "{}").unwrap();
+        let (directory, vault, session) = created();
+        std::fs::write(directory.0.join(selection::TRANSITION), "{}").unwrap();
         assert_eq!(vault.list_entries(some(&session)).unwrap_err(), context_failed());
         assert_eq!(vault.list_entries(some(&session)).unwrap_err(), error::locked(), "the failure locked the vault");
-        std::fs::remove_file(directory.0.join("vault-current.json")).unwrap();
+        std::fs::remove_file(directory.0.join(selection::TRANSITION)).unwrap();
         let status = vault.status().unwrap();
         assert_eq!((status["isConfigured"].clone(), status["isUnlocked"].clone()), (json!(true), json!(false)));
-        assert_eq!(vault.unlock(some(&id(&status)), some(&password(s(&legacy["password"])))).unwrap_err(), context_failed(), "it stays failed");
+        assert_eq!(vault.unlock(some(&id(&status)), some(&password(MASTER))).unwrap_err(), context_failed(), "it stays failed");
 
-        let (directory, legacy) = legacy_directory(false);
-        let vault = Vault::open(&directory.0).unwrap();
-        let session = id(&unlocked(&vault, s(&legacy["password"])));
+        let (directory, vault, session) = created();
+        let Selection::V2 { database, .. } = selection::inspect(&directory.0).unwrap() else { panic!("a v2 vault") };
         // A second name could change the file unseen. Windows does not let an open SQLite file be renamed or replaced.
-        std::fs::hard_link(directory.0.join("password-manager.db"), directory.0.join("second-name.db")).unwrap();
+        std::fs::hard_link(&database, directory.0.join("second-name.sqlite")).unwrap();
         assert_eq!(vault.create_entry(some(&session), some(&login())).unwrap_err(), context_failed());
-        std::fs::remove_file(directory.0.join("second-name.db")).unwrap();
-        let count: i64 = vault.legacy_connection(|connection| connection.query_row("SELECT COUNT(*) FROM password_entries", [], |row| row.get(0)).unwrap());
-        assert_eq!(count, 2, "nothing was written");
+        drop(vault);
+        std::fs::remove_file(directory.0.join("second-name.sqlite")).unwrap();
+        let reopened = Vault::open(&directory.0).unwrap();
+        let session = id(&unlocked(&reopened, MASTER));
+        assert_eq!(reopened.list_entries(some(&session)).unwrap()["items"], json!([]), "nothing was written");
     }
 
     #[test]
@@ -1597,14 +1284,6 @@ mod tests {
         assert_eq!(vault.list_entries(some(&id(&status))).unwrap_err(), error::locked());
     }
 
-    #[test]
-    fn a_legacy_file_shaped_by_something_else_is_not_opened() {
-        let directory = TemporaryDirectory::new();
-        std::fs::write(directory.0.join("password-manager.db"), b"").unwrap();
-        Connection::open(directory.0.join("password-manager.db")).unwrap().execute_batch("PRAGMA user_version = 3;").unwrap();
-        let error = Vault::open(&directory.0).err().unwrap();
-        assert_eq!(error.message, legacy::StorageError::UnsupportedFormat.message());
-    }
 
     const AWAY: &str = "synthetic-away-message";
 
@@ -1620,13 +1299,12 @@ mod tests {
         assert!(!vault.set_availability(Box::new(|| Ok(()))), "the check is set only once");
         (away, asked)
     }
-
     #[test]
     fn the_desktop_check_runs_where_the_electron_handlers_call_it() {
-        let (directory, legacy) = legacy_directory(false);
+        let (directory, _, v2) = v2_directory();
         let vault = Vault::open(&directory.0).unwrap();
         let (away, asked) = away_switch(&vault);
-        let session = id(&unlocked(&vault, s(&legacy["password"])));
+        let session = id(&unlocked(&vault, s(&v2["masterPassword"])));
         assert_eq!(asked.load(Ordering::SeqCst), 1, "unlock asks once, before the generation check");
         assert!(vault.is_unlocked());
 
@@ -1649,10 +1327,10 @@ mod tests {
 
     #[test]
     fn copying_checks_the_session_and_the_desktop_around_the_write() {
-        let (directory, legacy) = legacy_directory(false);
+        let (directory, _, v2) = v2_directory();
         let vault = Vault::open(&directory.0).unwrap();
         let (away, _) = away_switch(&vault);
-        let session = id(&unlocked(&vault, s(&legacy["password"])));
+        let session = id(&unlocked(&vault, s(&v2["masterPassword"])));
 
         let mut written = None;
         vault
@@ -1679,7 +1357,7 @@ mod tests {
         });
         assert_eq!(result.unwrap_err().message, error::LOCKED);
 
-        let session = id(&unlocked(&vault, s(&legacy["password"])));
+        let session = id(&unlocked(&vault, s(&v2["masterPassword"])));
         away.store(true, Ordering::SeqCst);
         assert_eq!(vault.copy_text(some(&session), some(&json!("x")), never).unwrap_err().message, AWAY);
     }

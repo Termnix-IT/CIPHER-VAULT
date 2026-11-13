@@ -1,15 +1,14 @@
-//! Switching the vault to another file: migrating a legacy vault to v2, a new master password for
-//! a v2 vault (rekey), an empty v2 vault (reset), and finishing a switch that stopped part way
-//! (recover). It follows apps/api/src/services/vault-maintenance-service.ts and the modules in
-//! apps/api/src/migration/.
+//! Creating the first vault, and switching the vault to another file: a new master password
+//! (rekey), an empty vault (reset), and finishing a switch that stopped part way (recover). It
+//! began as apps/api/src/services/vault-maintenance-service.ts and the modules in
+//! apps/api/src/migration/. Migrating the legacy format was removed with that format.
 //!
 //! A switch never changes the file in use. It writes and checks a complete new vault next to it,
 //! keeps a copy of the old one with a backup file, and only then moves the pointer files that
 //! select the vault. Once a pointer file may have moved, every failure leaves the vault in
 //! recovery, where only the same switch, with the same passwords, can finish it.
 
-mod legacy_source;
-mod migration;
+mod common;
 mod recovery_check;
 mod replacement;
 mod state_files;
@@ -22,7 +21,7 @@ use crate::v2::{StoreError, V2Store};
 use serde_json::{Map, Value, json};
 use std::path::Path;
 
-pub use migration::{activate, stage};
+pub use common::create;
 pub use replacement::{Start, replace};
 
 const INVALID_REQUEST: &str = "操作・パスワード・確認入力・バックアップ用パスフレーズを確認してください";
@@ -164,7 +163,6 @@ pub fn pointer(context: &Context) -> Value {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Operation {
-    Migrate,
     Rekey,
     Reset,
     Recover,
@@ -173,7 +171,6 @@ pub enum Operation {
 impl Operation {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Migrate => "migrate",
             Self::Rekey => "rekey",
             Self::Reset => "reset",
             Self::Recover => "recover",
@@ -201,7 +198,6 @@ pub fn parse(value: Option<&Value>) -> Result<Request> {
         return Err(invalid());
     }
     let operation = match input["operation"].as_str() {
-        Some("migrate") => Operation::Migrate,
         Some("rekey") => Operation::Rekey,
         Some("reset") => Operation::Reset,
         Some("recover") => Operation::Recover,
@@ -239,49 +235,26 @@ pub fn parse(value: Option<&Value>) -> Result<Request> {
 /// What a stopped switch was doing, which only says what to verify: recovery still checks both
 /// vaults and every file before it selects one.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Hint {
-    /// A migration whose receipt names the new vault.
-    Legacy { target: Context },
-    /// A rekey or reset whose journal names both vaults.
-    V2 { source: Context, target: Context, reset: bool },
+pub struct Hint {
+    pub source: Context,
+    pub target: Context,
+    pub reset: bool,
 }
 
 impl Hint {
     pub fn mode(&self) -> &'static str {
-        match self {
-            Self::Legacy { .. } => "migrate",
-            Self::V2 { reset: true, .. } => "reset",
-            Self::V2 { reset: false, .. } => "rekey",
-        }
+        if self.reset { "reset" } else { "rekey" }
     }
 }
 
-/// recovery in vault-maintenance-service.ts.
+/// recovery in vault-maintenance-service.ts: only a rekey or reset leaves a journal that names
+/// both vaults. A migration interrupted by an earlier release cannot be finished here.
 pub fn recovery_hint(root: &Path) -> Outcome<Hint> {
-    if files::present(&files::safe_path(root, &[selection::TRANSITION], false, true)?)? {
-        let transition = replacement::read_transition(root)?;
-        return Ok(Hint::V2 { source: transition.source, target: transition.target, reset: transition.reset });
+    if !files::present(&files::safe_path(root, &[selection::TRANSITION], false, true)?)? {
+        return failed();
     }
-    let receipt = selection::read_receipt(root)?;
-    let source = files::safe_path(root, &[selection::LEGACY_DATABASE], false, false)?;
-    let reader = legacy_source::open(&source)?;
-    legacy_source::inspect(&reader)?;
-    legacy_source::metadata(&reader)?;
-    drop(reader);
-    let target = Context { vault_id: receipt.vault_id, key_id: receipt.key_id };
-    open_store(root, &target)?;
-    Ok(Hint::Legacy { target })
-}
-
-/// The key the master password gives the legacy vault, and whether its verifier accepts it.
-pub fn legacy_key(root: &Path, master: &str) -> Outcome<(crate::crypto::Secret, bool)> {
-    let reader = legacy_source::open(&files::safe_path(root, &[selection::LEGACY_DATABASE], false, false)?)?;
-    legacy_source::inspect(&reader)?;
-    let metadata = legacy_source::metadata(&reader)?;
-    drop(reader);
-    let key = crate::crypto::derive_legacy_key(master.as_bytes(), &metadata.salt).or_else(|_| failed())?;
-    let verified = crate::crypto::verify_legacy_key(&key, &metadata.verifier, metadata.raw_verifier);
-    Ok((key, verified))
+    let transition = replacement::read_transition(root)?;
+    Ok(Hint { source: transition.source, target: transition.target, reset: transition.reset })
 }
 
 /// A v2 vault of the data directory, opened for reading only.
@@ -293,7 +266,7 @@ pub fn open_store(root: &Path, context: &Context) -> Outcome<V2Store> {
 /// inspectVaultSelection, which also opens a selected v2 vault to check it.
 pub fn selected(root: &Path) -> Outcome<Option<Context>> {
     match selection::inspect(root)? {
-        selection::Selection::Legacy { .. } => Ok(None),
+        selection::Selection::Empty { .. } => Ok(None),
         selection::Selection::V2 { vault_id, key_id, .. } => {
             let context = Context { vault_id, key_id };
             open_store(root, &context)?;

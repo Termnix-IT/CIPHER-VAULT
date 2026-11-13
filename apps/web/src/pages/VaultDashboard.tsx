@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 import { UNGROUPED_GROUP_NAME as UNGROUPED } from "@password-manager/shared";
-import type { EntryIcon, VaultEntry, VaultEntrySummary, VaultEntryType, VaultEntryUpsertPayload, VaultMaintenanceState } from "@password-manager/shared/types";
+import type { EntryIcon, VaultEntry, VaultEntrySummary, VaultEntryType, VaultEntryUpsertPayload } from "@password-manager/shared/types";
 import { EntryContextMenu } from "../components/EntryContextMenu";
 import { EntryEditor, entryTypeLabel } from "../components/EntryEditor";
 import { GroupDialog } from "../components/GroupDialog";
@@ -12,8 +12,6 @@ import { ChevronIcon, CloseIcon, FolderPlusIcon, PlusIcon, SearchIcon } from "..
 export type CopyNotice = { id: number; text: string; clearsInMs: number | null };
 
 type VaultDashboardProps = {
-  vaultFormat: VaultMaintenanceState["format"];
-  onOpenMaintenance: () => void;
   hasUnsavedChanges: boolean;
   onDirtyChange: (dirty: boolean) => void;
   isFormOpen: boolean;
@@ -391,7 +389,6 @@ export function VaultDashboard(props: VaultDashboardProps) {
       </div>}
       {props.isLoadingDetail ? <p className="empty-state-text" role="status">開いています…</p> : isFormOpen || selectedEntry ?
         <EntryEditor key={isFormOpen ? "new" : selectedEntry!.id}
-          vaultFormat={props.vaultFormat} onOpenMaintenance={props.onOpenMaintenance}
           entry={isFormOpen ? null : selectedEntry} isEditing={isFormOpen || props.isEditingEntry} busy={busy} isSaving={props.isCreating || props.isUpdating}
           isGenerating={props.isGeneratingPassword} onDirtyChange={props.onDirtyChange}
           onGenerate={props.onGeneratePassword} onCopy={props.onCopyToClipboard}

@@ -10,7 +10,6 @@ pub mod error;
 pub mod files;
 pub mod icons;
 pub mod input;
-pub mod legacy;
 pub mod maintenance;
 pub mod password;
 pub mod selection;
