@@ -44,7 +44,6 @@
     updateEntry: (id, payload, sessionId) => call("entries_update", { sessionId, id, payload }),
     deleteEntry: (id, sessionId) => call("entries_delete", { sessionId, id }),
     setEntriesGroup: (payload, sessionId) => call("entries_set_group", { sessionId, payload }),
-    fetchEntryIcons: (sessionId) => call("entry_icons_get", { sessionId }),
     setEntryIcon: (id, icon, sessionId) => call("entry_icon_set", { sessionId, id, icon }),
     generatePassword: (options, sessionId) => call("password_generate", { sessionId, options }),
     exportBackup: (payload, sessionId) => call("backup_export", { sessionId, payload }),

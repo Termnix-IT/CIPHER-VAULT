@@ -394,6 +394,18 @@ pub(crate) fn is_entry_uuid(id: &str) -> bool {
 
 /// validateEntryPlaintext: every entry is checked when it is read, and before it is sealed.
 pub fn validate_stored_entry(entry: &Value, expected_id: &str) -> Result<()> {
+    // The list icon (format 4) is checked on its own, and the rest of the entry as before.
+    let without_icon;
+    let entry = match entry.get("icon") {
+        Some(icon) => {
+            crate::icons::parse_icon(icon).map_err(|_| VaultError::bad_request(INVALID_ENTRY))?;
+            let mut copy = entry.clone();
+            copy.as_object_mut().map(|object| object.remove("icon"));
+            without_icon = copy;
+            &without_icon
+        }
+        None => entry,
+    };
     let checked = match entry["type"].as_str() {
         Some("apiKey" | "creditCard" | "financial") => validate_additional(entry, expected_id),
         _ => validate_login(entry, expected_id),

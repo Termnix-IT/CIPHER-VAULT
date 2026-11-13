@@ -66,7 +66,7 @@ fn verify_in_v2(entries: Vec<Value>, active: Active<'_>) -> Outcome<Vec<Value>> 
         restored.push(store.read(&reopened, &id)?.ok_or(Code::Failed)?.0);
     }
     drop(store);
-    if !backup::validate_entries(&restored, true) {
+    if !backup::validate_entries(&restored) {
         return failed();
     }
     let by_id = |values: &[Value]| values.iter().map(|entry| (entry["id"].as_str().unwrap_or_default().to_string(), entry.clone())).collect::<BTreeMap<_, _>>();

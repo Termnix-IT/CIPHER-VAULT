@@ -29,7 +29,6 @@
             "allow-entries-update",
             "allow-entries-delete",
             "allow-entries-set-group",
-            "allow-entry-icons-get",
             "allow-entry-icon-set",
             "allow-password-generate",
             "allow-backup-export",

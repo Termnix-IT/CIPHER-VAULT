@@ -189,7 +189,7 @@ pub fn open_backup(content: &str, passphrase: &[u8]) -> Result<Secret> {
     let value = parse_json(content)?;
     let envelope = exact_object(&value, &["format", "version", "kdf", "cipher", "salt", "iv", "tag", "data"])?;
     let version = number(envelope, "version")?;
-    require(text(envelope, "format")? == "CIPHER-VAULT" && (1..=3).contains(&version))?;
+    require(text(envelope, "format")? == "CIPHER-VAULT" && (1..=4).contains(&version))?;
     require(text(envelope, "kdf")? == BACKUP_KDF && text(envelope, "cipher")? == CIPHER)?;
     let salt = decode_base64(text(envelope, "salt")?, Some(SALT_BYTES))?;
     let iv = decode_base64(text(envelope, "iv")?, Some(IV_BYTES))?;

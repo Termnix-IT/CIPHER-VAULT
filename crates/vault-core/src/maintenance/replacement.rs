@@ -133,7 +133,7 @@ fn read_entries(store: &V2Store, root: &[u8], active: Active<'_>, fresh: bool, o
             }
         }
     }
-    if !crate::backup::validate_entries(&entries, true) {
+    if !crate::backup::validate_entries(&entries) {
         return failed();
     }
     Ok(entries)

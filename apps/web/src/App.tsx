@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CLIPBOARD_CLEAR_AFTER_MS } from "@password-manager/shared";
 import type { EntryIcon, VaultEntry, VaultEntrySummary, VaultEntryUpsertPayload, VaultMaintenanceOperation, VaultStatus } from "@password-manager/shared/types";
 import {
-  copyText, createEntry, deleteEntry, fetchEntries, fetchEntry, fetchEntryIcons, generatePassword, setEntryIcon,
+  copyText, createEntry, deleteEntry, fetchEntries, fetchEntry, generatePassword, setEntryIcon,
   lockVault, observeVaultStatus, recordVaultActivity, setEntriesGroup, setupVault, unlockVault, updateEntry
 } from "./lib/api";
 import { LockScreen } from "./pages/LockScreen";
@@ -23,7 +23,7 @@ export function App() {
   const [maintenanceRequest, setMaintenanceRequest] = useState<VaultMaintenanceOperation | null>(null);
   const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null);
   const [entries, setEntries] = useState<VaultEntrySummary[]>([]);
-  const [entryIcons, setEntryIcons] = useState<Record<string, EntryIcon>>({});
+  const entryIcons = useMemo(() => Object.fromEntries(entries.flatMap((entry) => entry.icon ? [[entry.id, entry.icon]] : [])) as Record<string, EntryIcon>, [entries]);
   const [selectedEntry, setSelectedEntry] = useState<VaultEntry | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingEntries, setIsLoadingEntries] = useState(false);
@@ -56,7 +56,7 @@ export function App() {
     if (previous?.sessionId !== state.sessionId || previous.isUnlocked !== state.isUnlocked) {
       if (previous && !previous.isUnlocked && state.isUnlocked) showUnlockVeil();
       viewEpoch.current++;
-      setEntries([]); setEntryIcons({}); setSelectedEntry(null); clearCopyNotice();
+      setEntries([]); setSelectedEntry(null); clearCopyNotice();
       setIsFormOpen(false); setIsEditingEntry(false); setHasUnsavedChanges(false);
       setIsLoadingEntries(false); setIsLoadingEntryDetail(false);
       setIsCreatingEntry(false); setIsUpdatingEntry(false); setIsDeletingEntry(false); setIsGeneratingPassword(false);
@@ -70,7 +70,7 @@ export function App() {
   }), []);
 
   useEffect(() => {
-    if (vaultStatus?.isUnlocked) { void refreshEntries(); void refreshEntryIcons(); }
+    if (vaultStatus?.isUnlocked) { void refreshEntries(); }
   }, [vaultStatus?.sessionId, vaultStatus?.isUnlocked]);
 
   useEffect(() => {
@@ -118,20 +118,12 @@ export function App() {
     }
   }
 
-  // Icons are a convenience: when they cannot be read, the list keeps its letters and says nothing.
-  async function refreshEntryIcons() {
-    const epoch = viewEpoch.current;
-    try {
-      const { icons } = await fetchEntryIcons();
-      if (isCurrent(epoch)) setEntryIcons(icons);
-    } catch { /* keep the letters */ }
-  }
-
   async function handleSetEntryIcon(id: string, icon: EntryIcon | null) {
     const epoch = viewEpoch.current;
-    const { icons } = await setEntryIcon(id, icon);
+    const summary = await setEntryIcon(id, icon);
     if (!isCurrent(epoch)) throw new VaultSessionChangedError();
-    setEntryIcons(icons);
+    setEntries((current) => current.map((entry) => entry.id === id ? summary : entry));
+    setSelectedEntry((current) => current?.id === id ? { ...current, icon: summary.icon } : current);
   }
 
   async function handleVaultSubmit(masterPassword: string) {

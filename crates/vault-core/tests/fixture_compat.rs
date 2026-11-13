@@ -51,7 +51,7 @@ fn backup_v1_decrypts_and_rejects_every_kind_of_change() {
     }
     let salt_with_newline = format!("{}\n", s(&envelope["salt"]));
     for (field, value) in [("format", json!("UNKNOWN")), ("kdf", json!("scrypt-arbitrary")),
-        ("cipher", json!("aes-128-gcm")), ("salt", json!(salt_with_newline)), ("version", json!(4))] {
+        ("cipher", json!("aes-128-gcm")), ("salt", json!(salt_with_newline)), ("version", json!(5))] {
         let mut changed = envelope.clone();
         changed[field] = value;
         assert_eq!(open_backup(&changed.to_string(), passphrase).unwrap_err(), CryptoError::Format, "{field}");

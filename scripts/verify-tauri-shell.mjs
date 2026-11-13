@@ -267,7 +267,7 @@ try {
   })`);
   assert.deepEqual(result.titleBar, { text: "", names: ["一覧をアイコンだけにする", "項目", "表示", "ツール", "バージョンと更新", "ロック"] });
 
-  // ---- An icon set through the screen is kept encrypted beside the vault, and the list shows it.
+  // ---- An icon set through the screen is kept encrypted inside its entry, and the list shows it.
   const row = `button[data-entry-id="${carried.id}"]`;
   await click(page, row);
   await until("the selected entry", () => page.evaluate(`document.querySelector(".inspector-title")?.textContent === "画面で追加"`));
@@ -279,10 +279,10 @@ try {
   await page.evaluate(`[...document.querySelectorAll(".icon-picker-actions button")].find((node) => node.textContent === "保存").click()`);
   await until("the saved icon", () => page.evaluate(`!document.querySelector(".icon-picker") && !!document.querySelector(${JSON.stringify(`${row} .entry-badge--colored svg`)})`));
   const iconSession = (await status(page)).sessionId;
-  result.entryIcon = (await page.evaluate(`window.passwordManager.fetchEntryIcons(${JSON.stringify(iconSession)})`)).icons[carried.id];
+  result.entryIcon = (await page.evaluate(`window.passwordManager.fetchEntries(${JSON.stringify(iconSession)})`)).items.find((item) => item.id === carried.id).icon;
   assert.deepEqual(result.entryIcon, { kind: "symbol", symbol: "bank", color: "teal" });
-  const iconFile = readFileSync(path.join(data, "entry-icons.json"), "utf8");
-  assert.equal(/bank|teal|画面で追加/.test(iconFile), false, "the icon file is encrypted");
+  assert.equal(vaultFiles().some((file) => path.basename(file) === "entry-icons.json"), false, "no icon file beside the vault");
+  assert.equal(vaultFiles().some((file) => ["teal", "画面で追加"].some((text) => readFileSync(file).includes(Buffer.from(text)))), false, "the icon is encrypted");
   result.entryIconRefusals = {
     svgImage: await settle(page, `window.passwordManager.setEntryIcon(${JSON.stringify(carried.id)}, { kind: "image", image: "data:image/svg+xml;base64,PHN2Zz4=" }, ${JSON.stringify(iconSession)})`),
     unknownEntry: await settle(page, `window.passwordManager.setEntryIcon("missing", { kind: "letter", color: "red" }, ${JSON.stringify(iconSession)})`)

@@ -6,6 +6,8 @@ export type PasswordEntrySummary = {
   tags: string[];
   group: string | null;
   updatedAt: string;
+  /** The list icon, kept inside the entry. Without it the list shows the first letter. */
+  icon?: EntryIcon;
 };
 
 export type PasswordEntry = PasswordEntrySummary & {
@@ -58,7 +60,6 @@ export type EntryIcon =
   | { kind: "letter"; color: string }
   | { kind: "symbol"; symbol: string; color: string }
   | { kind: "image"; image: string };
-export type EntryIconMap = { icons: Record<string, EntryIcon> };
 
 /** group null removes the items from their group. */
 export type EntriesGroupPayload = { ids: string[]; group: string | null };
@@ -150,8 +151,7 @@ export type PasswordManagerDesktopApi = {
   updateEntry: (id: string, payload: VaultEntryUpsertPayload, sessionId: string) => Promise<VaultEntry>;
   deleteEntry: (id: string, sessionId: string) => Promise<{ success: boolean }>;
   setEntriesGroup: (payload: EntriesGroupPayload, sessionId: string) => Promise<{ updatedCount: number }>;
-  fetchEntryIcons: (sessionId: string) => Promise<EntryIconMap>;
-  setEntryIcon: (id: string, icon: EntryIcon | null, sessionId: string) => Promise<EntryIconMap>;
+  setEntryIcon: (id: string, icon: EntryIcon | null, sessionId: string) => Promise<VaultEntrySummary>;
   generatePassword: (options: PasswordGenerationOptions, sessionId: string) => Promise<PasswordGenerationResult>;
   copyText: (value: string, sessionId: string) => Promise<void>;
   minimizeWindow: () => Promise<void>;

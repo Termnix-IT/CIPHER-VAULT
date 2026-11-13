@@ -13,6 +13,8 @@ pub const APPLICATION_ID: i64 = 0x4356_3200;
 const LOGIN_SCHEMA_VERSION: i64 = 1;
 const ITEM_SCHEMA_VERSION: i64 = 2;
 const FINANCIAL_SCHEMA_VERSION: i64 = 3;
+/// Any entry with a list icon. Releases up to v1.0.1 refuse such a vault instead of misreading it.
+const ICON_SCHEMA_VERSION: i64 = 4;
 const MAX_ENCRYPTIONS: i64 = 1 << 20;
 const MAX_REVISION: u64 = 0xffff_ffff;
 const MAX_ENVELOPE_BYTES: usize = 16 * 1024 * 1024;
@@ -94,6 +96,9 @@ fn slot_context(slot: &str) -> StoreResult<(String, String, u64)> {
 }
 
 fn schema_version_for(entry: &Value) -> i64 {
+    if entry.get("icon").is_some() {
+        return ICON_SCHEMA_VERSION;
+    }
     match entry["type"].as_str() {
         Some("financial") => FINANCIAL_SCHEMA_VERSION,
         Some(_) => ITEM_SCHEMA_VERSION,
@@ -432,6 +437,19 @@ impl V2Store {
         })
     }
 
+    /// A copy of the file as it is now, written by SQLite into a new file named `name` beside it.
+    /// A file of that name is kept as it is, and `false` tells so.
+    pub fn copy_beside(&self, name: &str) -> StoreResult<bool> {
+        let database = self.connection.path().filter(|path| !path.is_empty()).ok_or(StoreError::Invalid)?;
+        let copy = Path::new(database).with_file_name(name);
+        if copy.try_exists().map_err(|_| StoreError::Invalid)? {
+            return Ok(false);
+        }
+        let copy = copy.to_str().ok_or(StoreError::Invalid)?;
+        self.connection.execute("VACUUM INTO ?1", [copy])?;
+        Ok(true)
+    }
+
     #[cfg(test)]
     pub(crate) fn connection(&self) -> &Connection {
         &self.connection
@@ -459,7 +477,7 @@ pub fn inspect(connection: &Connection, vault_id: &str, key_id: &str) -> StoreRe
     let application_id: i64 = connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
     let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
     let journal: String = connection.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
-    require(application_id == APPLICATION_ID && (LOGIN_SCHEMA_VERSION..=FINANCIAL_SCHEMA_VERSION).contains(&version) && journal == "delete")?;
+    require(application_id == APPLICATION_ID && (LOGIN_SCHEMA_VERSION..=ICON_SCHEMA_VERSION).contains(&version) && journal == "delete")?;
     let mut statement = connection.prepare("SELECT type, name, sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' LIMIT 4")?;
     let objects = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
     require(objects.len() == TABLES.len() && objects.iter().all(|(kind, name, sql)| kind == "table" && TABLES.iter().any(|(table, text)| table == name && sql.as_deref() == Some(*text))))?;
@@ -609,7 +627,7 @@ pub(crate) mod tests {
     #[test]
     fn files_that_differ_from_what_the_writer_leaves_are_refused() {
         let changes = [
-            "PRAGMA user_version = 4",
+            "PRAGMA user_version = 5",
             "PRAGMA journal_mode = WAL",
             "CREATE INDEX extra ON vault_entries (revision)",
             "UPDATE vault_header SET encryption_count = 2",

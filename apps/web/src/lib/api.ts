@@ -101,9 +101,6 @@ export function setEntriesGroup(payload: EntriesGroupPayload) {
   // Rewriting a large v2 vault one entry at a time can outlast the default request timeout.
   return run((id) => desktop().setEntriesGroup(payload, id));
 }
-export function fetchEntryIcons() {
-  return run((id) => desktop().fetchEntryIcons(id));
-}
 export function setEntryIcon(entryId: string, icon: EntryIcon | null) {
   return run((id) => desktop().setEntryIcon(entryId, icon, id));
 }

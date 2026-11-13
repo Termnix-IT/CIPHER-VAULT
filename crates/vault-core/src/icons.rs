@@ -1,22 +1,20 @@
-//! The icons of the entry list (a letter, a preset symbol or a small image), kept beside the vault
-//! in a file of their own. The vault, `.cvault` and `user_version` stay exactly as v0.8.0 reads
-//! them, and the icons are encrypted under a key derived from the vault key in memory, so a v2
-//! vault keeps no plain trace of its services, such as a bank's logo.
+//! List icons (a letter, a preset symbol or a small image). Since format 4 each entry carries its
+//! own icon inside its encrypted record, and this module checks one from the screen.
 //!
-//! The file is a convenience, not vault data. A missing, damaged or foreign file, including one
-//! left from before a new master password or a migration changed the key, reads as no icons, and
-//! the next save replaces it. Backups do not carry it.
+//! Releases up to v1.0.1 kept the icons in a file of their own beside the vault, encrypted under a
+//! key derived from the vault key. The first unlock moves them into their entries (vault.rs), and
+//! this module reads that file and removes it. A missing, damaged or foreign file reads as no icons.
 
 use crate::crypto::{self, CryptoError, Secret};
 use crate::error::{Result, VaultError};
 use crate::files::{bounded_read, present, safe_path};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
+#[cfg(test)]
+use serde_json::json;
 use std::fs;
-use std::io::Write;
 use std::path::Path;
-use zeroize::Zeroizing;
 
 pub const FILE: &str = "entry-icons.json";
 const TEMPORARY: &str = "entry-icons.json.tmp";
@@ -24,6 +22,7 @@ const FORMAT: &str = "CIPHER-VAULT-ENTRY-ICONS";
 const INFO: &str = "CIPHER-VAULT/entry-icons/v1";
 /// The screen redraws every picture as a 64 px PNG, which stays well below this.
 pub const MAX_IMAGE_BYTES: usize = 32 * 1024;
+#[cfg(test)]
 const MAX_PLAIN_BYTES: usize = 8 * 1024 * 1024;
 /// Base64 of the largest plaintext, with room for the fields around it.
 const MAX_FILE_BYTES: u64 = 12 * 1024 * 1024;
@@ -31,9 +30,9 @@ const IMAGE_PREFIX: &str = "data:image/png;base64,";
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 const ID_BYTES: usize = 128;
 
-/// Whose key the file is under: a v2 vault by its id, or the legacy vault.
-pub fn scope(v2_vault_id: Option<&str>) -> String {
-    v2_vault_id.map_or_else(|| "legacy".to_string(), |id| format!("v2:{id}"))
+/// Whose key the file is under: the vault by its id.
+pub fn scope(vault_id: &str) -> String {
+    format!("v2:{vault_id}")
 }
 
 /// A key for this file only, so it never equals the key of an entry or a password slot.
@@ -115,9 +114,11 @@ fn try_read(root: &Path, vault_key: &[u8], scope: &str) -> Option<Map<String, Va
     Some(icons.as_object()?.iter().filter(|(id, icon)| is_entry_id(id) && parse_icon(icon).is_ok()).map(|(id, icon)| (id.clone(), icon.clone())).collect())
 }
 
-/// Replaces the file with these icons. It is written beside the old one and then moved over it,
-/// so a failure leaves the previous icons.
+/// Replaces the file with these icons, as releases up to v1.0.1 did. Only the tests write it now.
+#[cfg(test)]
 pub fn write(root: &Path, vault_key: &[u8], scope: &str, icons: &Map<String, Value>) -> Result<()> {
+    use std::io::Write;
+    use zeroize::Zeroizing;
     let failed = || VaultError::new(500, "アイコンを保存できませんでした");
     let plain = Zeroizing::new(serde_json::to_vec(icons).map_err(|_| failed())?);
     if plain.len() > MAX_PLAIN_BYTES {
@@ -142,7 +143,7 @@ pub fn write(root: &Path, vault_key: &[u8], scope: &str, icons: &Map<String, Val
     Ok(())
 }
 
-/// Removes the file, as when the vault it belongs to is reset.
+/// Removes the file once its icons are in their entries.
 pub fn remove(root: &Path) {
     for name in [FILE, TEMPORARY] {
         if let Ok(path) = safe_path(root, &[name], false, true) {
@@ -178,7 +179,7 @@ mod tests {
         let stored = fs::read_to_string(root.0.join(FILE)).unwrap();
         assert!(!stored.contains("bank") && !stored.contains("violet"), "the icons are sealed");
         assert!(read(&root.0, &[8; 32], "legacy").is_empty(), "another key, as after a new master password, reads as none");
-        assert!(read(&root.0, &KEY, &scope(Some("11111111-1111-4111-8111-111111111111"))).is_empty(), "another vault reads as none");
+        assert!(read(&root.0, &KEY, &scope("11111111-1111-4111-8111-111111111111")).is_empty(), "another vault reads as none");
         fs::write(root.0.join(FILE), stored.replace("\"data\":\"", "\"data\":\"AA")).unwrap();
         assert!(read(&root.0, &KEY, "legacy").is_empty(), "altered data reads as none");
         remove(&root.0);
