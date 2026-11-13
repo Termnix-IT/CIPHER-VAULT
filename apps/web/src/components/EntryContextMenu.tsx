@@ -13,11 +13,12 @@ type EntryContextMenuProps = {
   onNewGroup: () => void;
   onRemoveFromGroup: () => void;
   onDelete: () => void;
+  onChangeIcon: () => void;
   /** restoreFocus is false when the pointer already moved on to something else. */
   onClose: (restoreFocus: boolean) => void;
 };
 
-export function EntryContextMenu({ entry, x, y, groupNames, onAddToGroup, onNewGroup, onRemoveFromGroup, onDelete, onClose }: EntryContextMenuProps) {
+export function EntryContextMenu({ entry, x, y, groupNames, onAddToGroup, onNewGroup, onRemoveFromGroup, onDelete, onChangeIcon, onClose }: EntryContextMenuProps) {
   const [expanded, setExpanded] = useState(false);
   const menu = useRef<HTMLDivElement>(null);
   const addButton = useRef<HTMLButtonElement>(null);
@@ -88,6 +89,7 @@ export function EntryContextMenu({ entry, x, y, groupNames, onAddToGroup, onNewG
       </button>
     </div>}
     <button type="button" className="app-menu-item" role="menuitem" disabled={!entry.group} onClick={() => run(onRemoveFromGroup)}>グループから削除</button>
+    <button type="button" className="app-menu-item" role="menuitem" onClick={() => { onClose(false); onChangeIcon(); }}>アイコンを変更…</button>
     <hr className="app-menu-separator" />
     <button type="button" className="app-menu-item entry-menu-delete" role="menuitem" onClick={() => run(onDelete)}>項目削除</button>
   </div>;

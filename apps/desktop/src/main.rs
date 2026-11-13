@@ -218,6 +218,16 @@ async fn entries_set_group(vault: State<'_, Shared>, session_id: Option<Value>, 
 }
 
 #[tauri::command]
+async fn entry_icons_get(vault: State<'_, Shared>, session_id: Option<Value>) -> Result<Value, String> {
+    run(vault, move |vault| vault.entry_icons(session_id.as_ref())).await
+}
+
+#[tauri::command]
+async fn entry_icon_set(vault: State<'_, Shared>, session_id: Option<Value>, id: Option<Value>, icon: Option<Value>) -> Result<Value, String> {
+    run(vault, move |vault| vault.set_entry_icon(session_id.as_ref(), id.as_ref(), icon.as_ref())).await
+}
+
+#[tauri::command]
 async fn password_generate(vault: State<'_, Shared>, session_id: Option<Value>, options: Option<Value>) -> Result<Value, String> {
     run(vault, move |vault| vault.generate_password(session_id.as_ref(), options.as_ref())).await
 }
@@ -392,6 +402,8 @@ fn main() {
             entries_update,
             entries_delete,
             entries_set_group,
+            entry_icons_get,
+            entry_icon_set,
             password_generate,
             backup_export,
             backup_restore,

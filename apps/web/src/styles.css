@@ -148,11 +148,16 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .window-control:focus-visible { outline-offset: -2px; }
 .window-control--close:hover { background: #c42b1c; color: #fff; }
 .app-menu-group { position: relative; }
+/* Icon-only buttons: each one names itself in its tooltip and aria-label. */
 .app-menu-trigger {
-  height: 100%; padding: 0 12px; border: 0; background: transparent;
-  color: var(--text-dim); font-size: 13px; transition: color 120ms ease, background 120ms ease;
+  width: 38px; height: 100%; padding: 0; display: flex; align-items: center; justify-content: center; border: 0; background: transparent;
+  color: var(--text-dim); transition: color 120ms ease, background 120ms ease;
 }
-.app-menu-trigger:hover, .app-menu-trigger[aria-expanded="true"] { color: var(--text); background: var(--hover); }
+.app-menu-trigger svg { width: 18px; height: 18px; }
+.app-menu-trigger:hover:not(:disabled), .app-menu-trigger[aria-expanded="true"] { color: var(--text); background: var(--hover); }
+.app-menu-trigger:disabled { opacity: .4; }
+.app-menu-trigger:focus-visible { outline-offset: -2px; }
+.app-menu-divider { width: 1px; height: 16px; margin: auto 6px; background: var(--border-strong); }
 .app-menu-popup {
   position: absolute; top: calc(100% + 4px); left: 0; min-width: 220px; padding: 4px; z-index: 30;
   border: 1px solid var(--border-strong); border-radius: 8px; background: var(--raised);
@@ -219,7 +224,29 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 /* =============================
    DASHBOARD
    ============================= */
-.cipher-dashboard { flex: 1; min-height: 0; display: grid; grid-template-columns: 280px minmax(0, 1fr); overflow: hidden; }
+.cipher-dashboard {
+  --dashboard-inset: 0px; --dashboard-gap: 0px;
+  flex: 1; min-height: 0; display: grid; grid-template-columns: var(--sidebar-width, 280px) minmax(0, 1fr); overflow: hidden; position: relative;
+  transition: grid-template-columns 180ms var(--ease);
+}
+.cipher-dashboard--collapsed { grid-template-columns: 56px minmax(0, 1fr); }
+.cipher-dashboard--resizing { transition: none; cursor: col-resize; user-select: none; }
+/* The list pane's edge. It sits over the border between the panes and widens the grip without moving it. */
+.pane-resizer {
+  position: absolute; z-index: 5; top: var(--dashboard-inset); bottom: var(--dashboard-inset); width: 8px;
+  left: calc(var(--dashboard-inset) + var(--sidebar-width, 280px) + var(--dashboard-gap) / 2 - 4px); cursor: col-resize; touch-action: none;
+}
+.pane-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: transparent; transition: background 120ms ease; }
+.pane-resizer:hover::after { background: var(--accent); transition-delay: 150ms; }
+.cipher-dashboard--resizing .pane-resizer::after { background: var(--accent); transition-delay: 0ms; }
+.pane-resizer:focus-visible { outline: none; }
+.pane-resizer:focus-visible::after { background: var(--accent); }
+/* Icons only: one column, the names in tooltips. */
+.sidebar-rail { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0; }
+.sidebar-rail-search--active { color: var(--accent); }
+.cipher-dashboard--collapsed .entry-row { justify-content: center; height: 40px; padding: 0; }
+.cipher-dashboard--collapsed .entry-badge { width: 28px; height: 28px; font-size: 12px; }
+.rail-group + .rail-group { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 4px; }
 
 .vault-sidebar { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--surface); border-right: 1px solid var(--border); }
 .sidebar-head { height: 48px; padding: 0 12px; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
@@ -275,7 +302,14 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
   width: 24px; height: 24px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
   border-radius: var(--radius); background: var(--raised); color: var(--text-dim); font-size: 11px; font-weight: 500;
 }
-.entry-row--active .entry-badge { background: var(--selected-badge); color: #fff; }
+.entry-row--active .entry-badge:not(.entry-badge--colored, .entry-badge--image) { background: var(--selected-badge); color: #fff; }
+.entry-badge svg { width: 15px; height: 15px; }
+.entry-badge--colored { background: color-mix(in srgb, var(--icon-color) 18%, var(--raised)); color: var(--icon-color); }
+.entry-row--active .entry-badge--colored { box-shadow: 0 0 0 1px color-mix(in srgb, var(--icon-color) 45%, transparent); }
+.entry-badge--image { overflow: hidden; background: var(--raised); }
+.entry-badge--image img { width: 100%; height: 100%; object-fit: cover; }
+.entry-badge.entry-badge--large { width: 40px; height: 40px; border-radius: var(--radius-lg); font-size: 16px; }
+.entry-badge--large svg { width: 22px; height: 22px; }
 .entry-info { flex: 1; min-width: 0; }
 .entry-name, .entry-login { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .entry-name { font-size: 13px; line-height: 1.35; }
@@ -296,7 +330,9 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
   border-bottom: 1px solid var(--border); flex-shrink: 0;
 }
 .inspector-actions { display: flex; gap: 8px; flex-shrink: 0; }
-.inspector-heading { min-width: 0; }
+.inspector-heading { flex: 1; min-width: 0; }
+.inspector-icon { flex-shrink: 0; padding: 0; border: 0; border-radius: var(--radius-lg); background: transparent; transition: box-shadow 120ms ease; }
+.inspector-icon:hover:not(:disabled), .inspector-icon[aria-expanded="true"] { box-shadow: 0 0 0 2px var(--border-strong); }
 .inspector-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 18px; font-weight: 500; line-height: 1.35; }
 .inspector-meta { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
 .inspector-saved { margin-left: 8px; color: var(--success); }
@@ -341,6 +377,13 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .password-visibility-hint { position: absolute; top: calc(100% + 2px); right: 0; color: var(--accent); font-size: 12px; white-space: nowrap; pointer-events: none; }
 .secret-value .password-visibility-wrap { position: relative; }
 .copy-btn--copied { color: var(--success); }
+.field-actions:has(.drag-handle) { gap: 2px; }
+.drag-handle { width: 20px; height: 32px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; border-radius: var(--radius); color: var(--text-faint); cursor: grab; }
+.drag-handle:hover { color: var(--text-dim); background: var(--hover); }
+.drag-handle:active { cursor: grabbing; }
+.drag-handle svg { width: 16px; height: 16px; }
+/* Only the field's name is shown while dragging. It is placed off screen for the browser to copy. */
+.drag-image { position: fixed; top: -100px; left: 0; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--raised); color: var(--text); font-size: 12px; }
 .editor-actions {
   height: 56px; padding: 0 24px; display: flex; align-items: center; gap: 12px; flex-shrink: 0;
   border-top: 1px solid var(--border);
@@ -349,6 +392,50 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .entry-migration-notice { margin-top: 16px; padding: 24px; display: grid; gap: 16px; justify-items: start; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 .entry-migration-notice h2 { font-size: 16px; font-weight: 500; }
 .entry-migration-notice p { color: var(--text-dim); font-size: 13px; }
+
+.tooltip {
+  position: fixed; z-index: 100; top: 0; left: 0; max-width: 280px; padding: 4px 8px; visibility: hidden; pointer-events: none;
+  border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--raised); color: var(--text);
+  font-size: 12px; line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .35); animation: tooltip-in 120ms ease both;
+}
+@keyframes tooltip-in { from { opacity: 0; } }
+
+/* The icon editor: a small popover beside the icon that opened it. */
+.icon-picker {
+  position: fixed; z-index: 35; top: 0; left: 0; width: 324px; display: flex; flex-direction: column;
+  border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); box-shadow: 0 12px 32px rgba(0, 0, 0, .45);
+  animation: toast-in 140ms var(--ease) both;
+}
+.icon-picker-head { height: 36px; padding: 0 4px 0 12px; display: flex; align-items: center; border-bottom: 1px solid var(--border); }
+.icon-picker-head h2 { flex: 1; font-size: 13px; font-weight: 500; }
+.icon-picker-head .icon-btn { width: 28px; height: 28px; }
+.icon-picker-head .icon-btn svg { width: 16px; height: 16px; }
+.icon-picker-preview { display: flex; align-items: center; gap: 12px; padding: 12px; }
+.icon-picker-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.icon-picker-tabs { display: flex; margin: 0 12px; }
+.icon-picker-tabs button { flex: 1; padding: 0 8px; }
+.icon-picker-body { padding: 12px; display: grid; gap: 12px; min-height: 120px; align-content: start; }
+.icon-picker-colors { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+.icon-picker-color {
+  aspect-ratio: 1; width: 100%; max-width: 28px; justify-self: center; padding: 0; border: 2px solid transparent; border-radius: 50%;
+  background: var(--icon-color); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .25);
+}
+.icon-picker-color:hover:not(:disabled) { border-color: var(--border-strong); }
+.icon-picker-color[aria-checked="true"] { border-color: var(--text); }
+.icon-picker-search { flex: none; }
+.icon-picker-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; max-height: 148px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+.icon-picker-grid .icon-picker-note { grid-column: 1 / -1; }
+.icon-picker-symbol { height: 34px; display: flex; align-items: center; justify-content: center; padding: 0; border: 1px solid transparent; border-radius: var(--radius); background: transparent; }
+.icon-picker-symbol:hover:not(:disabled) { background: var(--hover); }
+.icon-picker-symbol[aria-checked="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.icon-picker-symbol:focus-visible { outline-offset: -2px; }
+.icon-picker-symbol .entry-badge { width: 28px; height: 28px; background: transparent; }
+.icon-picker-symbol .entry-badge svg { width: 18px; height: 18px; }
+.icon-picker-file { margin: 0; position: relative; }
+.icon-picker-note { color: var(--text-dim); font-size: 12px; }
+.icon-picker-actions { height: 48px; padding: 0 12px; display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--border); }
+.icon-picker-actions .btn { height: 28px; }
 
 .toast-region { position: absolute; right: 24px; bottom: 88px; z-index: 10; display: grid; gap: 8px; justify-items: end; pointer-events: none; }
 .toast {
@@ -550,7 +637,10 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 [data-design="luminous"] .list-filter button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
 [data-design="luminous"] .tag-chip { border-radius: 12px; }
 
-[data-design="luminous"] .cipher-dashboard { gap: 8px; padding: 8px; }
+[data-design="luminous"] .cipher-dashboard { gap: 8px; padding: 8px; --dashboard-inset: 8px; --dashboard-gap: 8px; }
+[data-design="luminous"] .cipher-dashboard--collapsed .entry-row { width: calc(100% - 8px); margin-inline: 4px; }
+[data-design="luminous"] .cipher-dashboard--collapsed .entry-highlight { left: 4px; right: 4px; }
+[data-design="luminous"] .icon-picker { border-radius: var(--radius-lg); }
 [data-design="luminous"] .vault-sidebar,
 [data-design="luminous"] .vault-detail { background: var(--surface); border: 1px solid var(--panel-edge); border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--panel-shadow); }
 /* Panels nearly cover the backdrop on this screen, so the detail panel carries its own light. */
@@ -581,7 +671,6 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
    NARROW WINDOWS
    ============================= */
 @media (max-width: 760px) {
-  .cipher-dashboard { grid-template-columns: 220px minmax(0, 1fr); }
   .inspector-header, .editor-actions { padding: 0 16px; }
   .editor-scroll { padding: 8px 16px 24px; }
   .editor-field, .entry-view-field { grid-template-columns: 88px minmax(0, 1fr) 56px; }

@@ -40,7 +40,7 @@ const status = (page) => page.evaluate("window.passwordManager.fetchVaultStatus(
 const screenHas = (page, text) => page.evaluate(`document.body.innerText.includes(${JSON.stringify(text)})`);
 const click = (page, selector) => page.evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
 const menu = (page, group, item) => page.evaluate(`(() => {
-  [...document.querySelectorAll(".app-menu-trigger")].find((node) => node.textContent === ${JSON.stringify(group)}).click();
+  document.querySelector(${JSON.stringify(`.app-menu-trigger[aria-label="${group}"]`)}).click();
   return new Promise((resolve) => setTimeout(() => {
     [...document.querySelectorAll(".app-menu-item")].find((node) => node.textContent.endsWith(${JSON.stringify(item)})).click();
     resolve(true);
@@ -198,7 +198,7 @@ try {
 
   const unlocked = await status(page);
   await page.evaluate(`window.passwordManager.deleteEntry(${JSON.stringify(listed[0].id)}, ${JSON.stringify(unlocked.sessionId)})`);
-  await menu(page, "ファイル", "一覧を更新");
+  await menu(page, "項目", "一覧を更新");
   await until("the emptied list", async () => !(await screenHas(page, "画面で追加")));
   await menu(page, "ツール", "バックアップ");
   await until("the backup dialog", () => page.evaluate(`!!document.querySelector("#backup-export")`));
@@ -259,6 +259,53 @@ try {
   result.migratedThroughScreen = { format: "v2", passwordInPlainText: files.some((file) => readFileSync(file).includes(Buffer.from(generated))) };
   assert.equal(result.migratedThroughScreen.passwordInPlainText, false);
 
+  // ---- The title bar shows icons only, each named for tooltips and screen readers.
+  result.titleBar = await page.evaluate(`({
+    text: document.querySelector(".app-titlebar").innerText.trim(),
+    names: [...document.querySelectorAll(".app-menu-bar button")].map((node) => node.getAttribute("aria-label"))
+  })`);
+  assert.deepEqual(result.titleBar, { text: "", names: ["一覧をアイコンだけにする", "項目", "表示", "ツール", "バージョンと更新", "ロック"] });
+
+  // ---- An icon set through the screen is kept encrypted beside the vault, and the list shows it.
+  const row = `button[data-entry-id="${carried.id}"]`;
+  await click(page, row);
+  await until("the selected entry", () => page.evaluate(`document.querySelector(".inspector-title")?.textContent === "画面で追加"`));
+  await click(page, ".inspector-icon");
+  await until("the icon editor", () => page.evaluate(`!!document.querySelector(".icon-picker")`));
+  await page.evaluate(`[...document.querySelectorAll('.icon-picker [role="tab"]')].find((node) => node.textContent === "SVG").click()`);
+  await until("the symbols", () => page.evaluate(`!!document.querySelector('.icon-picker-symbol[aria-label="銀行"]')`));
+  await click(page, '.icon-picker-symbol[aria-label="銀行"]');
+  await page.evaluate(`[...document.querySelectorAll(".icon-picker-actions button")].find((node) => node.textContent === "保存").click()`);
+  await until("the saved icon", () => page.evaluate(`!document.querySelector(".icon-picker") && !!document.querySelector(${JSON.stringify(`${row} .entry-badge--colored svg`)})`));
+  const iconSession = (await status(page)).sessionId;
+  result.entryIcon = (await page.evaluate(`window.passwordManager.fetchEntryIcons(${JSON.stringify(iconSession)})`)).icons[carried.id];
+  assert.deepEqual(result.entryIcon, { kind: "symbol", symbol: "bank", color: "teal" });
+  const iconFile = readFileSync(path.join(data, "entry-icons.json"), "utf8");
+  assert.equal(/bank|teal|画面で追加/.test(iconFile), false, "the icon file is encrypted");
+  result.entryIconRefusals = {
+    svgImage: await settle(page, `window.passwordManager.setEntryIcon(${JSON.stringify(carried.id)}, { kind: "image", image: "data:image/svg+xml;base64,PHN2Zz4=" }, ${JSON.stringify(iconSession)})`),
+    unknownEntry: await settle(page, `window.passwordManager.setEntryIcon("missing", { kind: "letter", color: "red" }, ${JSON.stringify(iconSession)})`)
+  };
+  assert.deepEqual(result.entryIconRefusals, { svgImage: { error: "アイコンの形式が正しくありません" }, unknownEntry: { error: "エントリが見つかりません" } });
+
+  // ---- The list pane folds to one column of icons from the title bar and remembers it.
+  await click(page, '.app-menu-bar button[aria-label="一覧をアイコンだけにする"]');
+  await until("the folded list", () => page.evaluate(`!!document.querySelector(".cipher-dashboard--collapsed") && !document.querySelector(".entry-info") && document.querySelector(${JSON.stringify(row)}).getAttribute("data-tooltip") === "画面で追加"`));
+  // The pane narrows in a short animation.
+  await until("the narrow pane", () => page.evaluate(`document.querySelector(".vault-sidebar").getBoundingClientRect().width <= 64`));
+  await screenshot(page, screenshotDirectory, "tauri-shell-folded");
+  result.foldedList = await page.evaluate(`({ saved: localStorage.getItem("cipher-vault.sidebar-collapsed"), width: document.querySelector(".vault-sidebar").getBoundingClientRect().width, resizer: !!document.querySelector(".pane-resizer") })`);
+  assert.deepEqual(result.foldedList, { saved: "true", width: result.foldedList.width, resizer: false });
+  assert.ok(result.foldedList.width <= 64, "the folded pane is narrow");
+  await click(page, '.app-menu-bar button[aria-label="一覧を広げる"]');
+  await until("the full list", () => page.evaluate(`!document.querySelector(".cipher-dashboard--collapsed") && !!document.querySelector(".entry-info")`));
+  // The pane's edge moves with the keyboard as with the pointer, and the width is kept.
+  await page.evaluate(`document.querySelector(".pane-resizer").focus()`);
+  await page.send("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 });
+  await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 });
+  await until("the wider pane", () => page.evaluate(`localStorage.getItem("cipher-vault.sidebar-width") === "296"`));
+  await page.evaluate(`localStorage.removeItem("cipher-vault.sidebar-width")`);
+
   // ---- The clipboard and the OS. Only the vault-locked and clipboard reports are compared.
   const osWindow = events.find((event) => event.startsWith("os-window ")).split(" ")[1];
   const reportsSince = (mark) => events.slice(mark).filter((event) => event.startsWith("vault-locked ") || event.startsWith("clipboard-"));
@@ -266,11 +313,11 @@ try {
   let mark = events.length;
   await click(page, `button[data-entry-id="${carried.id}"]`);
   await until("the selected entry", () => page.evaluate(`document.querySelector(".inspector-title")?.textContent === "画面で追加"`));
-  await menu(page, "編集", "パスワードをコピー");
+  await menu(page, "項目", "パスワードをコピー");
   await until("the copy notice", () => screenHas(page, "パスワードをコピーしました"));
   assert.deepEqual(reportsSince(mark), ["clipboard-write"]);
   mark = events.length;
-  await menu(page, "ファイル", "ロック");
+  await click(page, '.app-menu-bar button[aria-label="ロック"]');
   await until("the cleared copy", () => events.slice(mark).includes("clipboard-clear"));
   result.copyThroughScreen = { lockReports: reportsSince(mark).sort() };
   assert.deepEqual(result.copyThroughScreen.lockReports, ["clipboard-clear", "vault-locked manual"]);
@@ -315,7 +362,7 @@ try {
   const unsupported = { status: "unsupported", currentVersion: VERSION };
   result.updates = { support: events.find((event) => event.startsWith("update-support ")), state: await settle(page, "window.passwordManager.getUpdateState()") };
   assert.deepEqual(result.updates, { support: "update-support false", state: { value: unsupported } });
-  await menu(page, "ヘルプ", "バージョンと更新");
+  await click(page, '.app-menu-bar button[aria-label="バージョンと更新"]');
   await until("the version dialog", () => screenHas(page, "このバージョンはアプリ内で更新できません"));
   assert.equal(await page.evaluate(`[...document.querySelectorAll(".app-info-actions button")].map((node) => node.textContent).join()`), "ダウンロードページを開く");
   await page.evaluate(`[...document.querySelectorAll(".app-info-actions button")].find((node) => node.textContent === "ダウンロードページを開く").click()`);

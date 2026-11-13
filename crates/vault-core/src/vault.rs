@@ -14,6 +14,7 @@ use crate::backup;
 use crate::crypto::{self, CryptoError, Secret};
 use crate::error::{self, Result, VaultError, changed, context_failed, not_found};
 use crate::files::{self, FileIdentity};
+use crate::icons;
 use crate::input::{self, MAX_ENTRIES, now_iso};
 use crate::legacy::{self, LegacyDatabase, SealedLogin};
 use crate::maintenance;
@@ -26,6 +27,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use chrono::Utc;
 use serde_json::{Map, Value, json};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -111,6 +113,8 @@ pub struct Vault {
     backing_up: AtomicBool,
     auditing: AtomicBool,
     switching: AtomicBool,
+    /// One change of the icon file at a time, so two saves cannot drop each other's icon.
+    icons: Mutex<()>,
     availability: OnceLock<Availability>,
     #[cfg(test)]
     context_checks: std::sync::atomic::AtomicUsize,
@@ -200,7 +204,7 @@ impl Vault {
         let mut session = Session::new(clock());
         session.lock(LockReason::Manual);
         let session = Mutex::new(session);
-        Ok(Self { root, storage, session, guard: UnlockGuard::default(), clock, failed: AtomicBool::new(false), writing: AtomicBool::new(false), backing_up: AtomicBool::new(false), auditing: AtomicBool::new(false), switching: AtomicBool::new(false), availability: OnceLock::new(), #[cfg(test)] context_checks: Default::default() })
+        Ok(Self { root, storage, session, guard: UnlockGuard::default(), clock, failed: AtomicBool::new(false), writing: AtomicBool::new(false), backing_up: AtomicBool::new(false), auditing: AtomicBool::new(false), switching: AtomicBool::new(false), icons: Mutex::new(()), availability: OnceLock::new(), #[cfg(test)] context_checks: Default::default() })
     }
 
     fn now(&self) -> Stamp {
@@ -576,7 +580,59 @@ impl Vault {
                 return Err(VaultError::conflict("この保管庫の初期化は現在利用できません"));
             }
             self.legacy_write(None, None, |transaction| legacy::reset(transaction).map_err(|_| context_failed()))?;
+            // The icons belonged to the vault just emptied.
+            icons::remove(&self.root);
             self.status()
+        })
+    }
+
+    // ---- List icons (icons.rs). They live in a file beside the vault, so the vault formats stay as they are.
+
+    fn icon_scope(&self) -> Result<String> {
+        match &*self.storage() {
+            Storage::Legacy { .. } => Ok(icons::scope(None)),
+            Storage::V2 { vault_id, .. } => Ok(icons::scope(Some(vault_id))),
+            Storage::RecoveryRequired { .. } | Storage::Running { .. } => Err(VaultError::conflict(SWITCH_PENDING)),
+        }
+    }
+
+    /// The icons of the entries, by entry id. They need the vault key, so only an unlocked vault has them.
+    pub fn entry_icons(&self, session_id: Option<&Value>) -> Result<Value> {
+        self.with_session(session_id, |session| {
+            self.assert_current()?;
+            let scope = self.icon_scope()?;
+            let key = self.key(session)?;
+            let _one_at_a_time = self.icons.lock().unwrap();
+            Ok(json!({ "icons": icons::read(&self.root, &key, &scope) }))
+        })
+    }
+
+    /// Sets the icon of one entry, or removes it with null. Icons of entries that no longer exist
+    /// are dropped on the way, and the remaining icons are returned.
+    pub fn set_entry_icon(&self, session_id: Option<&Value>, id: Option<&Value>, icon: Option<&Value>) -> Result<Value> {
+        self.with_session(session_id, |session| {
+            let id = input::parse_entry_id(id)?;
+            let icon = match icon {
+                None | Some(Value::Null) => None,
+                Some(value) => Some(icons::parse_icon(value)?),
+            };
+            let listed = self.entry_list()?;
+            let ids: HashSet<&str> = listed["items"].as_array().into_iter().flatten().filter_map(|item| item["id"].as_str()).collect();
+            if !ids.contains(id.as_str()) {
+                return Err(not_found());
+            }
+            let scope = self.icon_scope()?;
+            let key = self.key(session)?;
+            let _one_at_a_time = self.icons.lock().unwrap();
+            let mut stored = icons::read(&self.root, &key, &scope);
+            stored.retain(|entry, _| ids.contains(entry.as_str()));
+            match icon {
+                Some(icon) => stored.insert(id, icon),
+                None => stored.remove(&id),
+            };
+            self.require_unlocked_vault(Some(session))?;
+            icons::write(&self.root, &key, &scope, &stored)?;
+            Ok(json!({ "icons": stored }))
         })
     }
 
@@ -1353,6 +1409,31 @@ mod tests {
         assert_eq!(vault.delete_entry(some(&session), some(&created["id"])).unwrap_err(), not_found());
         let password = vault.generate_password(some(&session), None).unwrap();
         assert_eq!(password["password"].as_str().unwrap().len(), 20);
+    }
+
+    #[test]
+    fn entry_icons_follow_the_unlocked_vault_and_its_entries() {
+        let (directory, legacy) = legacy_directory(false);
+        let vault = Vault::open(&directory.0).unwrap();
+        let locked = id(&vault.status().unwrap());
+        assert_eq!(vault.entry_icons(some(&locked)).unwrap_err(), error::locked());
+        let session = id(&unlocked(&vault, s(&legacy["password"])));
+        let first = legacy["entries"][0]["id"].clone();
+        let second = legacy["entries"][1]["id"].clone();
+        assert_eq!(vault.entry_icons(some(&session)).unwrap(), json!({ "icons": {} }));
+        let symbol = json!({ "kind": "symbol", "symbol": "bank", "color": "violet" });
+        vault.set_entry_icon(some(&session), some(&first), some(&symbol)).unwrap();
+        let both = vault.set_entry_icon(some(&session), some(&second), some(&json!({ "kind": "letter", "color": "red" }))).unwrap();
+        assert_eq!(both["icons"].as_object().unwrap().len(), 2);
+        assert_eq!(vault.set_entry_icon(some(&session), some(&json!("missing")), some(&symbol)).unwrap_err(), not_found());
+        assert_eq!(vault.set_entry_icon(some(&session), some(&first), some(&json!({ "kind": "symbol" }))).unwrap_err().status, 400);
+
+        let relocked = id(&vault.lock(some(&session)).unwrap());
+        let session = id(&vault.unlock(some(&relocked), some(&password(s(&legacy["password"])))).unwrap());
+        assert_eq!(vault.entry_icons(some(&session)).unwrap()["icons"][s(&first)], symbol, "icons stay after a lock");
+        vault.delete_entry(some(&session), some(&second)).unwrap();
+        let after = vault.set_entry_icon(some(&session), some(&first), None).unwrap();
+        assert_eq!(after, json!({ "icons": {} }), "null removes an icon, and a deleted entry's icon goes with the next save");
     }
 
     #[test]

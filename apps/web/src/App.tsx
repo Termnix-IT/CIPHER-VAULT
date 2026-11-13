@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { CLIPBOARD_CLEAR_AFTER_MS } from "@password-manager/shared";
-import type { VaultEntry, VaultEntrySummary, VaultEntryUpsertPayload, VaultMaintenanceOperation, VaultStatus } from "@password-manager/shared/types";
+import type { EntryIcon, VaultEntry, VaultEntrySummary, VaultEntryUpsertPayload, VaultMaintenanceOperation, VaultStatus } from "@password-manager/shared/types";
 import {
-  copyText, createEntry, deleteEntry, fetchEntries, fetchEntry, generatePassword,
+  copyText, createEntry, deleteEntry, fetchEntries, fetchEntry, fetchEntryIcons, generatePassword, setEntryIcon,
   lockVault, observeVaultStatus, recordVaultActivity, resetVault, setEntriesGroup, setupVault, unlockVault, updateEntry
 } from "./lib/api";
 import { LockScreen } from "./pages/LockScreen";
@@ -12,6 +12,8 @@ import { VaultSessionChangedError } from "./lib/vault-client-session";
 import { applyDesignMode, readDesignMode, saveDesignMode, type DesignMode } from "./lib/design-mode";
 import { VaultMaintenance } from "./components/VaultMaintenance";
 import { LockIcon } from "./components/Icons";
+import { Tooltip } from "./components/Tooltip";
+import { readSidebarCollapsed, saveSidebarCollapsed } from "./lib/layout-prefs";
 
 type UnlockVeil = { shell: DOMRect; mark: DOMRect };
 const UNLOCK_VEIL_MS = 480;
@@ -21,6 +23,7 @@ export function App() {
   const [maintenanceRequest, setMaintenanceRequest] = useState<VaultMaintenanceOperation | null>(null);
   const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null);
   const [entries, setEntries] = useState<VaultEntrySummary[]>([]);
+  const [entryIcons, setEntryIcons] = useState<Record<string, EntryIcon>>({});
   const [selectedEntry, setSelectedEntry] = useState<VaultEntry | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingEntries, setIsLoadingEntries] = useState(false);
@@ -40,6 +43,7 @@ export function App() {
   const [isEditingEntry, setIsEditingEntry] = useState(false);
   const [isGroupedView, setIsGroupedView] = useState(false);
   const [designMode, setDesignMode] = useState<DesignMode>(readDesignMode);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(readSidebarCollapsed);
   const statusRef = useRef<VaultStatus | null>(null);
   const maintenanceRequired = vaultStatus?.maintenance?.state !== undefined && vaultStatus.maintenance.state !== "ready";
   useEffect(() => { if (maintenanceRequired) setMaintenanceOpened(true); }, [maintenanceRequired]);
@@ -52,7 +56,7 @@ export function App() {
     if (previous?.sessionId !== state.sessionId || previous.isUnlocked !== state.isUnlocked) {
       if (previous && !previous.isUnlocked && state.isUnlocked) showUnlockVeil();
       viewEpoch.current++;
-      setEntries([]); setSelectedEntry(null); clearCopyNotice();
+      setEntries([]); setEntryIcons({}); setSelectedEntry(null); clearCopyNotice();
       setIsFormOpen(false); setIsEditingEntry(false); setHasUnsavedChanges(false);
       setIsLoadingEntries(false); setIsLoadingEntryDetail(false);
       setIsCreatingEntry(false); setIsUpdatingEntry(false); setIsDeletingEntry(false); setIsGeneratingPassword(false);
@@ -66,7 +70,7 @@ export function App() {
   }), []);
 
   useEffect(() => {
-    if (vaultStatus?.isUnlocked) void refreshEntries();
+    if (vaultStatus?.isUnlocked) { void refreshEntries(); void refreshEntryIcons(); }
   }, [vaultStatus?.sessionId, vaultStatus?.isUnlocked]);
 
   useEffect(() => {
@@ -112,6 +116,22 @@ export function App() {
     } finally {
       if (isCurrent(epoch)) setIsLoadingEntries(false);
     }
+  }
+
+  // Icons are a convenience: when they cannot be read, the list keeps its letters and says nothing.
+  async function refreshEntryIcons() {
+    const epoch = viewEpoch.current;
+    try {
+      const { icons } = await fetchEntryIcons();
+      if (isCurrent(epoch)) setEntryIcons(icons);
+    } catch { /* keep the letters */ }
+  }
+
+  async function handleSetEntryIcon(id: string, icon: EntryIcon | null) {
+    const epoch = viewEpoch.current;
+    const { icons } = await setEntryIcon(id, icon);
+    if (!isCurrent(epoch)) throw new VaultSessionChangedError();
+    setEntryIcons(icons);
   }
 
   async function handleVaultSubmit(masterPassword: string) {
@@ -292,6 +312,11 @@ export function App() {
     saveDesignMode(mode);
   }
 
+  function handleSidebarCollapsedChange(collapsed: boolean) {
+    setIsSidebarCollapsed(collapsed);
+    saveSidebarCollapsed(collapsed);
+  }
+
   function handleOpenCreateForm() {
     if (isFormOpen || isCreatingEntry || isUpdatingEntry || isDeletingEntry || isLoadingEntryDetail) return;
     if (hasUnsavedChanges && !window.confirm("保存していない変更を破棄して、新しい項目を作りますか？")) return;
@@ -328,6 +353,8 @@ export function App() {
     onNewEntry={handleOpenCreateForm}
     onEditEntry={handleEditEntry}
     onGroupedViewChange={setIsGroupedView}
+    isSidebarCollapsed={isSidebarCollapsed}
+    onSidebarCollapsedChange={handleSidebarCollapsedChange}
     designMode={designMode}
     onDesignModeChange={handleDesignModeChange}
     vaultFormat={vaultStatus?.maintenance?.format ?? "unknown"}
@@ -340,6 +367,7 @@ export function App() {
     return (
       <main className="app-shell">
         {menu}
+        <Tooltip />
         <div className="status-shell">
           <p role="status">読み込み中…</p>
           {errorMessage ? <p className="form-error">{errorMessage}</p> : null}
@@ -351,6 +379,7 @@ export function App() {
   return (
     <main className="app-shell">
       {menu}
+      <Tooltip />
       {maintenanceRequired ? <div className="status-shell"><p role="status">前回の変更を確認しています…</p></div> : vaultStatus.isUnlocked ? (
         <VaultDashboard key={`vault-${vaultStatus.sessionId}`}
           vaultFormat={vaultStatus.maintenance?.format ?? "unknown"}
@@ -363,7 +392,11 @@ export function App() {
           onEditEntry={handleEditEntry}
           isGroupedView={isGroupedView}
           onGroupedViewChange={setIsGroupedView}
+          isSidebarCollapsed={isSidebarCollapsed}
+          onSidebarCollapsedChange={handleSidebarCollapsedChange}
           onDirtyChange={setHasUnsavedChanges}
+          entryIcons={entryIcons}
+          onSetEntryIcon={handleSetEntryIcon}
           entries={entries}
           isLoading={isLoadingEntries}
           isCreating={isCreatingEntry}

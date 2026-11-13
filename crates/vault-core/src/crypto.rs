@@ -83,12 +83,26 @@ pub fn verify_legacy_key(key: &[u8], verifier: &str, raw_verifier: bool) -> bool
 
 /// HKDF-SHA256 with the 16 UUID bytes as salt and a per-purpose info string.
 pub fn derive_v2_purpose_key(input_key: &[u8], vault_id: &str, info: &str) -> Result<Secret> {
-    let salt = uuid_bytes(vault_id)?;
+    derive_purpose_key(input_key, &uuid_bytes(vault_id)?, info)
+}
+
+/// HKDF-SHA256 with a caller-chosen salt, for keys that must never equal another purpose's key.
+pub fn derive_purpose_key(input_key: &[u8], salt: &[u8], info: &str) -> Result<Secret> {
     let mut key = Zeroizing::new(vec![0u8; KEY_BYTES]);
-    Hkdf::<Sha256>::new(Some(&salt), input_key)
+    Hkdf::<Sha256>::new(Some(salt), input_key)
         .expand(info.as_bytes(), &mut key)
         .map_err(|_| CryptoError::Kdf)?;
     Ok(key)
+}
+
+/// AES-256-GCM with a fresh random IV, returned as (iv, tag, ciphertext). Only for a key of its
+/// own that no vault format uses: such a key is outside the v2 nonce reservation, and random
+/// 96-bit IVs stay safe for far more writes than a settings file sees.
+pub fn seal_with_random_iv(key: &[u8], plaintext: &[u8], aad: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+    let mut iv = vec![0u8; IV_BYTES];
+    getrandom::fill(&mut iv).map_err(|_| CryptoError::Kdf)?;
+    let (ciphertext, tag) = seal(key, &iv, plaintext, aad)?;
+    Ok((iv, tag, ciphertext))
 }
 
 fn uuid_bytes(value: &str) -> Result<Vec<u8>> {

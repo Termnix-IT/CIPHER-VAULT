@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 import { UNGROUPED_GROUP_NAME as UNGROUPED } from "@password-manager/shared";
-import type { VaultEntry, VaultEntrySummary, VaultEntryType, VaultEntryUpsertPayload, VaultMaintenanceState } from "@password-manager/shared/types";
+import type { EntryIcon, VaultEntry, VaultEntrySummary, VaultEntryType, VaultEntryUpsertPayload, VaultMaintenanceState } from "@password-manager/shared/types";
 import { EntryContextMenu } from "../components/EntryContextMenu";
 import { EntryEditor, entryTypeLabel } from "../components/EntryEditor";
 import { GroupDialog } from "../components/GroupDialog";
+import { EntryIconBadge } from "../components/EntryIconBadge";
+import { EntryIconPicker } from "../components/EntryIconPicker";
+import { SIDEBAR_DEFAULT_WIDTH, clampSidebarWidth, readSidebarWidth, saveSidebarWidth } from "../lib/layout-prefs";
 import { ChevronIcon, CloseIcon, FolderPlusIcon, PlusIcon, SearchIcon } from "../components/Icons";
 
 export type CopyNotice = { id: number; text: string; clearsInMs: number | null };
@@ -20,6 +23,10 @@ type VaultDashboardProps = {
   onEditEntry: () => void;
   isGroupedView: boolean;
   onGroupedViewChange: (grouped: boolean) => void;
+  isSidebarCollapsed: boolean;
+  onSidebarCollapsedChange: (collapsed: boolean) => void;
+  entryIcons: Record<string, EntryIcon>;
+  onSetEntryIcon: (id: string, icon: EntryIcon | null) => Promise<void>;
   entries: VaultEntrySummary[];
   isLoading: boolean;
   isCreating: boolean;
@@ -74,7 +81,13 @@ function entrySubtitle(entry: VaultEntrySummary) {
 }
 
 export function VaultDashboard(props: VaultDashboardProps) {
-  const { entries, selectedEntry, isFormOpen, isGroupedView } = props;
+  const { entries, selectedEntry, isFormOpen, isGroupedView, isSidebarCollapsed: collapsed, entryIcons } = props;
+  const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
+  const [resizing, setResizing] = useState(false);
+  const [iconPicker, setIconPicker] = useState<{ id: string; x: number; y: number; opener: HTMLElement | null } | null>(null);
+  const dashboardRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const focusSearch = useRef(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [typeFilter, setTypeFilter] = useState<VaultEntryType | "all">("all");
@@ -150,7 +163,11 @@ export function VaultDashboard(props: VaultDashboardProps) {
     observer.observe(list);
     observer.observe(active);
     return () => observer.disconnect();
-  }, [filtered, listSections, selectedEntry?.id, isFormOpen, isGroupedView, collapsedGroups, props.isLoading]);
+  }, [filtered, listSections, selectedEntry?.id, isFormOpen, isGroupedView, collapsedGroups, props.isLoading, collapsed]);
+
+  useEffect(() => {
+    if (!collapsed && focusSearch.current) { focusSearch.current = false; searchRef.current?.focus(); }
+  }, [collapsed]);
 
   useLayoutEffect(() => {
     if (props.isLoadingDetail) return;
@@ -231,21 +248,61 @@ export function VaultDashboard(props: VaultDashboardProps) {
     entryMenuRow.current = event.currentTarget;
     setEntryMenu({ id, x: fromPointer ? event.clientX : rect.left + 16, y: fromPointer ? event.clientY : rect.bottom });
   }
+  function openIconPicker(id: string, opener: HTMLElement | null, x: number, y: number) {
+    if (!busy) setIconPicker({ id, x, y, opener });
+  }
+  const closeIconPicker = useCallback(() => {
+    setIconPicker((current) => { current?.opener?.focus(); return null; });
+  }, []);
+
+  // The pane's edge follows the pointer directly; the width is kept once the drag ends.
+  function startResize(event: PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const handle = event.currentTarget, start = event.clientX, from = sidebarWidth;
+    handle.setPointerCapture(event.pointerId);
+    setResizing(true);
+    let width = from;
+    const move = (next: globalThis.PointerEvent) => {
+      width = clampSidebarWidth(from + next.clientX - start);
+      dashboardRef.current?.style.setProperty("--sidebar-width", `${width}px`);
+    };
+    const end = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", end);
+      handle.removeEventListener("pointercancel", end);
+      setResizing(false); setSidebarWidth(width); saveSidebarWidth(width);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+  }
+  function resizeByKey(event: KeyboardEvent<HTMLDivElement>) {
+    const step = event.shiftKey ? 48 : 16;
+    const next = event.key === "ArrowLeft" ? sidebarWidth - step : event.key === "ArrowRight" ? sidebarWidth + step
+      : event.key === "Home" ? 0 : event.key === "End" ? Infinity : event.key === "Enter" ? SIDEBAR_DEFAULT_WIDTH : null;
+    if (next === null) return;
+    event.preventDefault();
+    const width = clampSidebarWidth(next);
+    setSidebarWidth(width); saveSidebarWidth(width);
+  }
+
   function renderEntry(entry: VaultEntrySummary) {
     const active = !isFormOpen && selectedEntry?.id === entry.id;
     return <button key={entry.id} type="button" data-entry-id={entry.id}
       className={`entry-row ${active ? "entry-row--active" : ""} ${entryMenu?.id === entry.id ? "entry-row--menu" : ""}`}
       disabled={busy} aria-current={active ? "true" : undefined}
+      aria-label={collapsed ? entry.serviceName : undefined} data-tooltip={collapsed ? entry.serviceName : undefined} data-tooltip-side="right"
       onContextMenu={(event) => openEntryMenu(event, entry.id)}
       onClick={() => {
         if (active) return;
         if (canDiscard()) { setSavedNotice(false); void props.onSelectEntry(entry.id); }
       }}>
-      <span className="entry-badge" aria-hidden="true">{entry.serviceName.charAt(0).toUpperCase()}</span>
-      <span className="entry-info">
+      <EntryIconBadge name={entry.serviceName} icon={entryIcons[entry.id]} />
+      {!collapsed && <span className="entry-info">
         <span className="entry-name">{entry.serviceName}</span>
         <span className="entry-login">{entrySubtitle(entry)}</span>
-      </span>
+      </span>}
     </button>;
   }
   const feedback = props.errorMessage || props.copyNotice?.text;
@@ -255,19 +312,28 @@ export function VaultDashboard(props: VaultDashboardProps) {
     {items.map(renderEntry)}
   </div>;
 
-  return <div className="cipher-dashboard" aria-busy={busy || props.isLoading}>
+  const pickerEntry = iconPicker && entries.find((entry) => entry.id === iconPicker.id);
+  const searchLabel = search ? `検索（「${searchTerm.trim()}」で絞り込み中）` : "検索";
+
+  return <div className={`cipher-dashboard ${collapsed ? "cipher-dashboard--collapsed" : ""} ${resizing ? "cipher-dashboard--resizing" : ""}`} ref={dashboardRef}
+    style={{ ["--sidebar-width" as string]: `${sidebarWidth}px` }} aria-busy={busy || props.isLoading}>
     <aside className="vault-sidebar" aria-label="項目の一覧">
-      <div className="sidebar-controls">
+      {collapsed ? <div className="sidebar-controls sidebar-rail">
+        <button className={`icon-btn ${search ? "sidebar-rail-search--active" : ""}`} type="button"
+          aria-label={searchLabel} data-tooltip={searchLabel} data-tooltip-side="right"
+          onClick={() => { focusSearch.current = true; props.onSidebarCollapsedChange(false); }}><SearchIcon /></button>
+        <button className="icon-btn" type="button" aria-label="新しい項目" data-tooltip="新しい項目" data-tooltip-side="right" disabled={busy || isFormOpen} onClick={openCreate}><PlusIcon /></button>
+      </div> : <div className="sidebar-controls">
         <div className="sidebar-head">
           <div className="search-box">
             <SearchIcon />
-            <input className="search-input" type="search" aria-label="検索" placeholder="検索"
+            <input className="search-input" type="search" aria-label="検索" placeholder="検索" ref={searchRef}
               value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} />
             {search && <span className="search-count" role="status">{filtered.length} / {entries.length}</span>}
             {searchTerm && <button className="icon-btn" type="button" aria-label="検索をクリア" onClick={() => setSearchTerm("")}><CloseIcon /></button>}
           </div>
-          <button className="btn sidebar-add" type="button" aria-label="新しい項目" title="新しい項目" disabled={busy || isFormOpen} onClick={openCreate}><PlusIcon /></button>
-          <button className="btn sidebar-group-add" type="button" aria-label="新しいグループ" title="新しいグループ" disabled={busy || entries.length === 0} onClick={() => openGroupDialog([])}><FolderPlusIcon /></button>
+          <button className="btn sidebar-add" type="button" aria-label="新しい項目" data-tooltip="新しい項目" disabled={busy || isFormOpen} onClick={openCreate}><PlusIcon /></button>
+          <button className="btn sidebar-group-add" type="button" aria-label="新しいグループ" data-tooltip="新しいグループ" disabled={busy || entries.length === 0} onClick={() => openGroupDialog([])}><FolderPlusIcon /></button>
         </div>
         {presentTypes.length > 1 && <div className="list-filter" role="group" aria-label="種類で絞り込み">
           <button type="button" aria-pressed={activeType === "all"} onClick={() => setTypeFilter("all")}>すべて</button>
@@ -280,13 +346,16 @@ export function VaultDashboard(props: VaultDashboardProps) {
             <option value="updated">更新順</option>
           </select>
         </div>}
-      </div>
+      </div>}
       <div className="entry-list">
         <div className="entry-list-content" ref={listRef}>
           <div className="entry-highlight" ref={highlightRef} aria-hidden="true" hidden />
           {props.isLoading && <p className="empty-state-text" role="status">読み込み中…</p>}
           {!props.isLoading && search && filtered.length === 0 && <p className="empty-state-text">見つかりません</p>}
-          {!props.isLoading && (isGroupedView && !search ? groups.map(([name, items]) => <div key={name}>
+          {!props.isLoading && collapsed && (isGroupedView && !search
+            ? groups.map(([name, items]) => <div key={name} className="rail-group" role="group" aria-label={name}>{items.map(renderEntry)}</div>)
+            : filtered.map(renderEntry))}
+          {!props.isLoading && !collapsed && (isGroupedView && !search ? groups.map(([name, items]) => <div key={name}>
             <button className="group-header" type="button" aria-expanded={!collapsedGroups.has(name)} onClick={() => setCollapsedGroups((current) => {
               const next = new Set(current); if (next.has(name)) next.delete(name); else next.add(name); return next;
             })}>
@@ -298,8 +367,16 @@ export function VaultDashboard(props: VaultDashboardProps) {
         </div>
       </div>
     </aside>
+    {!collapsed && <div className="pane-resizer" role="separator" aria-orientation="vertical" aria-label="一覧の幅" tabIndex={0}
+      aria-valuemin={clampSidebarWidth(0)} aria-valuemax={clampSidebarWidth(Infinity)} aria-valuenow={sidebarWidth}
+      onPointerDown={startResize} onKeyDown={resizeByKey} onDoubleClick={() => { setSidebarWidth(SIDEBAR_DEFAULT_WIDTH); saveSidebarWidth(SIDEBAR_DEFAULT_WIDTH); }} />}
     <section className="vault-detail" ref={detailRef} aria-label={isFormOpen ? "新しい項目" : props.isEditingEntry ? "項目の編集" : "項目の詳細"}>
       {showHeader && <div className="inspector-header">
+        {selectedEntry && !isFormOpen && <button className="inspector-icon" type="button" disabled={busy}
+          aria-label="アイコンを編集" data-tooltip="アイコンを編集" aria-haspopup="dialog" aria-expanded={iconPicker?.id === selectedEntry.id}
+          onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); openIconPicker(selectedEntry.id, event.currentTarget, rect.left, rect.bottom + 6); }}>
+          <EntryIconBadge name={selectedEntry.serviceName} icon={entryIcons[selectedEntry.id]} className="entry-badge--large" />
+        </button>}
         <div className="inspector-heading">
           <h1 className="inspector-title">{isFormOpen ? "新しい項目" : selectedEntry?.serviceName ?? ""}</h1>
           {selectedEntry && !isFormOpen && <p className="inspector-meta">
@@ -340,7 +417,10 @@ export function VaultDashboard(props: VaultDashboardProps) {
     </section>
     {entryMenu && menuEntry && <EntryContextMenu key={menuEntry.id} entry={menuEntry} x={entryMenu.x} y={entryMenu.y} groupNames={groupNames} onClose={closeEntryMenu}
       onAddToGroup={(group) => setGroup(menuEntry.id, group)} onNewGroup={() => openGroupDialog([menuEntry.id])}
-      onRemoveFromGroup={() => setGroup(menuEntry.id, null)} onDelete={() => deleteTarget(menuEntry)} />}
+      onRemoveFromGroup={() => setGroup(menuEntry.id, null)} onDelete={() => deleteTarget(menuEntry)}
+      onChangeIcon={() => openIconPicker(menuEntry.id, entryMenuRow.current, entryMenu.x, entryMenu.y)} />}
+    {iconPicker && pickerEntry && <EntryIconPicker key={pickerEntry.id} name={pickerEntry.serviceName} icon={entryIcons[pickerEntry.id] ?? null}
+      x={iconPicker.x} y={iconPicker.y} onClose={closeIconPicker} onSave={(icon) => props.onSetEntryIcon(pickerEntry.id, icon)} />}
     {groupDialogIds && <GroupDialog entries={entries} groupNames={groupNames} initialIds={groupDialogIds} onSubmit={submitGroup} onClose={() => setGroupDialogIds(null)} />}
   </div>;
 }

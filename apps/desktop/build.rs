@@ -14,6 +14,8 @@ const COMMANDS: &[&str] = &[
     "entries_update",
     "entries_delete",
     "entries_set_group",
+    "entry_icons_get",
+    "entry_icon_set",
     "password_generate",
     "backup_export",
     "backup_restore",

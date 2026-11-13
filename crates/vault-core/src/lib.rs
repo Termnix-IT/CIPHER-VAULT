@@ -8,6 +8,7 @@ pub mod backup;
 pub mod crypto;
 pub mod error;
 pub mod files;
+pub mod icons;
 pub mod input;
 pub mod legacy;
 pub mod maintenance;

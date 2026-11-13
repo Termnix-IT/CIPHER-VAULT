@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useId, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { FinancialExtraSecret, VaultEntry, VaultEntryType, VaultEntryUpsertPayload, VaultMaintenanceState } from "@password-manager/shared/types";
-import { CheckIcon, CloseIcon, CopyIcon, EyeIcon } from "./Icons";
+import { CheckIcon, CloseIcon, CopyIcon, EyeIcon, GripIcon } from "./Icons";
 
 type Draft = {
   type: VaultEntryType; serviceName: string; loginId: string; password: string; url: string; group: string; tags: string; notes: string;
@@ -204,10 +204,29 @@ export function EntryEditor({ entry, vaultFormat, onOpenMaintenance, isEditing, 
       </span>
     </div>;
   }
-  function viewField(label: string, value: string, copyable = false, plain = false) {
+  /**
+   * Drags the value into another app's field, such as a browser's sign-in form. Only the login ID
+   * of a login offers this: a dragged value is handed to every window the pointer crosses and can
+   * land in a search box or chat, so passwords and account numbers stay with the expiring copy.
+   */
+  function dragHandle(value: string, label: string) {
+    return <span className="drag-handle" draggable={!busy} role="img" aria-label={`${label}をドラッグして入力欄へ`} data-tooltip={`ドラッグして入力欄へ（${label}）`}
+      onDragStart={(event) => {
+        event.dataTransfer.effectAllowed = "copy";
+        event.dataTransfer.setData("text/plain", value);
+        // The drag image names the field rather than showing the value.
+        const image = document.createElement("span");
+        image.className = "drag-image";
+        image.textContent = label;
+        document.body.append(image);
+        event.dataTransfer.setDragImage(image, 12, 12);
+        window.setTimeout(() => image.remove(), 0);
+      }}><GripIcon /></span>;
+  }
+  function viewField(label: string, value: string, copyable = false, plain = false, draggable = false) {
     if (!value) return null;
     return <div className="entry-view-field"><dt>{label}</dt><dd className={plain ? "entry-view-plain" : undefined}>{value}</dd>
-      <span className="field-actions">{copyable && copyButton(value, label)}</span></div>;
+      <span className="field-actions">{copyable && copyButton(value, label)}{draggable && dragHandle(value, label)}</span></div>;
   }
   function secretView(key: SecretField, label: string, value: string, masked = "••••••••••••") {
     if (!value) return null;
@@ -285,7 +304,7 @@ export function EntryEditor({ entry, vaultFormat, onOpenMaintenance, isEditing, 
           {secretView("tradingPassword", "取引パスワード", entry.financial.tradingPassword)}
           {entry.financial.extraSecrets.map((secret, index) => <Fragment key={index}>{secretView(`extra-${index}`, secret.label, secret.value)}</Fragment>)}
         </> : <>
-          {viewField("ログインID", entry.loginId, true)}
+          {viewField("ログインID", entry.loginId, true, false, true)}
           {secretView("password", "パスワード", entry.password)}
         </>}
         {viewField("URL", entry.url, true)}

@@ -24,3 +24,12 @@ export const MaximizeIcon = () => <CaptionIcon><rect x=".5" y=".5" width="9" hei
 export const RestoreIcon = () => <CaptionIcon><rect x=".5" y="2.5" width="7" height="7" /><path d="M2.5 2.5V.5h7v7h-2" /></CaptionIcon>;
 export const WindowCloseIcon = () => <CaptionIcon><path d="M.5.5l9 9M9.5.5l-9 9" /></CaptionIcon>;
 export const FileIcon = () => <Icon><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></Icon>;
+// Title bar. The same 24 px grid and 1.7 px line as the icons above.
+export const SidebarIcon = ({ collapsed = false }: { collapsed?: boolean }) => <Icon>
+  <rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" />{collapsed ? <path d="m13 10 2 2-2 2" /> : <path d="m16 10-2 2 2 2" />}
+</Icon>;
+export const EntriesIcon = () => <Icon><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M8 8h8M8 12h8M8 16h5" /></Icon>;
+export const WrenchIcon = () => <Icon><path d="M12.5 9.9A5 5 0 0 1 18.8 3.5L16.4 5.9l1.7 1.7 2.4-2.4A5 5 0 0 1 14.1 11.5L5.4 20.2a1.2 1.2 0 0 1-1.6-1.6Z" /></Icon>;
+export const HelpIcon = () => <Icon><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6" /><path d="M12 17h.01" /></Icon>;
+export const GripIcon = () => <Icon><circle cx="9" cy="6" r="1" /><circle cx="15" cy="6" r="1" /><circle cx="9" cy="12" r="1" /><circle cx="15" cy="12" r="1" /><circle cx="9" cy="18" r="1" /><circle cx="15" cy="18" r="1" /></Icon>;
+export const ImageIcon = () => <Icon><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="m21 16-5-5-9 9" /></Icon>;

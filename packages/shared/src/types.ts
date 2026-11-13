@@ -53,6 +53,13 @@ export type VaultEntryUpsertPayload = PasswordEntryUpsertPayload |
   (AdditionalEntryPayload & { type: "creditCard"; card: { number: string; cardholder?: string; expiryMonth?: string; securityCode?: string } }) |
   (AdditionalEntryPayload & { type: "financial"; financial: { loginId: string; loginPassword: string; tradingPassword?: string; extraSecrets?: FinancialExtraSecret[] } });
 
+/** The list icon of one entry. Colors and symbols are preset names; an image is a PNG data URL of at most 32 KB. */
+export type EntryIcon =
+  | { kind: "letter"; color: string }
+  | { kind: "symbol"; symbol: string; color: string }
+  | { kind: "image"; image: string };
+export type EntryIconMap = { icons: Record<string, EntryIcon> };
+
 /** group null removes the items from their group. */
 export type EntriesGroupPayload = { ids: string[]; group: string | null };
 
@@ -146,6 +153,8 @@ export type PasswordManagerDesktopApi = {
   updateEntry: (id: string, payload: VaultEntryUpsertPayload, sessionId: string) => Promise<VaultEntry>;
   deleteEntry: (id: string, sessionId: string) => Promise<{ success: boolean }>;
   setEntriesGroup: (payload: EntriesGroupPayload, sessionId: string) => Promise<{ updatedCount: number }>;
+  fetchEntryIcons: (sessionId: string) => Promise<EntryIconMap>;
+  setEntryIcon: (id: string, icon: EntryIcon | null, sessionId: string) => Promise<EntryIconMap>;
   generatePassword: (options: PasswordGenerationOptions, sessionId: string) => Promise<PasswordGenerationResult>;
   copyText: (value: string, sessionId: string) => Promise<void>;
   minimizeWindow: () => Promise<void>;
