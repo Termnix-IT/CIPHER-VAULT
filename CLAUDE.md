@@ -16,7 +16,7 @@
 
 Windowsのデスクトップアプリで、Tauri 2 + Rust、React + Vite、SQLite（rusqlite）を使用する。v0.9.0でElectron版から切り替え、その後にElectron版（`apps/electron`）・Node.jsのサービス（`apps/api`）・Web/API版を削除した（必要ならタグ `v0.9.0` を参照する）。設計判断は [設計](docs/設計.md#rust版の設計判断) を正とする。
 
-- `crates/vault-core/`: 中核（Tauri非依存）。暗号形式、保存、セッション、初期設定・解除・ロック・リセット、エントリ操作、パスワード生成、バックアップ、監査、移行・鍵更新・リセット・復旧。入力検証もここで行う。一覧のアイコンは保管庫の形式を変えないよう、別の暗号化ファイル（`icons.rs`）に置く。
+- `crates/vault-core/`: 中核（Tauri非依存）。暗号形式、保存、セッション、初期設定・解除・ロック、エントリ操作、パスワード生成、バックアップ、監査、新規作成・鍵更新・リセット・復旧。入力検証もここで行う。一覧のアイコンは各エントリの中に暗号化して置く（`icons.rs` は検査と、v1.0.1までの別ファイルの取り込み）。
 - `apps/desktop/`: Tauriのデスクトップアプリ。画面に公開するコマンドは `build.rs` の一覧と `tauri.conf.json` の `capabilities` の両方に書く（タイトルバー用のTauri本体のウィンドウ操作は `capabilities` だけに個別に書く）。CSPは `packages/shared/src/renderer-policy.ts` と `tauri.conf.json` の `csp` を同じ文字列にする。クリップボード・画面ロックとスリープの連動・多重起動の防止・Electron版の起動中の拒否・署名付きの手動更新もここが受け持つ。setupは `windows/installer-hooks.nsh` でElectron版を削除する。
 - `apps/desktop/src/desktop-api.js`: 画面の `window.passwordManager` を用意し、各メソッドをコマンドへ渡す。
 - `apps/web/src/lib/api.ts`: `window.passwordManager` を呼ぶ。保管庫の処理は持たない。
@@ -51,8 +51,8 @@ Windowsのデスクトップアプリで、Tauri 2 + Rust、React + Vite、SQLit
 - UI変更は影響する操作を確認し、ビルド成功と画面確認を区別して報告する。実際の画面ロック・スリープ、貼り付け、Win+V、保存ダイアログは自動試験で確かめられないので、手で確認したかどうかを区別して報告する。
 - テストは一時フォルダを使う。利用中の `%APPDATA%\CIPHER VAULT`、残っている `apps/api/data`・`release/data` を初期化・上書きしない。
 - DB、ジャーナル、個人情報、検証用ログをコミットしない。内部資料は `docs/private/`（README以外はGit対象外）。
-- パスワード・メモを暗号化し、一覧には含めない。従来形式のサービス名・ログインID・URL・タグ・グループは平文であることを保持する。
-- 保管庫・`.cvault`・pointer・`user_version` の形式を変えると、v0.8.0のElectron版へ戻れなくなる。形式・鍵・検証値を変えるときは、旧DBの解除、誤パスワード、既存暗号文の復号と固定ベクトル（`tests/fixtures/crypto-compatibility.json`）を検証し、互換性の制約を文書化する。
+- パスワード・メモは一覧に含めない。
+- 保管庫はv2形式だけを扱い、従来形式とv0.8.0のElectron版との互換はv1.1.0でやめた（[保管庫の形式の打ち切り](docs/設計.md#保管庫の形式の打ち切り)）。v2のentryに欄を足すときは `user_version` と `.cvault` の `version` を上げて旧版に拒否させ、既存の保管庫・バックアップの読み込み、誤パスワード、固定ベクトル（`tests/fixtures/crypto-compatibility.json`）を検証し、どの版で開けなくなるかを文書化する。
 
 ## 更新・配布の維持事項
 

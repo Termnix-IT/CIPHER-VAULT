@@ -1,6 +1,6 @@
 # 2. 画面からSQLiteまで
 
-画面は `window.passwordManager` からTauriのコマンドを呼び、Rustの中核が保管庫を扱います。図のDB名は従来形式です。新形式は[通常起動とv2サービス](../設計.md#通常起動とv2サービス)を参照してください。
+画面は `window.passwordManager` からTauriのコマンドを呼び、Rustの中核が保管庫を扱います。
 
 ```mermaid
 flowchart LR
@@ -18,15 +18,15 @@ flowchart LR
     subgraph core[crates/vault-core]
         commands --> services{要求の種類}
         services --> vault[保管庫<br/>vault.rs / session.rs]
-        services --> entries[エントリ<br/>vault.rs / legacy.rs]
+        services --> entries[エントリ<br/>vault.rs / v2.rs]
         services --> password[パスワード生成<br/>password.rs]
         vault --> crypto[暗号<br/>crypto.rs]
         entries --> crypto
     end
 
-    vault --> sqlite[(SQLite<br/>vault_metadata)]
-    entries --> sqliteEntries[(SQLite<br/>password_entries)]
-    crypto --> memory[(メモリ上の保管庫鍵)]
+    vault --> sqlite[(SQLite<br/>vault_header)]
+    entries --> sqliteEntries[(SQLite<br/>vault_entries / vault_nonces)]
+    crypto --> memory[(メモリ上のroot鍵)]
 
     sqlite --> response[処理結果]
     sqliteEntries --> response
