@@ -6,9 +6,17 @@ const COLLAPSED_KEY = "cipher-vault.sidebar-collapsed";
 export const SIDEBAR_DEFAULT_WIDTH = 280;
 export const SIDEBAR_MIN_WIDTH = 220;
 export const SIDEBAR_MAX_WIDTH = 440;
+// The detail pane keeps this much of the window, so a wide list never squeezes the entry's values.
+// With the default list width this sets the window's minimum width (720px in apps/desktop/src/main.rs).
+export const DETAIL_MIN_WIDTH = 440;
 
-export function clampSidebarWidth(width: number) {
-  return Math.round(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, width)));
+/** The widest the list may be in a window this wide: 440px, less when the detail pane would get under 440px. */
+export function sidebarMaxWidth(windowWidth = Infinity) {
+  return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, windowWidth - DETAIL_MIN_WIDTH));
+}
+
+export function clampSidebarWidth(width: number, windowWidth = Infinity) {
+  return Math.round(Math.min(sidebarMaxWidth(windowWidth), Math.max(SIDEBAR_MIN_WIDTH, width)));
 }
 
 export function readSidebarWidth() {

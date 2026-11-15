@@ -305,10 +305,37 @@ try {
   await page.send("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 });
   await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 });
   await until("the wider pane", () => page.evaluate(`localStorage.getItem("cipher-vault.sidebar-width") === "296"`));
+  // A narrow window shows the widest list narrower, so the detail keeps 440px, and keeps the saved width.
+  await page.send("Input.dispatchKeyEvent", { type: "keyDown", key: "End", code: "End", windowsVirtualKeyCode: 35 });
+  await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "End", code: "End", windowsVirtualKeyCode: 35 });
+  await until("the widest pane", () => page.evaluate(`localStorage.getItem("cipher-vault.sidebar-width") === "440"`));
+  const paneAt = async (width) => {
+    await page.send("Emulation.setDeviceMetricsOverride", { width, height: 560, deviceScaleFactor: 1, mobile: false });
+    await sleep(400);
+    return page.evaluate(`({ list: document.querySelector(".vault-sidebar").getBoundingClientRect().width, detail: document.querySelector(".vault-detail").getBoundingClientRect().width,
+      max: document.querySelector(".pane-resizer").getAttribute("aria-valuemax"), saved: localStorage.getItem("cipher-vault.sidebar-width") })`);
+  };
+  result.paneInNarrowWindow = { at720: await paneAt(720), at880: await paneAt(880) };
+  await page.send("Emulation.clearDeviceMetricsOverride");
+  assert.deepEqual(result.paneInNarrowWindow, { at720: { list: 280, detail: 440, max: "280", saved: "440" }, at880: { list: 440, detail: 440, max: "440", saved: "440" } });
   await page.evaluate(`localStorage.removeItem("cipher-vault.sidebar-width")`);
 
   // ---- The clipboard and the OS. Only the vault-locked and clipboard reports are compared.
   const osWindow = events.find((event) => event.startsWith("os-window ")).split(" ")[1];
+
+  // ---- The window opens at 960x680, or smaller on a work area that cannot hold it. Its 720x560
+  // minimum applies only while the user drags its edge, which this check cannot do; it is checked by hand.
+  const initialSize = powershell(`Add-Type -Namespace E2E -Name Size -MemberDefinition '
+      [DllImport("user32.dll")] public static extern bool GetClientRect(System.IntPtr w, out RECT r);
+      [DllImport("user32.dll")] public static extern uint GetDpiForWindow(System.IntPtr w);
+      public struct RECT { public int Left, Top, Right, Bottom; }'
+    $w = (Get-Process -Id ${child.pid}).MainWindowHandle
+    $s = [E2E.Size]::GetDpiForWindow($w) / 96
+    $r = New-Object E2E.Size+RECT; [void][E2E.Size]::GetClientRect($w, [ref]$r)
+    "$([math]::Round($r.Right / $s)) $([math]::Round($r.Bottom / $s))"`).split(" ").map(Number);
+  result.initialWindowSize = initialSize;
+  assert.equal(initialSize[0], 960, "the default width");
+  assert.ok(initialSize[1] >= 560 && initialSize[1] <= 680, "the default height, or the work area's");
   const reportsSince = (mark) => events.slice(mark).filter((event) => event.startsWith("vault-locked ") || event.startsWith("clipboard-"));
   const copy = async () => settle(page, `window.passwordManager.copyText("synthetic-clipboard-value", ${JSON.stringify((await status(page)).sessionId)})`);
   let mark = events.length;

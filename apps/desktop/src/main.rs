@@ -265,6 +265,18 @@ fn update_open_releases() -> Result<(), String> {
     updates::open_release_page()
 }
 
+/// The window's size in logical pixels; the reasons are in docs/設計.md (ウィンドウの大きさ).
+/// The minimum leaves the detail pane 440px beside the list at its default 280px.
+const WINDOW_DEFAULT: (f64, f64) = (960.0, 680.0);
+const WINDOW_MIN: (f64, f64) = (720.0, 560.0);
+
+/// The first size: the default, made smaller to fit a work area (the screen less the taskbar) that
+/// cannot hold it, but never under the minimum. There is no maximum, so maximizing and snapping fill the screen.
+fn initial_window_size(work_area: Option<(f64, f64)>) -> (f64, f64) {
+    let (width, height) = work_area.unwrap_or(WINDOW_DEFAULT);
+    (WINDOW_DEFAULT.0.min(width).max(WINDOW_MIN.0), WINDOW_DEFAULT.1.min(height).max(WINDOW_MIN.1))
+}
+
 /// The bundled screen only. Tauri serves it as http://tauri.localhost on Windows.
 pub(crate) fn is_application_url(url: &Url) -> bool {
     matches!((url.scheme(), url.host_str()), ("http", Some("tauri.localhost")) | ("tauri", Some("localhost")))
@@ -407,10 +419,16 @@ fn main() {
             let supported = updates::supported(app.handle());
             trace(&format!("update-support {supported}"));
             app.manage(Updates::new(app.package_info().version.to_string(), supported));
+            let work_area = app.primary_monitor().ok().flatten().map(|monitor| {
+                let area = monitor.work_area().size.to_logical::<f64>(monitor.scale_factor());
+                (area.width, area.height)
+            });
+            let (width, height) = initial_window_size(work_area);
             let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title(single_instance::WINDOW_TITLE)
-                .inner_size(880.0, 780.0)
-                .min_inner_size(780.0, 680.0)
+                .inner_size(width, height)
+                .min_inner_size(WINDOW_MIN.0, WINDOW_MIN.1)
+                .center()
                 // The screen draws the title bar: the menus with the window buttons, as the Electron app had.
                 .decorations(false)
                 .shadow(true)
@@ -456,6 +474,17 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_first_window_fits_the_work_area_down_to_the_minimum() {
+        assert_eq!(initial_window_size(None), (960.0, 680.0));
+        assert_eq!(initial_window_size(Some((1920.0, 1032.0))), (960.0, 680.0));
+        // 1366x768 at 100% and at 125%, and 1920x1080 at 150%, each less the 48px taskbar.
+        assert_eq!(initial_window_size(Some((1366.0, 720.0))), (960.0, 680.0));
+        assert_eq!(initial_window_size(Some((1092.8, 566.4))), (960.0, 566.4));
+        assert_eq!(initial_window_size(Some((1280.0, 672.0))), (960.0, 672.0));
+        assert_eq!(initial_window_size(Some((640.0, 400.0))), (720.0, 560.0));
+    }
 
     #[test]
     fn only_the_bundled_screen_is_an_application_url() {

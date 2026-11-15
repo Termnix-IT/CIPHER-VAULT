@@ -80,7 +80,10 @@ function entrySubtitle(entry: VaultEntrySummary) {
 
 export function VaultDashboard(props: VaultDashboardProps) {
   const { entries, selectedEntry, isFormOpen, isGroupedView, isSidebarCollapsed: collapsed, entryIcons } = props;
+  // The saved width is kept as chosen; a narrower window only shows the list narrower.
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
+  const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
+  const shownSidebarWidth = clampSidebarWidth(sidebarWidth, windowWidth);
   const [resizing, setResizing] = useState(false);
   const [iconPicker, setIconPicker] = useState<{ id: string; x: number; y: number; opener: HTMLElement | null } | null>(null);
   const dashboardRef = useRef<HTMLDivElement>(null);
@@ -253,16 +256,22 @@ export function VaultDashboard(props: VaultDashboardProps) {
     setIconPicker((current) => { current?.opener?.focus(); return null; });
   }, []);
 
+  useEffect(() => {
+    const resized = () => setWindowWidth(window.innerWidth);
+    window.addEventListener("resize", resized);
+    return () => window.removeEventListener("resize", resized);
+  }, []);
+
   // The pane's edge follows the pointer directly; the width is kept once the drag ends.
   function startResize(event: PointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
     event.preventDefault();
-    const handle = event.currentTarget, start = event.clientX, from = sidebarWidth;
+    const handle = event.currentTarget, start = event.clientX, from = shownSidebarWidth;
     handle.setPointerCapture(event.pointerId);
     setResizing(true);
     let width = from;
     const move = (next: globalThis.PointerEvent) => {
-      width = clampSidebarWidth(from + next.clientX - start);
+      width = clampSidebarWidth(from + next.clientX - start, window.innerWidth);
       dashboardRef.current?.style.setProperty("--sidebar-width", `${width}px`);
     };
     const end = () => {
@@ -277,11 +286,11 @@ export function VaultDashboard(props: VaultDashboardProps) {
   }
   function resizeByKey(event: KeyboardEvent<HTMLDivElement>) {
     const step = event.shiftKey ? 48 : 16;
-    const next = event.key === "ArrowLeft" ? sidebarWidth - step : event.key === "ArrowRight" ? sidebarWidth + step
+    const next = event.key === "ArrowLeft" ? shownSidebarWidth - step : event.key === "ArrowRight" ? shownSidebarWidth + step
       : event.key === "Home" ? 0 : event.key === "End" ? Infinity : event.key === "Enter" ? SIDEBAR_DEFAULT_WIDTH : null;
     if (next === null) return;
     event.preventDefault();
-    const width = clampSidebarWidth(next);
+    const width = clampSidebarWidth(next, windowWidth);
     setSidebarWidth(width); saveSidebarWidth(width);
   }
 
@@ -314,7 +323,7 @@ export function VaultDashboard(props: VaultDashboardProps) {
   const searchLabel = search ? `検索（「${searchTerm.trim()}」で絞り込み中）` : "検索";
 
   return <div className={`cipher-dashboard ${collapsed ? "cipher-dashboard--collapsed" : ""} ${resizing ? "cipher-dashboard--resizing" : ""}`} ref={dashboardRef}
-    style={{ ["--sidebar-width" as string]: `${sidebarWidth}px` }} aria-busy={busy || props.isLoading}>
+    style={{ ["--sidebar-width" as string]: `${shownSidebarWidth}px` }} aria-busy={busy || props.isLoading}>
     <aside className="vault-sidebar" aria-label="項目の一覧">
       {collapsed ? <div className="sidebar-controls sidebar-rail">
         <button className={`icon-btn ${search ? "sidebar-rail-search--active" : ""}`} type="button"
@@ -366,7 +375,7 @@ export function VaultDashboard(props: VaultDashboardProps) {
       </div>
     </aside>
     {!collapsed && <div className="pane-resizer" role="separator" aria-orientation="vertical" aria-label="一覧の幅" tabIndex={0}
-      aria-valuemin={clampSidebarWidth(0)} aria-valuemax={clampSidebarWidth(Infinity)} aria-valuenow={sidebarWidth}
+      aria-valuemin={clampSidebarWidth(0)} aria-valuemax={clampSidebarWidth(Infinity, windowWidth)} aria-valuenow={shownSidebarWidth}
       onPointerDown={startResize} onKeyDown={resizeByKey} onDoubleClick={() => { setSidebarWidth(SIDEBAR_DEFAULT_WIDTH); saveSidebarWidth(SIDEBAR_DEFAULT_WIDTH); }} />}
     <section className="vault-detail" ref={detailRef} aria-label={isFormOpen ? "新しい項目" : props.isEditingEntry ? "項目の編集" : "項目の詳細"}>
       {showHeader && <div className="inspector-header">
