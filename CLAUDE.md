@@ -10,16 +10,16 @@
 
 ## 構成と責務
 
-Windowsのデスクトップアプリで、Tauri 2 + Rust、React + Vite、SQLite（rusqlite）を使用する。v0.9.0でElectron版から切り替え、その後にElectron版（`apps/electron`）・Node.jsのサービス（`apps/api`）・Web/API版を削除した（必要ならタグ `v0.9.0` を参照する）。設計判断は [設計](docs/設計.md#rust版の設計判断) を正とする。
+Windowsのデスクトップアプリで、Tauri 2 + Rust、React + Vite、SQLite（rusqlite）を使用する。v0.9.0でElectron版から切り替え、その後にElectron版（`apps/electron`）・Node.jsのサービス（`apps/api`）・Web/API版を削除した。削除したコードが必要なら、タグ `v0.9.0` を参照する。設計判断は [設計](docs/設計.md#rust版の設計判断) を正とする。
 
-- `crates/vault-core/`: 中核（Tauri非依存）。暗号形式、保存、セッション、初期設定・解除・ロック、エントリ操作、パスワード生成、バックアップ、監査、新規作成・鍵更新・リセット・復旧。入力検証もここで行う。一覧のアイコンは各エントリの中に暗号化して置く（`icons.rs` は検査と、v1.0.1までの別ファイルの取り込み）。
+- `crates/vault-core/`: Tauriに依存しない中核。暗号形式、保存、セッション、初期設定・解除・ロック、エントリ操作、パスワード生成、バックアップ、監査、新規作成・鍵更新・リセット・復旧を受け持つ。入力検証もここで行う。一覧のアイコンは各エントリの中に暗号化して置く。`icons.rs` は、アイコンの検査と、v1.0.1までの別ファイルの取り込みを受け持つ。
 - `apps/desktop/`: Tauriのデスクトップアプリ。画面に公開するコマンドは `build.rs` の一覧と `tauri.conf.json` の `capabilities` の両方に書く（タイトルバー用のTauri本体のウィンドウ操作は `capabilities` だけに個別に書く）。CSPは `packages/shared/src/renderer-policy.ts` と `tauri.conf.json` の `csp` を同じ文字列にする。クリップボード・画面ロックとスリープの連動・多重起動の防止・Electron版の起動中の拒否・署名付きの手動更新もここが受け持つ。setupは `windows/installer-hooks.nsh` でElectron版を削除する。
 - `apps/desktop/src/desktop-api.js`: 画面の `window.passwordManager` を用意し、各メソッドをコマンドへ渡す。
 - `apps/web/src/lib/api.ts`: `window.passwordManager` を呼ぶ。保管庫の処理は持たない。
 - `apps/web/src/App.tsx`: 保管庫状態、一覧・選択、自動ロックの画面反映を管理する。
 - `packages/shared/src/types.ts`: 画面の型。コマンドの引数・戻り値を変えるときは、ここと `desktop-api.js`・中核を揃える。
 
-保存先はElectron版と同じ `%APPDATA%\CIPHER VAULT\data` で、`CIPHER_VAULT_DATA_DIR` で差し替える。手で動かすときは必ず試験用フォルダを指定する。
+保存先はElectron版と同じ `%APPDATA%\CIPHER VAULT\data` で、環境変数 `CIPHER_VAULT_DATA_DIR` で差し替える。手で動かすときは必ず試験用フォルダを指定する。
 
 ## コマンド
 
@@ -37,7 +37,7 @@ Windowsのデスクトップアプリで、Tauri 2 + Rust、React + Vite、SQLit
 | `npm run test:tauri-update` | 2版のsetupで実際に更新して、再起動とデータの維持を確認 |
 | `npm run test:dependencies` | npm依存の脆弱性監査 |
 
-起動は `npm run build:web` の後に `CIPHER_VAULT_DATA_DIR` を試験用フォルダにして `cargo run -p cipher-vault`。手順は [開発・配布手順](docs/開発・配布手順.md#起動する) を参照する。
+起動するには、`npm run build:web` の後に、`CIPHER_VAULT_DATA_DIR` に試験用フォルダを指定して `cargo run -p cipher-vault` を実行する。手順は [開発・配布手順](docs/開発・配布手順.md#起動する) を参照する。
 
 ## 検証とデータ保護
 
@@ -46,9 +46,9 @@ Windowsのデスクトップアプリで、Tauri 2 + Rust、React + Vite、SQLit
 - `installer-hooks.nsh`（Electron版の削除）を変えたときは、タグ `v0.9.0` の作業ツリーに変更したフックを置いて `npm run test:tauri-migration` を実行し、移行を確かめる。
 - UI変更は影響する操作を確認し、ビルド成功と画面確認を区別して報告する。実際の画面ロック・スリープ、貼り付け、Win+V、保存ダイアログは自動試験で確かめられないので、手で確認したかどうかを区別して報告する。
 - テストは一時フォルダを使う。利用中の `%APPDATA%\CIPHER VAULT`、残っている `apps/api/data`・`release/data` を初期化・上書きしない。
-- DB、ジャーナル、個人情報、検証用ログをコミットしない。内部資料は `docs/private/`（README以外はGit対象外）。
+- DB、ジャーナル、個人情報、検証用ログをコミットしない。内部資料は `docs/private/` に置く（README以外はGit対象外）。
 - パスワード・メモは一覧に含めない。
-- 保管庫はv2形式だけを扱い、従来形式とv0.8.0のElectron版との互換はv1.1.0でやめた（[保管庫の形式の打ち切り](docs/設計.md#保管庫の形式の打ち切り)）。v2のentryに欄を足すときは `user_version` と `.cvault` の `version` を上げて旧版に拒否させ、既存の保管庫・バックアップの読み込み、誤パスワード、固定ベクトル（`tests/fixtures/crypto-compatibility.json`）を検証し、どの版で開けなくなるかを文書化する。
+- 保管庫はv2形式だけを扱い、従来形式とv0.8.0のElectron版との互換はv1.1.0でやめた（[保管庫の形式の打ち切り](docs/設計.md#保管庫の形式の打ち切り)）。v2のentryに欄を足すときは、`user_version` と `.cvault` の `version` を上げて旧版に拒否させる。そのうえで、既存の保管庫・バックアップの読み込み、誤パスワード、固定ベクトル（`tests/fixtures/crypto-compatibility.json`）を検証し、どの版で開けなくなるかを文書化する。
 
 ## 更新・配布の維持事項
 
