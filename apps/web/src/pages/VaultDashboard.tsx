@@ -395,7 +395,7 @@ export function VaultDashboard(props: VaultDashboardProps) {
         {selectedEntry && !isFormOpen && !props.isEditingEntry && <div className="inspector-actions">
           {favoriteButton(selectedEntry.id, Boolean(selectedSummary?.favorite))}
           <button className="btn" type="button" disabled={busy} onClick={props.onEditEntry}>編集</button>
-          <button className="btn btn--danger" type="button" disabled={busy} onClick={deleteSelected}>削除</button>
+          <button className="btn btn--quiet-danger" type="button" disabled={busy} onClick={deleteSelected}>削除</button>
         </div>}
       </div>}
       {props.isLoadingDetail ? <p className="empty-state-text" role="status">開いています…</p> : isFormOpen || selectedEntry ?

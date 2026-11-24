@@ -462,6 +462,32 @@ export function App() {
     return () => window.removeEventListener("keydown", listener);
   }, []);
 
+  // The system-wide shortcut (apps/desktop/src/global_hotkey.rs) has already brought the window forward.
+  // It never reveals or copies anything: locked, it waits on the lock screen; open, it goes to the
+  // search, in the compact layout when chosen. A form, dialog or menu in use is left as it was.
+  const summon = useRef<(compact: boolean) => void>(() => undefined);
+  summon.current = (compact) => {
+    if (!statusRef.current?.isUnlocked) {
+      document.querySelector<HTMLInputElement>('input[aria-label="マスターパスワード"]')?.focus();
+      return;
+    }
+    if (maintenanceRequired || isFormOpen || isEditingEntry || document.querySelector("dialog[open], .app-menu-popup, .icon-picker")) return;
+    const epoch = viewEpoch.current;
+    void (async () => {
+      if (compact && !isCompact && !await handleCompactChange(true)) return;
+      // The compact view ignores a request made before it was drawn, so this waits for it.
+      await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+      // Locked, or a form or dialog opened meanwhile: that screen keeps the focus.
+      if (!isCurrent(epoch) || document.querySelector("dialog[open], .app-menu-popup, .icon-picker, .entry-editor--editing")) return;
+      setSearchFocusRequest((count) => count + 1);
+    })();
+  };
+  useEffect(() => {
+    const listener = (event: Event) => summon.current((event as CustomEvent<{ compact?: unknown }>).detail?.compact === true);
+    window.addEventListener("cipher-vault-summon", listener);
+    return () => window.removeEventListener("cipher-vault-summon", listener);
+  }, []);
+
   function handleOpenMaintenance(operation: VaultMaintenanceOperation) {
     if (!statusRef.current?.isUnlocked || isCreatingEntry || isUpdatingEntry || isDeletingEntry || isLoadingEntryDetail || isGeneratingPassword) return;
     if (hasUnsavedChanges && !window.confirm("保存していない変更を破棄して続けますか？")) return;

@@ -1,5 +1,5 @@
 import type {
-  AutoLockPayload, BackupExportPayload, BackupRestorePayload, BackupFile, EntriesGroupPayload, EntryIcon, SecurityAudit,
+  AutoLockPayload, BackupExportPayload, GlobalShortcutPayload, BackupRestorePayload, BackupFile, EntriesGroupPayload, EntryIcon, SecurityAudit,
   PasswordGenerationOptions, PasswordGenerationResult, PasswordManagerDesktopApi,
   VaultEntry, VaultEntrySummary, VaultEntryUpsertPayload,
   VaultSetupPayload, VaultStatus, VaultUnlockPayload, VaultMaintenancePayload
@@ -115,6 +115,13 @@ export function openEntryUrl(entryId: string) {
 }
 export function setAutoLock(payload: AutoLockPayload) {
   return run((id) => desktop().setAutoLock(payload, id));
+}
+/** Reading needs no session: the state holds no entry data. */
+export function getGlobalShortcut() {
+  return desktop().getGlobalShortcut();
+}
+export function setGlobalShortcut(payload: GlobalShortcutPayload) {
+  return run((id) => desktop().setGlobalShortcut(payload, id));
 }
 export function generatePassword(options: PasswordGenerationOptions = {}) {
   return run((id) => desktop().generatePassword(options, id));

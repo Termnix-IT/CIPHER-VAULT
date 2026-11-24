@@ -42,4 +42,6 @@ export const PinIcon = ({ pinned = false }: { pinned?: boolean }) => <Icon>
 export const ExternalLinkIcon = () => <Icon><path d="M14 4h6v6" /><path d="M20 4 11 13" /><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4" /></Icon>;
 export const CompactIcon = () => <Icon><rect x="7" y="3" width="10" height="18" rx="2" /><path d="M10 7h4M10 11h4" /></Icon>;
 export const ExpandIcon = () => <Icon><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /><path d="m13 10 2 2-2 2" /></Icon>;
+/** The 表示 menu: a screen, so it is never mistaken for the eye that reveals a secret. */
+export const DisplayIcon = () => <Icon><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M9 20h6M12 16v4" /></Icon>;
 export const BackIcon = () => <Icon><path d="m15 6-6 6 6 6" /></Icon>;

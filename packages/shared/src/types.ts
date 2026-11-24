@@ -95,6 +95,10 @@ export type VaultSessionState = {
 export const AUTO_LOCK_MINUTES = [1, 5, 10, 15, 30, 60, 120] as const;
 export type AutoLockMinutes = (typeof AUTO_LOCK_MINUTES)[number] | null;
 export type AutoLockPayload = { autoLockMinutes: AutoLockMinutes };
+/** The system-wide shortcut that brings the window forward, as "Ctrl+Alt+Space"; null when off. */
+export type GlobalShortcutPayload = { shortcut: string | null; summonCompact: boolean };
+/** registered is false when Windows refused the saved shortcut, for example because another app holds it. */
+export type GlobalShortcutState = GlobalShortcutPayload & { registered: boolean; error: string | null };
 
 export type VaultStatus = VaultSessionState & {
   isConfigured: boolean;
@@ -169,6 +173,8 @@ export type PasswordManagerDesktopApi = {
   /** Opens the entry's own URL in the default browser; only http and https addresses open. */
   openEntryUrl: (id: string, sessionId: string) => Promise<void>;
   setAutoLock: (payload: AutoLockPayload, sessionId: string) => Promise<VaultStatus>;
+  getGlobalShortcut: () => Promise<GlobalShortcutState>;
+  setGlobalShortcut: (payload: GlobalShortcutPayload, sessionId: string) => Promise<GlobalShortcutState>;
   generatePassword: (options: PasswordGenerationOptions, sessionId: string) => Promise<PasswordGenerationResult>;
   copyText: (value: string, sessionId: string) => Promise<void>;
   minimizeWindow: () => Promise<void>;

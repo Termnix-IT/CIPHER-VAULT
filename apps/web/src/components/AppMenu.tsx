@@ -3,7 +3,7 @@ import type { VaultEntry, VaultMaintenanceOperation } from "@password-manager/sh
 import type { DesignMode } from "../lib/design-mode";
 import { windowControls } from "../lib/api";
 import { loginIdOf, primarySecretOf } from "../lib/entry-list";
-import { EntriesIcon, EyeIcon, HelpIcon, LockIcon, MaximizeIcon, MinimizeIcon, RestoreIcon, SidebarIcon, WindowCloseIcon, WrenchIcon } from "./Icons";
+import { DisplayIcon, EntriesIcon, HelpIcon, LockIcon, MaximizeIcon, MinimizeIcon, RestoreIcon, SidebarIcon, WindowCloseIcon, WrenchIcon } from "./Icons";
 import { AppInfo } from "./AppInfo";
 import { VaultTools } from "./VaultTools";
 
@@ -141,7 +141,7 @@ export function AppMenu(props: AppMenuProps) {
                 { label: "一覧を更新", disabled: disabled || props.isLoading, action: props.onRefresh }
               ])}
             </>}
-            {group("view", "表示", <EyeIcon />, [
+            {group("view", "表示", <DisplayIcon />, [
               ...(props.isUnlocked && !props.isCompact ? [
                 { label: "すべて", disabled, selected: !props.isGroupedView, action: () => props.onGroupedViewChange(false) },
                 { label: "グループ別", disabled, selected: props.isGroupedView, action: () => props.onGroupedViewChange(true) },
@@ -176,11 +176,11 @@ export function AppMenu(props: AppMenuProps) {
           </div>
           <div className="app-titlebar-spacer" aria-hidden="true" data-tauri-drag-region />
           <div className="window-controls" aria-label="ウィンドウ">
-            <button type="button" className="window-control" aria-label="最小化" title="最小化"
+            <button type="button" className="window-control" aria-label="最小化" data-tooltip="最小化"
               onClick={() => { void windowControls.minimize().catch(() => undefined); }}><MinimizeIcon /></button>
-            {!props.isCompact && <button type="button" className="window-control" aria-label={isMaximized ? "元に戻す" : "最大化"} title={isMaximized ? "元に戻す" : "最大化"}
+            {!props.isCompact && <button type="button" className="window-control" aria-label={isMaximized ? "元に戻す" : "最大化"} data-tooltip={isMaximized ? "元に戻す" : "最大化"}
               onClick={() => { void windowControls.toggleMaximize().catch(() => undefined); }}>{isMaximized ? <RestoreIcon /> : <MaximizeIcon />}</button>}
-            <button type="button" className="window-control window-control--close" aria-label="閉じる" title="閉じる"
+            <button type="button" className="window-control window-control--close" aria-label="閉じる" data-tooltip="閉じる"
               onClick={() => { void windowControls.close().catch(() => undefined); }}><WindowCloseIcon /></button>
           </div>
         </div>

@@ -143,7 +143,7 @@ export function EntryEditor({ entry, isEditing, busy, isSaving, isGenerating, on
   function copyButton(value: string, label: string) {
     const copied = copiedLabel === label;
     return <button className={`icon-btn copy-btn ${copied ? "copy-btn--copied" : ""}`} type="button" disabled={!value || busy}
-      aria-label={`${label}をコピー`} title={copied ? "コピーしました" : `${label}をコピー`}
+      aria-label={`${label}をコピー`} data-tooltip={copied ? "コピーしました" : `${label}をコピー`}
       onClick={() => { void copy(value, label); }}>
       {copied ? <CheckIcon /> : <CopyIcon />}
     </button>;
@@ -155,7 +155,7 @@ export function EntryEditor({ entry, isEditing, busy, isSaving, isGenerating, on
       <button className="icon-btn password-visibility-btn" type="button" disabled={busy || isGenerating}
         aria-label={state === "visible" ? `${label}を隠す` : `${label}を表示（2回クリック）`}
         aria-pressed={state === "visible"} aria-describedby={hintId}
-        title={state === "visible" ? "隠す" : "2回クリックで表示"}
+        data-tooltip={state === "visible" ? `${label}を隠す` : `${label}を表示（2回クリック）`}
         onKeyDown={(event) => {
           // Holding a key must never count as the two deliberate activations needed to reveal.
           if (event.repeat && (event.key === "Enter" || event.key === " ")) event.preventDefault();
@@ -185,7 +185,7 @@ export function EntryEditor({ entry, isEditing, busy, isSaving, isGenerating, on
         {secretToggle(key, label)}
       </div>
       <span className="field-actions">
-        <button className="icon-btn" type="button" aria-label={`${label}を削除`} title="削除" disabled={busy || isGenerating}
+        <button className="icon-btn" type="button" aria-label={`${label}を削除`} data-tooltip={`${label}を削除`} disabled={busy || isGenerating}
           onClick={() => changeExtraSecrets((secrets) => secrets.filter((_secret, position) => position !== index))}><CloseIcon /></button>
       </span>
     </div>;
@@ -287,16 +287,16 @@ export function EntryEditor({ entry, isEditing, busy, isSaving, isGenerating, on
           {secretInput("securityCode", "セキュリティコード")}
           {field("url", "URL", false, "text", "https://")}
         </>}
-        {showExtras ? <>
+        {showExtras ? <div className="editor-meta" role="group" aria-label="グループ・タグ・メモ">
           {field("group", "グループ", false, "text", "仕事")}
           {field("tags", "タグ", false, "text", "SNS, 個人")}
           <div className="editor-field editor-notes"><label className="form-label" htmlFor={`${fieldId}-notes`}>メモ</label>
             <textarea id={`${fieldId}-notes`} className="form-textarea" rows={3} disabled={busy} value={draft.notes} onChange={(event) => change("notes", event.target.value)} />
           </div>
-        </> : <div className="editor-more">
+        </div> : <div className="editor-more">
           <button className="text-btn" type="button" disabled={busy} onClick={() => setShowExtras(true)}>＋ グループ・タグ・メモを追加</button>
         </div>}
-      </div> : entry && <dl className="entry-view-fields">
+      </div> : entry && <><dl className="entry-view-fields">
         {entry.type === "apiKey" ? <>
           {secretView("apiKey", "キー", entry.apiKey.key)}
           {viewField("キーID", entry.apiKey.keyId, true)}
@@ -316,12 +316,13 @@ export function EntryEditor({ entry, isEditing, busy, isSaving, isGenerating, on
           {secretView("password", "パスワード", entry.password)}
         </>}
         {urlField(entry.url)}
-        {!compact && <>
-          {viewField("グループ", entry.group ?? "", false, true)}
-          {entry.tags.length > 0 && <div className="entry-view-field"><dt>タグ</dt><dd className="entry-view-tags">{entry.tags.map((tag, index) => <span key={`${tag}-${index}`} className="tag-chip">{tag}</span>)}</dd><span /></div>}
-          {entry.notes && <div className="entry-view-field entry-view-notes"><dt>メモ</dt><dd>{entry.notes}</dd><span /></div>}
-        </>}
-      </dl>}
+      </dl>
+      {/* Group, tags and notes organize the entry; they sit apart from the values used to sign in, and quieter. */}
+      {!compact && (entry.group || entry.tags.length > 0 || entry.notes) && <dl className="entry-view-fields entry-view-meta" aria-label="グループ・タグ・メモ">
+        {viewField("グループ", entry.group ?? "", false, true)}
+        {entry.tags.length > 0 && <div className="entry-view-field"><dt>タグ</dt><dd className="entry-view-tags">{entry.tags.map((tag, index) => <span key={`${tag}-${index}`} className="tag-chip">{tag}</span>)}</dd><span /></div>}
+        {entry.notes && <div className="entry-view-field entry-view-notes"><dt>メモ</dt><dd>{entry.notes}</dd><span /></div>}
+      </dl>}</>}
     </div>
     {editing && <div className="editor-actions">
       {entry && onDelete && <button className="text-btn text-btn--danger entry-delete" type="button" disabled={busy || isGenerating} onClick={onDelete}>削除</button>}
