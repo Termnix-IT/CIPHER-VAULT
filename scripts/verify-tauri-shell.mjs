@@ -5,13 +5,15 @@
 // e2e build's fake clipboard (the user's clipboard is never written), checks that copies expire and that
 // screen lock and sleep notifications lock the vault and clear the copy, that a second launch on the same
 // folder exits, and that closing the window locks, clears and exits. This build is not the setup, so the
-// version dialog offers only the releases page and checking for updates does nothing. The window keeps
+// version dialog offers only the releases page and checking for updates does nothing. The call-up shortcut
+// is set through the screen and pressed through the e2e build's marker file, so no real key is needed;
+// the compact window is resized and its size is kept for the next time. The window keeps
 // refusing outside connections, navigation, new windows, downloads it did not make and ungranted
 // commands, the updater plugin's own commands included. Only synthetic passwords are used.
 // Usage: node scripts/verify-tauri-shell.mjs <e2e-exe> <screenshot-directory>
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { connect, powershell, screenshot, sendOsMessage, sleep, startE2eProcess, until } from "./lib/webview-e2e.mjs";
@@ -47,7 +49,7 @@ const menu = (page, group, item) => page.evaluate(`(() => {
     resolve(true);
   }, 100));
 })()`);
-const CTRL = 2, SHIFT = 8;
+const ALT = 1, CTRL = 2, SHIFT = 8;
 /** A shortcut as the keyboard sends it: rawKeyDown types nothing, as with Ctrl held. */
 async function press(page, code, key, keyCode, modifiers) {
   await page.send("Input.dispatchKeyEvent", { type: "rawKeyDown", modifiers, key, code, windowsVirtualKeyCode: keyCode });
@@ -112,10 +114,11 @@ const base = mkdtempSync(path.join(tmpdir(), "cipher-vault-e2e-"));
 const profile = path.join(base, "profile");
 const data = path.join(base, "data");
 const downloads = path.join(base, "downloads");
+const summonFile = path.join(base, "summon");
 mkdirSync(data);
 mkdirSync(downloads);
 const result = { startupRefusals: startupRefusals(base) };
-const { child, events, errors } = startE2eProcess(exe, PORT, { CIPHER_VAULT_E2E_DEBUG_PORT: String(PORT), CIPHER_VAULT_E2E_PROFILE: profile, CIPHER_VAULT_DATA_DIR: data, CIPHER_VAULT_E2E_DOWNLOADS: downloads });
+const { child, events, errors } = startE2eProcess(exe, PORT, { CIPHER_VAULT_E2E_DEBUG_PORT: String(PORT), CIPHER_VAULT_E2E_PROFILE: profile, CIPHER_VAULT_DATA_DIR: data, CIPHER_VAULT_E2E_DOWNLOADS: downloads, CIPHER_VAULT_E2E_SUMMON_FILE: summonFile });
 let page;
 try {
   page = await connect(PORT);
@@ -363,6 +366,7 @@ try {
       [DllImport("user32.dll")] public static extern bool GetClientRect(System.IntPtr w, out RECT r);
       [DllImport("user32.dll")] public static extern uint GetDpiForWindow(System.IntPtr w);
       [DllImport("user32.dll")] public static extern int GetWindowLong(System.IntPtr w, int i);
+      [DllImport("user32.dll")] public static extern System.IntPtr GetForegroundWindow();
       public struct RECT { public int Left, Top, Right, Bottom; }'
     $script:w = [System.IntPtr]::Zero
     [void][E2E.State]::EnumWindows({ param($h, $l) $p = 0; [void][E2E.State]::GetWindowThreadProcessId($h, [ref]$p)
@@ -372,12 +376,46 @@ try {
     $w = $script:w
     $s = [E2E.State]::GetDpiForWindow($w) / 96
     $r = New-Object E2E.State+RECT; [void][E2E.State]::GetClientRect($w, [ref]$r)
-    "$([math]::Round($r.Right / $s)) $([math]::Round($r.Bottom / $s)) $((([E2E.State]::GetWindowLong($w, -20)) -band 8) -ne 0)"`).split(" ");
+    "$([math]::Round($r.Right / $s)) $([math]::Round($r.Bottom / $s)) $((([E2E.State]::GetWindowLong($w, -20)) -band 8) -ne 0) $([E2E.State]::GetForegroundWindow() -eq $w)"`).split(" ");
+  // Resizes the window from outside. Unlike dragging its edge, this skips the app's minimum and maximum,
+  // so only sizes inside them are used here.
+  const resizeWindow = (width, height) => powershell(`Add-Type -Namespace E2E -Name Resize -MemberDefinition '
+      public delegate bool EnumProc(System.IntPtr w, System.IntPtr l);
+      [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc f, System.IntPtr l);
+      [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr w, out uint p);
+      [DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr w);
+      [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(System.IntPtr w, System.Text.StringBuilder s, int n);
+      [DllImport("user32.dll")] public static extern uint GetDpiForWindow(System.IntPtr w);
+      [DllImport("user32.dll")] public static extern bool SetWindowPos(System.IntPtr w, System.IntPtr a, int x, int y, int cx, int cy, uint f);
+      [DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr w, out RECT r);
+      [DllImport("user32.dll")] public static extern bool GetClientRect(System.IntPtr w, out RECT r);
+      public struct RECT { public int Left, Top, Right, Bottom; }'
+    $script:w = [System.IntPtr]::Zero
+    [void][E2E.Resize]::EnumWindows({ param($h, $l) $p = 0; [void][E2E.Resize]::GetWindowThreadProcessId($h, [ref]$p)
+      $t = New-Object System.Text.StringBuilder 64; [void][E2E.Resize]::GetWindowText($h, $t, 64)
+      if ($p -eq ${child.pid} -and [E2E.Resize]::IsWindowVisible($h) -and $t.ToString() -eq "CIPHER VAULT") { $script:w = $h; return $false }
+      $true }, [System.IntPtr]::Zero)
+    $s = [E2E.Resize]::GetDpiForWindow($script:w) / 96
+    $o = New-Object E2E.Resize+RECT; $c = New-Object E2E.Resize+RECT
+    [void][E2E.Resize]::GetWindowRect($script:w, [ref]$o); [void][E2E.Resize]::GetClientRect($script:w, [ref]$c)
+    # The sizes are of the inside of the window, as windowState reads them; the frame is added on.
+    $fw = ($o.Right - $o.Left) - $c.Right; $fh = ($o.Bottom - $o.Top) - $c.Bottom
+    [void][E2E.Resize]::SetWindowPos($script:w, [System.IntPtr]::Zero, 0, 0, [int](${width} * $s) + $fw, [int](${height} * $s) + $fh, 0x0016)`);
+  const summonAndWait = async (label) => {
+    const mark = events.length;
+    writeFileSync(summonFile, "");
+    await until(label, () => events.slice(mark).some((event) => event === "summoned" || event === "summon-hidden"));
+    return events.slice(mark).find((event) => event === "summoned" || event === "summon-hidden");
+  };
   // Waits for the window's topmost style, and names the last state it read when it times out.
+  // Windows may not apply it to a window in the background, which happens when another window takes the
+  // focus during the check; that case is reported as unverified instead of failing.
   const untilTopmost = async (expected) => {
     let last;
-    await until(`the window's topmost style ${expected}`, () => (last = windowState())[2] === expected, 30000)
-      .catch((error) => { throw new Error(`${error.message}; last state ${JSON.stringify(last)}`); });
+    await until(`the window's topmost style ${expected}`, () => (last = windowState())[2] === expected, 10000).catch((error) => {
+      if (expected === "True" && last?.[3] === "False") { (result.topmostUnverified ??= []).push(last); return; }
+      throw new Error(`${error.message}; last state ${JSON.stringify(last)}`);
+    });
   };
   const settingsFile = path.join(data, "app-settings.json");
   const usable = await status(page);
@@ -456,7 +494,7 @@ try {
   await press(page, "KeyM", "M", 77, CTRL | SHIFT);
   await until("the compact view", () => page.evaluate(`document.querySelector(".compact-detail-title")?.textContent === "URLあり"`));
   await sleep(500);
-  result.compact = { window: windowState(), ...await page.evaluate(`({
+  result.compact = { window: windowState().slice(0, 3), ...await page.evaluate(`({
     fields: [...document.querySelectorAll(".compact-view .entry-view-field dt")].map((node) => node.textContent),
     notes: document.body.innerText.includes("synthetic note"),
     maximize: !!document.querySelector('.window-control[aria-label="最大化"]'),
@@ -493,9 +531,90 @@ try {
   await click(page, '.compact-head button[aria-label="通常表示に戻す"]');
   await until("the normal view", () => page.evaluate(`!document.querySelector(".compact-view") && !!document.querySelector(".vault-sidebar")`));
   await sleep(500);
-  result.afterCompact = windowState();
+  result.afterCompact = windowState().slice(0, 3);
   assert.deepEqual(result.afterCompact, [String(initialSize[0]), String(initialSize[1]), "False"], "the normal size comes back");
   await page.evaluate(`localStorage.removeItem("cipher-vault.list-favorites-only")`);
+
+  // ---- The call-up shortcut: off until chosen, checked again by the desktop, and never revealing anything.
+  const prefsFile = path.join(data, "window-prefs.json");
+  result.hotkey = { initial: await page.evaluate("window.passwordManager.getGlobalShortcut()") };
+  assert.deepEqual(result.hotkey.initial, { shortcut: null, summonCompact: true, registered: false, error: null }, "no system-wide key is taken until the user chooses one");
+  const hotkeySession = JSON.stringify((await status(page)).sessionId);
+  result.hotkey.refused = {};
+  for (const [name, shortcut] of Object.entries({ oneModifier: "Ctrl+K", inApp: "Ctrl+Shift+C", spelling: "ctrl+alt+k" })) {
+    result.hotkey.refused[name] = await settle(page, `window.passwordManager.setGlobalShortcut(${JSON.stringify({ shortcut, summonCompact: true })}, ${hotkeySession})`);
+  }
+  assert.deepEqual(result.hotkey.refused, {
+    oneModifier: { error: "ショートカットは Ctrl・Alt・Shift のうち2つ以上と、英数字・F1〜F11・Space の組み合わせにしてください" },
+    inApp: { error: "このキーはアプリの中で使っているため選べません" },
+    spelling: { error: "ショートカットは Ctrl・Alt・Shift のうち2つ以上と、英数字・F1〜F11・Space の組み合わせにしてください" }
+  });
+  result.hotkey.staleSession = await settle(page, `window.passwordManager.setGlobalShortcut({ shortcut: "Ctrl+Alt+Shift+F11", summonCompact: true }, "00000000-0000-4000-8000-000000000000")`);
+  assert.ok(result.hotkey.staleSession.error, "another session cannot change the key");
+  // Through the settings: the key is recorded from a key press, then saved.
+  await menu(page, "ツール", "設定…");
+  await until("the shortcut setting", () => page.evaluate(`document.querySelector(".settings-dialog[open] .shortcut-recorder")?.textContent === "なし"`));
+  // A mouse click also focuses the button, which then reads the keys; element.click() alone does not.
+  await page.evaluate(`document.querySelector(".shortcut-recorder").focus(); document.querySelector(".shortcut-recorder").click()`);
+  await until("the recorder waiting for a key", () => page.evaluate(`document.activeElement?.matches(".shortcut-recorder--recording") === true`));
+  await press(page, "KeyK", "K", 75, CTRL);
+  await until("the refused key", () => screenHas(page, "Ctrl・Alt・Shift のうち2つ以上"));
+  await press(page, "F11", "F11", 122, CTRL | ALT | SHIFT);
+  await until("the recorded key", () => page.evaluate(`document.querySelector(".shortcut-recorder").textContent === "Ctrl+Alt+Shift+F11"`));
+  await screenshot(page, screenshotDirectory, "tauri-shell-settings-shortcut");
+  await click(page, '.settings-dialog button[type="submit"]');
+  await until("the saved key", async () => !(await page.evaluate(`!!document.querySelector("dialog[open]")`)));
+  result.hotkey.saved = await page.evaluate("window.passwordManager.getGlobalShortcut()");
+  result.hotkey.file = JSON.parse(readFileSync(prefsFile, "utf8"));
+  // Another app may already hold the key on this machine; the setting then says so instead of failing silently.
+  assert.equal(result.hotkey.saved.shortcut, "Ctrl+Alt+Shift+F11");
+  assert.equal(result.hotkey.file.globalShortcut, "Ctrl+Alt+Shift+F11");
+  if (!result.hotkey.saved.registered) assert.ok(result.hotkey.saved.error, "a refused key names the reason");
+  // Pressed from another app while open: the window comes forward in the compact layout, at the search, with no entry open.
+  await click(page, `button[data-entry-id="${carried.id}"]`);
+  await until("the selected entry", () => page.evaluate(`document.querySelector(".inspector-title")?.textContent === "画面で追加"`));
+  await page.evaluate("window.passwordManager.minimizeWindow()");
+  await sleep(400);
+  assert.equal(await summonAndWait("the summoned window"), "summoned");
+  await until("the compact search", () => page.evaluate(`!!document.querySelector(".compact-list") && document.activeElement === document.querySelector(".compact-head .search-input")`));
+  result.hotkey.summoned = await page.evaluate(`({ detail: !!document.querySelector(".compact-detail"), secrets: document.body.innerText.includes(${JSON.stringify(generated)}) })`);
+  assert.deepEqual(result.hotkey.summoned, { detail: false, secrets: false });
+  // The compact window keeps a height of the user's choosing, scrolls instead of breaking, and gets it back next time.
+  resizeWindow(400, 420);
+  await sleep(600);
+  result.compactResized = { window: windowState().slice(0, 3), ...await page.evaluate(`({
+    overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    listScrolls: getComputedStyle(document.querySelector(".compact-list")).overflowY
+  })`) };
+  assert.equal(result.compactResized.window[1], "420", "the compact height follows the window edge");
+  assert.equal(result.compactResized.overflow, false, "nothing sticks out sideways");
+  resizeWindow(400, 460);
+  await sleep(600);
+  await click(page, '.compact-head button[aria-label="通常表示に戻す"]');
+  await until("the normal view", () => page.evaluate(`!document.querySelector(".compact-view")`));
+  await sleep(500);
+  result.compactSaved = JSON.parse(readFileSync(prefsFile, "utf8")).compactBounds;
+  assert.equal(Math.round(result.compactSaved.height), 460);
+  await press(page, "KeyM", "M", 77, CTRL | SHIFT);
+  await until("the compact view again", () => page.evaluate(`!!document.querySelector(".compact-view")`));
+  await sleep(600);
+  assert.equal(windowState()[1], "460", "the compact window comes back at the height it had");
+  await press(page, "KeyM", "M", 77, CTRL | SHIFT);
+  await until("the normal view", () => page.evaluate(`!document.querySelector(".compact-view")`));
+  await sleep(500);
+  assert.deepEqual(windowState().slice(0, 3), [String(initialSize[0]), String(initialSize[1]), "False"], "the normal size comes back again");
+  // Pressed while locked: only the lock screen comes forward, waiting for the master password.
+  await click(page, '.app-menu-bar button[aria-label="ロック"]');
+  await until("the lock screen", () => page.evaluate(`!!document.querySelector('input[aria-label="マスターパスワード"]')`));
+  await page.evaluate("window.passwordManager.minimizeWindow()");
+  await sleep(400);
+  assert.equal(await summonAndWait("the summoned lock screen"), "summoned");
+  await until("the password field", () => page.evaluate(`document.activeElement === document.querySelector('input[aria-label="マスターパスワード"]')`));
+  assert.equal(await page.evaluate(`!!document.querySelector(".compact-view") || !!document.querySelector(".vault-sidebar")`), false, "nothing of the vault is shown while locked");
+  await submitPassword(page, NEW_PASSWORD, false);
+  await until("unlocked again", async () => (await status(page)).isUnlocked);
+  await page.evaluate(`window.passwordManager.setGlobalShortcut({ shortcut: null, summonCompact: true }, ${JSON.stringify((await status(page)).sessionId)})`);
+  assert.equal(JSON.parse(readFileSync(prefsFile, "utf8")).globalShortcut, null);
 
   const reportsSince = (mark) => events.slice(mark).filter((event) => event.startsWith("vault-locked ") || event.startsWith("clipboard-"));
   const copy = async () => settle(page, `window.passwordManager.copyText("synthetic-clipboard-value", ${JSON.stringify((await status(page)).sessionId)})`);

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { byLastUsed, loginIdOf, matchesSearch, primarySecretOf, sectionLabel, sections, sortFor } from "../apps/web/src/lib/entry-list.ts";
-import { shortcutOf } from "../apps/web/src/lib/shortcuts.ts";
+import { GLOBAL_SHORTCUT_FORM, GLOBAL_SHORTCUT_IN_APP, globalShortcutOf, shortcutOf } from "../apps/web/src/lib/shortcuts.ts";
 
 const summary = (serviceName, extra = {}) => ({ id: serviceName, serviceName, loginId: `${serviceName}-id`, tags: [], updatedAt: "2026-01-01T00:00:00.000Z", createdAt: "2026-01-01T00:00:00.000Z", ...extra });
 const keys = (code, modifiers = {}) => ({ code, ctrlKey: true, altKey: false, metaKey: false, shiftKey: false, ...modifiers });
@@ -42,4 +42,25 @@ test("each kind gives the value its sign-in needs", () => {
   assert.deepEqual([login, apiKey, card, bank].map(primarySecretOf), [
     { value: "p", label: "パスワード" }, { value: "k", label: "キー" }, { value: "4111", label: "カード番号" }, { value: "lp", label: "ログインパスワード" }
   ]);
+});
+
+test("the call-up key needs two or more of Ctrl, Alt and Shift and is spelled as the desktop reads it", () => {
+  const named = (code, modifiers) => globalShortcutOf(keys(code, { ctrlKey: false, ...modifiers }));
+  assert.deepEqual(named("Space", { ctrlKey: true, altKey: true }), { text: "Ctrl+Alt+Space" });
+  assert.deepEqual(named("KeyK", { ctrlKey: true, shiftKey: true, altKey: true }), { text: "Ctrl+Alt+Shift+K" });
+  assert.deepEqual(named("Digit7", { altKey: true, shiftKey: true }), { text: "Alt+Shift+7" });
+  assert.deepEqual(named("F11", { ctrlKey: true, altKey: true }), { text: "Ctrl+Alt+F11" });
+  // With the Windows key code, the key is the one Windows will watch: Z on a German keyboard sits where Y is.
+  assert.deepEqual(globalShortcutOf({ ...keys("KeyY", { altKey: true }), keyCode: 90 }), { text: "Ctrl+Alt+Z" });
+  assert.deepEqual(globalShortcutOf({ ...keys("Numpad1", { altKey: true }), keyCode: 97 }), { problem: GLOBAL_SHORTCUT_FORM });
+  // Only modifiers so far: keep waiting for the key.
+  assert.equal(named("ControlLeft", { ctrlKey: true }), null);
+  assert.equal(named("ShiftRight", { ctrlKey: true, shiftKey: true }), null);
+  for (const [code, modifiers] of [["KeyK", { ctrlKey: true }], ["F4", { altKey: true }], ["Space", { shiftKey: true }], ["KeyK", { ctrlKey: true, altKey: true, metaKey: true }],
+    ["Tab", { ctrlKey: true, altKey: true }], ["F12", { ctrlKey: true, altKey: true }], ["F13", { ctrlKey: true, altKey: true }], ["Escape", { ctrlKey: true, shiftKey: true }], ["Numpad1", { ctrlKey: true, altKey: true }]]) {
+    assert.deepEqual(named(code, modifiers), { problem: GLOBAL_SHORTCUT_FORM }, code);
+  }
+  // The app's own Ctrl+Shift keys would stop working inside the window.
+  assert.deepEqual(named("KeyC", { ctrlKey: true, shiftKey: true }), { problem: GLOBAL_SHORTCUT_IN_APP });
+  assert.deepEqual(named("KeyM", { ctrlKey: true, shiftKey: true }), { problem: GLOBAL_SHORTCUT_IN_APP });
 });
