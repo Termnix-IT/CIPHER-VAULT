@@ -18,9 +18,10 @@
     "build:web": "npm run build:shared && npm --workspace apps/web run build",
     "build:tauri": "npm run build:web && cargo build --release -p cipher-vault",
     "package:tauri": "npm run build:web && node scripts/package-tauri.mjs",
-    "test:web": "npm run build:web && node --import tsx --test tests/web-session.test.mjs tests/renderer-policy.test.mjs",
+    "test:web": "npm run build:web && node --import tsx --test tests/web-session.test.mjs tests/web-usability.test.mjs tests/renderer-policy.test.mjs",
     "test:rust": "npm run build:web && cargo test --workspace",
     "test:tauri-shell": "npm run build:web && cargo build -p cipher-vault --features e2e && node scripts/verify-tauri-shell.mjs target/debug/cipher-vault.exe target/e2e-screenshots",
+    "test:large-vault": "npm run build:web && cargo build -p cipher-vault --features e2e && node scripts/verify-large-vault.mjs target/debug/cipher-vault.exe target/e2e-screenshots",
     "test:tauri-update": "npm run build:web && node scripts/verify-tauri-update.mjs",
     "test:dependencies": "node scripts/audit-dependencies.mjs"
   }

@@ -42,9 +42,22 @@ const click = (page, selector) => page.evaluate(`document.querySelector(${JSON.s
 const menu = (page, group, item) => page.evaluate(`(() => {
   document.querySelector(${JSON.stringify(`.app-menu-trigger[aria-label="${group}"]`)}).click();
   return new Promise((resolve) => setTimeout(() => {
-    [...document.querySelectorAll(".app-menu-item")].find((node) => node.textContent.endsWith(${JSON.stringify(item)})).click();
+    // The label is compared without its shortcut hint.
+    [...document.querySelectorAll(".app-menu-item")].find((node) => [...node.childNodes].filter((child) => !child.classList?.contains("app-menu-shortcut")).map((child) => child.textContent).join("").endsWith(${JSON.stringify(item)})).click();
     resolve(true);
   }, 100));
+})()`);
+const CTRL = 2, SHIFT = 8;
+/** A shortcut as the keyboard sends it: rawKeyDown types nothing, as with Ctrl held. */
+async function press(page, code, key, keyCode, modifiers) {
+  await page.send("Input.dispatchKeyEvent", { type: "rawKeyDown", modifiers, key, code, windowsVirtualKeyCode: keyCode });
+  await page.send("Input.dispatchKeyEvent", { type: "keyUp", modifiers, key, code, windowsVirtualKeyCode: keyCode });
+}
+/** Sets a select the way a person does, so React sees the change. */
+const choose = (page, selector, value) => page.evaluate(`(() => {
+  const select = document.querySelector(${JSON.stringify(selector)});
+  Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(select, ${JSON.stringify(value)});
+  select.dispatchEvent(new Event("change", { bubbles: true }));
 })()`);
 const lockScreenShown = (page) => page.evaluate(`!!document.querySelector('input[aria-label="マスターパスワード"]')`);
 
@@ -112,7 +125,8 @@ try {
   const initial = await status(page);
   assert.equal(initial.isConfigured, false);
   assert.equal(initial.isUnlocked, false);
-  assert.equal(initial.idleTimeoutMs, 300000);
+  // No vault and no setting yet: the original five minutes. Setup writes fifteen (checked below).
+  assert.deepEqual({ minutes: initial.autoLockMinutes, idleTimeoutMs: initial.idleTimeoutMs }, { minutes: 5, idleTimeoutMs: 300000 });
   await submitPassword(page, PASSWORD, true);
   await until("the unlocked screen", async () => !(await lockScreenShown(page)) && (await status(page)).isUnlocked);
   result.setUp = true;
@@ -336,6 +350,153 @@ try {
   result.initialWindowSize = initialSize;
   assert.equal(initialSize[0], 960, "the default width");
   assert.ok(initialSize[1] >= 560 && initialSize[1] <= 680, "the default height, or the work area's");
+  // ---- Usability: the auto-lock setting, favorites, recent use, the URL, the shortcuts and the compact layout.
+  // The window's client size in logical pixels, and whether it is kept above other windows.
+  // The window is found by its title among the process's visible top-level windows, because MainWindowHandle
+  // can name another visible window of the same process.
+  const windowState = () => powershell(`Add-Type -Namespace E2E -Name State -MemberDefinition '
+      public delegate bool EnumProc(System.IntPtr w, System.IntPtr l);
+      [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc f, System.IntPtr l);
+      [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr w, out uint p);
+      [DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr w);
+      [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(System.IntPtr w, System.Text.StringBuilder s, int n);
+      [DllImport("user32.dll")] public static extern bool GetClientRect(System.IntPtr w, out RECT r);
+      [DllImport("user32.dll")] public static extern uint GetDpiForWindow(System.IntPtr w);
+      [DllImport("user32.dll")] public static extern int GetWindowLong(System.IntPtr w, int i);
+      public struct RECT { public int Left, Top, Right, Bottom; }'
+    $script:w = [System.IntPtr]::Zero
+    [void][E2E.State]::EnumWindows({ param($h, $l) $p = 0; [void][E2E.State]::GetWindowThreadProcessId($h, [ref]$p)
+      $t = New-Object System.Text.StringBuilder 64; [void][E2E.State]::GetWindowText($h, $t, 64)
+      if ($p -eq ${child.pid} -and [E2E.State]::IsWindowVisible($h) -and $t.ToString() -eq "CIPHER VAULT") { $script:w = $h; return $false }
+      $true }, [System.IntPtr]::Zero)
+    $w = $script:w
+    $s = [E2E.State]::GetDpiForWindow($w) / 96
+    $r = New-Object E2E.State+RECT; [void][E2E.State]::GetClientRect($w, [ref]$r)
+    "$([math]::Round($r.Right / $s)) $([math]::Round($r.Bottom / $s)) $((([E2E.State]::GetWindowLong($w, -20)) -band 8) -ne 0)"`).split(" ");
+  // Waits for the window's topmost style, and names the last state it read when it times out.
+  const untilTopmost = async (expected) => {
+    let last;
+    await until(`the window's topmost style ${expected}`, () => (last = windowState())[2] === expected, 30000)
+      .catch((error) => { throw new Error(`${error.message}; last state ${JSON.stringify(last)}`); });
+  };
+  const settingsFile = path.join(data, "app-settings.json");
+  const usable = await status(page);
+  result.autoLock = { minutes: usable.autoLockMinutes, idleTimeoutMs: usable.idleTimeoutMs, file: readFileSync(settingsFile, "utf8") };
+  assert.deepEqual(result.autoLock, { minutes: 15, idleTimeoutMs: 900000, file: '{"autoLockMinutes":15}' }, "a new vault locks after 15 minutes");
+  await menu(page, "ツール", "設定…");
+  await until("the settings", () => page.evaluate(`document.querySelector(".settings-dialog[open] select")?.value === "15"`));
+  await choose(page, ".settings-dialog select", "off");
+  await until("the warning", () => page.evaluate(`!!document.querySelector(".settings-warning")`));
+  await screenshot(page, screenshotDirectory, "tauri-shell-settings");
+  await click(page, '.settings-dialog button[type="submit"]');
+  await until("the saved setting", async () => (await status(page)).idleTimeoutMs === null && !(await page.evaluate(`!!document.querySelector("dialog[open]")`)));
+  assert.equal(readFileSync(settingsFile, "utf8"), '{"autoLockMinutes":null}');
+  const settingSession = JSON.stringify((await status(page)).sessionId);
+  result.autoLockRefused = await settle(page, `window.passwordManager.setAutoLock({ autoLockMinutes: 7 }, ${settingSession})`);
+  assert.deepEqual(result.autoLockRefused, { error: "自動ロックの時間が正しくありません" });
+  assert.equal((await settle(page, `window.passwordManager.setAutoLock({ autoLockMinutes: 15 }, ${settingSession})`)).value.idleTimeoutMs, 900000);
+
+  const usableSession = JSON.stringify((await status(page)).sessionId);
+  const login = (name, url) => `window.passwordManager.createEntry(${JSON.stringify({ serviceName: name, loginId: `synthetic-${name}-id`, password: `synthetic-${name}-password`, url, notes: "synthetic note", tags: [] })}, ${usableSession})`;
+  const withUrl = await page.evaluate(login("URLあり", "https://example.test/login"));
+  const scriptUrl = await page.evaluate(login("スクリプト", "javascript:alert(1)"));
+  const fileUrl = await page.evaluate(login("ファイル", "file:///C:/Windows/win.ini"));
+  const credentialUrl = await page.evaluate(login("認証付き", "https://user:secret@example.test/"));
+  result.urlRefusals = {};
+  for (const [name, entry] of Object.entries({ script: scriptUrl, file: fileUrl, credentials: credentialUrl, none: carried })) {
+    result.urlRefusals[name] = await settle(page, `window.passwordManager.openEntryUrl(${JSON.stringify(entry.id)}, ${usableSession})`);
+  }
+  const REFUSED_URL = "開けるのは http:// か https:// で始まるWebのURLだけです";
+  assert.deepEqual(result.urlRefusals, { script: { error: REFUSED_URL }, file: { error: REFUSED_URL }, credentials: { error: REFUSED_URL }, none: { error: "URLが登録されていません" } });
+  assert.equal(events.some((event) => event.startsWith("url-opened ")), false, "a refused URL is never opened");
+  for (const entry of [scriptUrl, fileUrl, credentialUrl]) await page.evaluate(`window.passwordManager.deleteEntry(${JSON.stringify(entry.id)}, ${usableSession})`);
+  await menu(page, "項目", "一覧を更新");
+  const urlRow = `button[data-entry-id="${withUrl.id}"]`;
+  await until("the new row", () => page.evaluate(`!!document.querySelector(${JSON.stringify(urlRow)}) && document.querySelectorAll(".entry-row").length === 2`));
+  await click(page, urlRow);
+  await until("the selected entry", () => page.evaluate(`document.querySelector(".inspector-title")?.textContent === "URLあり"`));
+  // A favorite is kept encrypted inside its entry; the first one keeps a copy of the vault for older releases.
+  await click(page, ".inspector-header .favorites-toggle");
+  await until("the favorite star", () => page.evaluate(`!!document.querySelector(${JSON.stringify(`${urlRow} .entry-favorite`)})`));
+  const favoriteItem = (await page.evaluate(`window.passwordManager.fetchEntries(${usableSession})`)).items.find((item) => item.id === withUrl.id);
+  result.favorite = { favorite: favoriteItem.favorite, updatedAt: favoriteItem.updatedAt === withUrl.updatedAt,
+    compatibilityCopy: vaultFiles().some((file) => path.basename(file) === "before-v5.sqlite"),
+    plainText: vaultFiles().some((file) => ["favorite", "URLあり"].some((text) => readFileSync(file).includes(Buffer.from(text)))) };
+  assert.deepEqual(result.favorite, { favorite: true, updatedAt: true, compatibilityCopy: true, plainText: false });
+  await click(page, ".list-meta .favorites-toggle");
+  await until("the favorites only", () => page.evaluate(`document.querySelectorAll(".entry-row").length === 1`));
+  await click(page, ".list-meta .favorites-toggle");
+  await until("every entry", () => page.evaluate(`document.querySelectorAll(".entry-row").length === 2`));
+
+  // The shortcuts act on the open entry, copy through the fake clipboard, and count as using it.
+  let usableMark = events.length;
+  await press(page, "KeyB", "b", 66, CTRL);
+  await until("the login ID copy", () => screenHas(page, "URLありのログインIDをコピーしました"));
+  await press(page, "KeyC", "C", 67, CTRL | SHIFT);
+  await until("the password copy", () => screenHas(page, "URLありのパスワードをコピーしました"));
+  await press(page, "KeyU", "u", 85, CTRL);
+  await until("the opened URL", () => events.slice(usableMark).includes("url-opened https://example.test/login"));
+  result.shortcuts = { reports: events.slice(usableMark).filter((event) => event.startsWith("clipboard-") || event.startsWith("url-opened ")) };
+  assert.deepEqual(result.shortcuts.reports, ["clipboard-write", "clipboard-write", "url-opened https://example.test/login"]);
+  await until("the use date", async () => !!(await page.evaluate(`window.passwordManager.fetchEntries(${usableSession})`)).items.find((item) => item.id === withUrl.id).lastUsedAt);
+  // A shortcut inside an open form does nothing to the clipboard, and Ctrl+F still finds the search.
+  await click(page, ".sidebar-add");
+  await until("the new form", () => page.evaluate(`!!(${field("サービス")})`));
+  usableMark = events.length;
+  await press(page, "KeyB", "b", 66, CTRL);
+  await until("the refusal notice", () => screenHas(page, "編集を終えてから使えます"));
+  assert.equal(events.slice(usableMark).some((event) => event.startsWith("clipboard-")), false);
+  await page.evaluate(`[...document.querySelectorAll(".editor-actions button")].find((node) => node.textContent.trim() === "キャンセル").click()`);
+  await press(page, "KeyF", "f", 70, CTRL);
+  await until("the search focus", () => page.evaluate(`document.activeElement?.classList.contains("search-input")`));
+  await click(page, urlRow);
+  await until("the selected entry", () => page.evaluate(`document.querySelector(".inspector-title")?.textContent === "URLあり"`));
+
+  // Compact: a narrow column with the sign-in values only, no maximize, and the normal size back afterwards.
+  await press(page, "KeyM", "M", 77, CTRL | SHIFT);
+  await until("the compact view", () => page.evaluate(`document.querySelector(".compact-detail-title")?.textContent === "URLあり"`));
+  await sleep(500);
+  result.compact = { window: windowState(), ...await page.evaluate(`({
+    fields: [...document.querySelectorAll(".compact-view .entry-view-field dt")].map((node) => node.textContent),
+    notes: document.body.innerText.includes("synthetic note"),
+    maximize: !!document.querySelector('.window-control[aria-label="最大化"]'),
+    listToggle: !!document.querySelector('.app-menu-bar button[aria-label="一覧をアイコンだけにする"]')
+  })`) };
+  assert.deepEqual(result.compact, { window: ["400", result.compact.window[1], "False"], fields: ["ログインID", "パスワード", "URL"], notes: false, maximize: false, listToggle: false });
+  await screenshot(page, screenshotDirectory, "tauri-shell-compact");
+  usableMark = events.length;
+  await click(page, '.compact-view button[aria-label="URLをブラウザで開く"]');
+  await until("the opened URL", () => events.slice(usableMark).includes("url-opened https://example.test/login"));
+  await page.evaluate(`document.querySelector(".compact-detail button").focus()`);
+  await page.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+  await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+  await until("the compact list", () => page.evaluate(`!!document.querySelector(".compact-list")`));
+  result.compactList = await page.evaluate(`[...document.querySelectorAll(".compact-list [role=group]")].map((node) => node.getAttribute("aria-label") + ":" + node.querySelectorAll(".entry-row").length)`);
+  assert.deepEqual(result.compactList, ["お気に入り:1", "そのほか:1"]);
+  // In the list, the shortcuts wait for an entry to be opened: the row in focus may not be the one opened before.
+  usableMark = events.length;
+  await press(page, "KeyC", "C", 67, CTRL | SHIFT);
+  await until("the refusal in the list", () => screenHas(page, "項目を開いてから使えます"));
+  assert.equal(events.slice(usableMark).some((event) => event.startsWith("clipboard-")), false);
+  await type(page, ".compact-head .search-input", "画面");
+  await until("the search", () => page.evaluate(`document.querySelectorAll(".compact-list .entry-row").length === 1`));
+  await click(page, ".compact-pin");
+  await until("the topmost report", () => events.includes("always-on-top true"));
+  await untilTopmost("True");
+  await menu(page, "表示", "ルミナスデザイン");
+  await sleep(400);
+  await screenshot(page, screenshotDirectory, "tauri-shell-compact-luminous");
+  await menu(page, "表示", "シンプルデザイン");
+  await click(page, ".compact-pin");
+  await until("the normal report", () => events.includes("always-on-top false"));
+  await untilTopmost("False");
+  await click(page, '.compact-head button[aria-label="通常表示に戻す"]');
+  await until("the normal view", () => page.evaluate(`!document.querySelector(".compact-view") && !!document.querySelector(".vault-sidebar")`));
+  await sleep(500);
+  result.afterCompact = windowState();
+  assert.deepEqual(result.afterCompact, [String(initialSize[0]), String(initialSize[1]), "False"], "the normal size comes back");
+  await page.evaluate(`localStorage.removeItem("cipher-vault.list-favorites-only")`);
+
   const reportsSince = (mark) => events.slice(mark).filter((event) => event.startsWith("vault-locked ") || event.startsWith("clipboard-"));
   const copy = async () => settle(page, `window.passwordManager.copyText("synthetic-clipboard-value", ${JSON.stringify((await status(page)).sessionId)})`);
   let mark = events.length;

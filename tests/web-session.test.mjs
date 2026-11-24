@@ -108,3 +108,13 @@ test("an unavailable backend clears the local unlocked view instead of returning
   await client.change(async () => state("new-unlock"));
   assert.equal(last.isUnlocked, true);
 });
+
+test("a new auto-lock time reaches the screen without ending calls in progress", async () => {
+  const client = new VaultClientSession(); client.observe({ ...state("same"), autoLockMinutes: 15, idleTimeoutMs: 900000 });
+  let last; client.subscribe((value) => { last = value; });
+  const disabled = { ...state("same"), autoLockMinutes: null, idleTimeoutMs: null };
+  const result = await client.run(async (id) => { assert.equal(id, "same"); return disabled; }, async () => disabled);
+  assert.equal(result, disabled, "the call that changed the setting still succeeds");
+  assert.equal(last.autoLockMinutes, null);
+  assert.equal(last.idleTimeoutMs, null);
+});
