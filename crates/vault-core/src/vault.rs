@@ -383,6 +383,11 @@ impl Vault {
         })
     }
 
+    /// Authorizes a desktop setting change without refreshing the idle deadline.
+    pub fn require_session(&self, session_id: Option<&Value>) -> Result<()> {
+        self.with_session(session_id, |_| Ok(()))
+    }
+
     /// withVaultSession: the vault is unlocked by this session before and after the action.
     fn within_session<T>(&self, session_id: Option<&Value>, action: impl FnOnce(&str) -> Result<T>) -> Result<T> {
         let expected = parse_session_id(session_id)?;
@@ -1057,6 +1062,21 @@ mod tests {
             Stamp { monotonic: start.monotonic + offset, wall: start.wall + offset }
         });
         (offset, clock)
+    }
+
+    #[test]
+    fn requiring_a_session_checks_the_generation_and_leaves_the_deadline_alone() {
+        let directory = TemporaryDirectory::new();
+        let (offset, clock) = manual_clock();
+        let vault = Vault::open_with_clock(&directory.0, clock).unwrap();
+        let locked = id(&vault.status().unwrap());
+        assert_eq!(vault.require_session(some(&locked)), Err(error::locked()));
+        let session = id(&vault.setup(some(&locked), some(&password(MASTER))).unwrap());
+        assert_eq!(vault.require_session(some(&locked)), Err(changed()));
+        *offset.lock().unwrap() = Duration::from_secs(14 * 60);
+        assert_eq!(vault.require_session(some(&session)), Ok(()));
+        *offset.lock().unwrap() = Duration::from_secs(15 * 60);
+        assert_eq!(vault.require_session(some(&session)), Err(error::locked()));
     }
 
     #[test]

@@ -49,6 +49,8 @@
     recordEntryUse: (id, sessionId) => call("entry_use_record", { sessionId, id }),
     openEntryUrl: (id, sessionId) => call("entry_url_open", { sessionId, id }),
     setAutoLock: (payload, sessionId) => call("settings_auto_lock_set", { sessionId, payload }),
+    getGlobalShortcut: () => call("settings_global_shortcut_get"),
+    setGlobalShortcut: (payload, sessionId) => call("settings_global_shortcut_set", { sessionId, payload }),
     generatePassword: (options, sessionId) => call("password_generate", { sessionId, options }),
     exportBackup: (payload, sessionId) => call("backup_export", { sessionId, payload }),
     restoreBackup: (payload, sessionId) => call("backup_restore", { sessionId, payload }),

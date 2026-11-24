@@ -14,11 +14,13 @@ mod clipboard;
 mod data_directory;
 mod electron_guard;
 mod external_url;
+mod global_hotkey;
 mod os_events;
 mod single_instance;
 mod updates;
 #[cfg_attr(feature = "e2e", allow(dead_code))]
 mod webview_hardening;
+mod window_prefs;
 // Left out of the e2e build, so that build cannot reach the real clipboard at all.
 #[cfg(not(feature = "e2e"))]
 mod windows_clipboard;
@@ -26,18 +28,22 @@ mod windows_clipboard;
 use cipher_vault_core::error::VaultError;
 use cipher_vault_core::{LockReason, Vault};
 use clipboard::ExpiringClipboard;
+use global_hotkey::{Hotkey, HotkeyError, HotkeyListener};
 use os_events::{OsEvent, PowerGuard};
-use serde_json::Value;
+use serde_json::{Value, json};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tauri::webview::NewWindowResponse;
-use tauri::{AppHandle, LogicalSize, Manager, RunEvent, State, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, LogicalSize, Manager, PhysicalPosition, RunEvent, State, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
 use updates::Updates;
+use window_prefs::{CompactBounds, WindowPrefs};
 use zeroize::Zeroize;
 
 type Shared = Arc<Vault>;
 type SharedDesktop = Arc<Desktop>;
+type WindowSettings = Arc<Mutex<WindowPreferences>>;
 
 /// How often the idle limit and the copy deadline are checked, even when the screen hangs.
 const WATCHDOG_INTERVAL: Duration = Duration::from_millis(500);
@@ -224,6 +230,86 @@ async fn settings_auto_lock_set(vault: State<'_, Shared>, session_id: Option<Val
     run(vault, move |vault| vault.set_auto_lock(session_id.as_ref(), payload.as_ref())).await
 }
 
+struct WindowPreferences {
+    directory: PathBuf,
+    prefs: WindowPrefs,
+    listener: Option<HotkeyListener>,
+    registration_error: Option<&'static str>,
+}
+
+impl WindowPreferences {
+    fn start(directory: PathBuf, app: &AppHandle) -> Self {
+        let prefs = WindowPrefs::load(&directory);
+        let app = app.clone();
+        let listener = HotkeyListener::start(Box::new(move || queue_summon(&app))).ok();
+        let registration_error = match (&listener, prefs.global_shortcut) {
+            (Some(listener), Some(hotkey)) => listener.set(Some(hotkey)).err(),
+            (None, _) => Some(HotkeyError::Failed),
+            _ => None,
+        }.map(|error| error.message());
+        Self { directory, prefs, listener, registration_error }
+    }
+
+    fn shortcut_status(&self) -> Value {
+        let shortcut = self.prefs.global_shortcut;
+        let registered = self.listener.as_ref().zip(shortcut).is_some_and(|(listener, hotkey)| listener.registered(hotkey));
+        let error = self.registration_error.or_else(|| (shortcut.is_some() && !registered).then(|| HotkeyError::Failed.message()));
+        json!({
+            "shortcut": shortcut.map(|hotkey| hotkey.to_string()),
+            "summonCompact": self.prefs.summon_compact,
+            "registered": registered,
+            "error": error,
+        })
+    }
+
+    fn set_shortcut(&mut self, shortcut: Option<Hotkey>, summon_compact: bool) -> Result<Value, String> {
+        if let Some(listener) = &self.listener {
+            listener.set(shortcut).map_err(|error| error.message())?;
+            self.registration_error = None;
+        } else if shortcut.is_some() {
+            return Err(HotkeyError::Failed.message().into());
+        }
+        let previous = (self.prefs.global_shortcut, self.prefs.summon_compact);
+        self.prefs.global_shortcut = shortcut;
+        self.prefs.summon_compact = summon_compact;
+        if let Err(error) = self.prefs.save(&self.directory) {
+            // Not saved, so the key that was in use comes back; the status then reads what is registered.
+            (self.prefs.global_shortcut, self.prefs.summon_compact) = previous;
+            if let Some(Err(restore)) = self.listener.as_ref().map(|listener| listener.set(previous.0)) {
+                self.registration_error = Some(restore.message());
+            }
+            return Err(error);
+        }
+        Ok(self.shortcut_status())
+    }
+}
+
+#[tauri::command]
+fn settings_global_shortcut_get(settings: State<'_, WindowSettings>) -> Result<Value, String> {
+    let settings = settings.lock().map_err(|_| HotkeyError::Failed.message())?;
+    Ok(settings.shortcut_status())
+}
+
+#[tauri::command]
+async fn settings_global_shortcut_set(
+    vault: State<'_, Shared>, settings: State<'_, WindowSettings>, session_id: Option<Value>, payload: Option<Value>,
+) -> Result<Value, String> {
+    let settings = Arc::clone(&settings);
+    run(vault, move |vault| {
+        let mut settings = settings.lock().map_err(|_| VaultError::new(500, window_prefs::SAVE_FAILED))?;
+        vault.require_session(session_id.as_ref())?;
+        let payload = payload.as_ref().ok_or_else(|| VaultError::bad_request("ショートカットの設定が正しくありません"))?;
+        let shortcut = match payload.get("shortcut") {
+            Some(Value::Null) => None,
+            Some(Value::String(text)) => Some(Hotkey::parse(text).map_err(VaultError::bad_request)?),
+            _ => return Err(VaultError::bad_request(global_hotkey::INVALID_SHORTCUT)),
+        };
+        let summon_compact = payload.get("summonCompact").and_then(Value::as_bool)
+            .ok_or_else(|| VaultError::bad_request("ショートカットの設定が正しくありません"))?;
+        settings.set_shortcut(shortcut, summon_compact).map_err(|message| VaultError::new(500, message))
+    }).await
+}
+
 #[tauri::command]
 async fn entry_favorite_set(vault: State<'_, Shared>, session_id: Option<Value>, id: Option<Value>, favorite: Option<Value>) -> Result<Value, String> {
     run(vault, move |vault| vault.set_entry_favorite(session_id.as_ref(), id.as_ref(), favorite.as_ref())).await
@@ -301,7 +387,8 @@ fn update_open_releases() -> Result<(), String> {
 /// The reasons are in docs/設計.md (コンパクト表示).
 const COMPACT_WIDTH: f64 = 400.0;
 const COMPACT_HEIGHT: (f64, f64) = (480.0, 720.0);
-const COMPACT_MIN: (f64, f64) = (360.0, 480.0);
+const COMPACT_MIN: (f64, f64) = (360.0, 400.0);
+const COMPACT_MAX: (f64, f64) = (520.0, 4000.0);
 const WINDOW_FAILED: &str = "ウィンドウの大きさを変えられませんでした";
 
 /// The size the window had before the compact layout, to return to it. None while not compact.
@@ -317,18 +404,85 @@ struct NormalWindow {
     maximized: bool,
 }
 
-/// The compact layout's size: the fixed width, and the current height kept within the compact range.
+/// The first compact size keeps the normal height within the original range.
 fn compact_size(height: Option<f64>) -> (f64, f64) {
     (COMPACT_WIDTH, height.unwrap_or(640.0).clamp(COMPACT_HEIGHT.0, COMPACT_HEIGHT.1))
+}
+
+#[derive(Clone, Copy)]
+struct WorkArea {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    scale: f64,
+}
+
+impl From<tauri::Monitor> for WorkArea {
+    fn from(monitor: tauri::Monitor) -> Self {
+        let area = monitor.work_area();
+        Self { x: area.position.x, y: area.position.y, width: area.size.width, height: area.size.height, scale: monitor.scale_factor() }
+    }
+}
+
+impl WorkArea {
+    fn contains_center(self, bounds: CompactBounds, frame: (f64, f64)) -> bool {
+        let x = f64::from(bounds.x) + (bounds.width + frame.0) * self.scale / 2.0 - f64::from(self.x);
+        let y = f64::from(bounds.y) + (bounds.height + frame.1) * self.scale / 2.0 - f64::from(self.y);
+        (0.0..f64::from(self.width)).contains(&x) && (0.0..f64::from(self.height)).contains(&y)
+    }
+
+    fn move_inside(self, mut bounds: CompactBounds, frame: (f64, f64)) -> CompactBounds {
+        let dx = (f64::from(self.width) - ((bounds.width + frame.0) * self.scale).round()).max(0.0);
+        let dy = (f64::from(self.height) - ((bounds.height + frame.1) * self.scale).round()).max(0.0);
+        bounds.x = f64::from(bounds.x).clamp(f64::from(self.x), f64::from(self.x) + dx) as i32;
+        bounds.y = f64::from(bounds.y).clamp(f64::from(self.y), f64::from(self.y) + dy) as i32;
+        bounds
+    }
+}
+
+/// A saved window returns to a connected monitor even after a DPI or work area change.
+fn compact_placement(
+    saved: Option<CompactBounds>, fallback: CompactBounds, frame: (f64, f64), monitors: &[WorkArea], current: Option<WorkArea>,
+) -> CompactBounds {
+    if let Some(mut bounds) = saved
+        && let Some(area) = monitors.iter().find(|area| area.contains_center(bounds, frame))
+    {
+        let max_width = (f64::from(area.width) / area.scale - frame.0).clamp(COMPACT_MIN.0, COMPACT_MAX.0);
+        let max_height = (f64::from(area.height) / area.scale - frame.1).clamp(COMPACT_MIN.1, COMPACT_MAX.1);
+        bounds.width = bounds.width.clamp(COMPACT_MIN.0, max_width);
+        bounds.height = bounds.height.clamp(COMPACT_MIN.1, max_height);
+        return area.move_inside(bounds, frame);
+    }
+    current.map_or(fallback, |area| area.move_inside(fallback, frame))
+}
+
+fn current_compact_bounds(window: &WebviewWindow) -> Option<CompactBounds> {
+    let position = window.outer_position().ok()?;
+    let size = window.inner_size().ok()?.to_logical::<f64>(window.scale_factor().ok()?);
+    (size.width > 0.0 && size.height > 0.0).then_some(CompactBounds {
+        x: position.x, y: position.y, width: size.width, height: size.height,
+    })
+}
+
+fn save_compact_bounds(settings: &WindowSettings, bounds: Option<CompactBounds>) {
+    if let Some(bounds) = bounds
+        && let Ok(mut settings) = settings.lock()
+    {
+        settings.prefs.compact_bounds = Some(bounds);
+        let _ = settings.prefs.save(&settings.directory);
+    }
 }
 
 /// Switches the window between the normal and the compact layout. The screen can choose only
 /// between the two, never a size or a place of its own.
 #[tauri::command]
-fn window_set_compact(window: WebviewWindow, layout: State<'_, WindowLayout>, compact: Option<Value>) -> Result<(), String> {
+fn window_set_compact(
+    window: WebviewWindow, layout: State<'_, WindowLayout>, settings: State<'_, WindowSettings>, compact: Option<Value>,
+) -> Result<(), String> {
     let compact = compact.as_ref().and_then(Value::as_bool).ok_or("表示の指定が正しくありません")?;
     let failed = |_| WINDOW_FAILED.to_string();
-    let mut normal = layout.normal.lock().unwrap();
+    let mut normal = layout.normal.lock().map_err(|_| WINDOW_FAILED)?;
     if compact {
         if normal.is_none() {
             let maximized = window.is_maximized().map_err(failed)?;
@@ -339,15 +493,32 @@ fn window_set_compact(window: WebviewWindow, layout: State<'_, WindowLayout>, co
             if maximized {
                 window.unmaximize().map_err(failed)?;
             }
+            let position = window.outer_position().map_err(failed)?;
             let (width, height) = compact_size((!maximized).then_some(size.height));
+            let fallback = CompactBounds { x: position.x, y: position.y, width, height };
+            let frame = window.outer_size().ok().zip(window.inner_size().ok()).zip(window.scale_factor().ok()).map_or((0.0, 0.0), |((outer, inner), scale)| {
+                let extra_width = outer.width.saturating_sub(inner.width);
+                let extra_height = outer.height.saturating_sub(inner.height);
+                (f64::from(extra_width) / scale, f64::from(extra_height) / scale)
+            });
+            let saved = settings.lock().ok().and_then(|settings| settings.prefs.compact_bounds);
+            let monitors = window.available_monitors().unwrap_or_default().into_iter().map(WorkArea::from).collect::<Vec<_>>();
+            let current = window.current_monitor().ok().flatten().map(WorkArea::from);
+            let bounds = compact_placement(saved, fallback, frame, &monitors, current);
             window.set_min_size(Some(LogicalSize::new(COMPACT_MIN.0, COMPACT_MIN.1))).map_err(failed)?;
-            window.set_size(LogicalSize::new(width, height)).map_err(failed)?;
+            window.set_max_size(Some(LogicalSize::new(COMPACT_MAX.0, COMPACT_MAX.1))).map_err(failed)?;
+            if (bounds.x, bounds.y) != (position.x, position.y) {
+                window.set_position(PhysicalPosition::new(bounds.x, bounds.y)).map_err(failed)?;
+            }
+            window.set_size(LogicalSize::new(bounds.width, bounds.height)).map_err(failed)?;
             // A maximized narrow column would lose its point, so the compact window cannot be maximized.
             window.set_maximizable(false).map_err(failed)?;
             // Kept only once the window is compact, so a failed change can be asked for again.
             *normal = Some(previous);
         }
     } else if let Some(previous) = *normal {
+        let bounds = current_compact_bounds(&window);
+        window.set_max_size(None::<LogicalSize<f64>>).map_err(failed)?;
         window.set_maximizable(true).map_err(failed)?;
         if window.is_maximized().map_err(failed)? {
             window.unmaximize().map_err(failed)?;
@@ -360,8 +531,50 @@ fn window_set_compact(window: WebviewWindow, layout: State<'_, WindowLayout>, co
         }
         // Forgotten only once the window is back, so a failed change can be asked for again.
         *normal = None;
+        save_compact_bounds(&settings, bounds);
     }
     Ok(())
+}
+
+fn summon(window: &WebviewWindow, compact: bool) {
+    if matches!(window.is_visible(), Ok(true)) && matches!(window.is_minimized(), Ok(false)) && matches!(window.is_focused(), Ok(true)) {
+        let _ = window.minimize();
+        trace("summon-hidden");
+    } else {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        let _ = window.eval(format!("window.dispatchEvent(new CustomEvent('cipher-vault-summon', {{ detail: {{ compact: {compact} }} }}))"));
+        trace("summoned");
+    }
+}
+
+fn queue_summon(app: &AppHandle) {
+    let main = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(window) = main.get_webview_window("main") {
+            let settings = main.state::<WindowSettings>();
+            let compact = settings.lock().map_or(true, |settings| settings.prefs.summon_compact);
+            summon(&window, compact);
+        }
+    });
+}
+
+/// Lets the shell check request a press without reserving a real key.
+#[cfg(feature = "e2e")]
+fn watch_summon_file(app: &AppHandle) {
+    let marker = std::env::var_os("CIPHER_VAULT_E2E_SUMMON_FILE").map(PathBuf::from).filter(|path| path.is_absolute());
+    if let Some(marker) = marker {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            while !app.state::<SharedDesktop>().quitting.load(Ordering::SeqCst) {
+                if std::fs::remove_file(&marker).is_ok() {
+                    queue_summon(&app);
+                }
+                std::thread::sleep(WATCHDOG_INTERVAL);
+            }
+        });
+    }
 }
 
 /// Keeps the window above other windows, or stops doing so. It is not saved: each start is normal.
@@ -411,7 +624,7 @@ fn with_debugging_port<'a, R: tauri::Runtime, M: tauri::Manager<R>>(builder: Web
 /// environment, so the update check passes the e2e build's settings as arguments as well.
 #[cfg(feature = "e2e")]
 fn apply_e2e_arguments() {
-    const NAMES: [&str; 5] = ["CIPHER_VAULT_DATA_DIR", "CIPHER_VAULT_E2E_DEBUG_PORT", "CIPHER_VAULT_E2E_PROFILE", "CIPHER_VAULT_E2E_DOWNLOADS", "CIPHER_VAULT_E2E_UPDATE_ANSWER"];
+    const NAMES: [&str; 6] = ["CIPHER_VAULT_DATA_DIR", "CIPHER_VAULT_E2E_DEBUG_PORT", "CIPHER_VAULT_E2E_PROFILE", "CIPHER_VAULT_E2E_DOWNLOADS", "CIPHER_VAULT_E2E_UPDATE_ANSWER", "CIPHER_VAULT_E2E_SUMMON_FILE"];
     for argument in std::env::args().skip(1) {
         if let Some((name, value)) = argument.strip_prefix("--e2e-env=").and_then(|setting| setting.split_once('='))
             && NAMES.contains(&name)
@@ -517,6 +730,8 @@ fn main() {
             entry_use_record,
             entry_url_open,
             settings_auto_lock_set,
+            settings_global_shortcut_get,
+            settings_global_shortcut_set,
             password_generate,
             backup_export,
             backup_restore,
@@ -530,7 +745,7 @@ fn main() {
             window_set_compact,
             window_set_always_on_top
         ])
-        .setup(|app| {
+        .setup(move |app| {
             let supported = updates::supported(app.handle());
             trace(&format!("update-support {supported}"));
             app.manage(Updates::new(app.package_info().version.to_string(), supported));
@@ -555,12 +770,20 @@ fn main() {
             #[cfg(feature = "e2e")]
             let builder = with_debugging_port(builder);
             let window = builder.build()?;
+            app.manage(Arc::new(Mutex::new(WindowPreferences::start(directory, app.handle()))));
+            #[cfg(feature = "e2e")]
+            watch_summon_file(app.handle());
             let desktop = Arc::clone(app.state::<SharedDesktop>().inner());
             let closed = Arc::clone(&desktop);
+            let closing = window.clone();
             // The Electron app locks when its window closes; the process may outlive the window.
             window.on_window_event(move |event| {
-                if matches!(event, WindowEvent::Destroyed) {
-                    closed.lock_and_clear(LockReason::WindowClosed);
+                match event {
+                    WindowEvent::CloseRequested { .. } if closing.state::<WindowLayout>().normal.lock().is_ok_and(|normal| normal.is_some()) => {
+                        save_compact_bounds(&closing.state::<WindowSettings>(), current_compact_bounds(&closing));
+                    }
+                    WindowEvent::Destroyed => closed.lock_and_clear(LockReason::WindowClosed),
+                    _ => {}
                 }
             });
             window.with_webview(move |webview| {
@@ -579,8 +802,10 @@ fn main() {
         .build(context)
         .unwrap_or_else(|_| fail_startup("The window failed to start."));
 
-    app.run(move |_app, event| {
+    app.run(move |app, event| {
         if let RunEvent::Exit = event {
+            let listener = app.state::<WindowSettings>().lock().ok().and_then(|mut settings| settings.listener.take());
+            drop(listener);
             desktop.quit();
         }
     });
@@ -608,6 +833,34 @@ mod tests {
         assert_eq!(compact_size(Some(1032.0)), (400.0, 720.0));
         assert_eq!(compact_size(Some(300.0)), (400.0, 480.0));
         assert!(COMPACT_MIN.0 <= COMPACT_WIDTH && COMPACT_MIN.1 <= COMPACT_HEIGHT.0);
+    }
+
+    #[test]
+    fn a_disconnected_compact_monitor_uses_the_current_work_area() {
+        let primary = WorkArea { x: 0, y: 40, width: 1280, height: 860, scale: 1.0 };
+        let fallback = CompactBounds { x: 1100, y: -20, width: 400.0, height: 640.0 };
+        let saved = CompactBounds { x: -1400, y: 100, ..fallback };
+        let expected = CompactBounds { x: 870, y: 40, ..fallback };
+        assert_eq!(compact_placement(Some(saved), fallback, (10.0, 10.0), &[primary], Some(primary)), expected);
+        assert_eq!(compact_placement(None, fallback, (10.0, 10.0), &[primary], None), fallback);
+    }
+
+    #[test]
+    fn compact_bounds_restore_on_a_scaled_monitor_with_negative_coordinates() {
+        let primary = WorkArea { x: 0, y: 0, width: 1920, height: 1040, scale: 1.0 };
+        let secondary = WorkArea { x: -1500, y: -200, width: 1500, height: 1050, scale: 1.5 };
+        let monitors = [primary, secondary];
+        let fallback = CompactBounds { x: 70, y: 80, width: 400.0, height: 640.0 };
+        let saved = CompactBounds { x: -1200, y: -170, width: 590.0, height: 900.0 };
+        let expected = CompactBounds { x: -1200, y: -200, width: 520.0, height: 690.0 };
+        assert_eq!(compact_placement(Some(saved), fallback, (10.0, 10.0), &monitors, Some(primary)), expected);
+        let small = CompactBounds { width: 50.0, height: 40.0, ..saved };
+        let minimum = CompactBounds { width: 360.0, height: 400.0, ..small };
+        assert_eq!(compact_placement(Some(small), fallback, (0.0, 0.0), &monitors, Some(primary)), minimum);
+        let fitting = CompactBounds { width: 430.0, height: 610.0, ..saved };
+        assert_eq!(compact_placement(Some(fitting), fallback, (0.0, 0.0), &monitors, Some(primary)), fitting);
+        let off_secondary = CompactBounds { x: -250, width: 400.0, ..fitting };
+        assert_eq!(compact_placement(Some(off_secondary), fallback, (0.0, 0.0), &monitors, Some(primary)), fallback);
     }
 
     #[test]

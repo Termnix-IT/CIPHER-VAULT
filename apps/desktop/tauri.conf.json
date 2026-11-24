@@ -34,6 +34,8 @@
             "allow-entry-use-record",
             "allow-entry-url-open",
             "allow-settings-auto-lock-set",
+            "allow-settings-global-shortcut-get",
+            "allow-settings-global-shortcut-set",
             "allow-password-generate",
             "allow-backup-export",
             "allow-backup-restore",

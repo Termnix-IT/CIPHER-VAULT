@@ -18,6 +18,8 @@ const COMMANDS: &[&str] = &[
     "entry_use_record",
     "entry_url_open",
     "settings_auto_lock_set",
+    "settings_global_shortcut_get",
+    "settings_global_shortcut_set",
     "password_generate",
     "backup_export",
     "backup_restore",
