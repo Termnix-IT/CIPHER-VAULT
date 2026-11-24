@@ -392,25 +392,36 @@ pub(crate) fn is_entry_uuid(id: &str) -> bool {
     id.len() == 36 && id.bytes().all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
 }
 
+/// Optional metadata is checked separately so the stored entry's original shape stays strict.
+pub(crate) const ENTRY_METADATA_FIELDS: [&str; 3] = ["icon", "favorite", "lastUsedAt"];
+
 /// validateEntryPlaintext: every entry is checked when it is read, and before it is sealed.
 pub fn validate_stored_entry(entry: &Value, expected_id: &str) -> Result<()> {
-    // The list icon (format 4) is checked on its own, and the rest of the entry as before.
-    let without_icon;
-    let entry = match entry.get("icon") {
-        Some(icon) => {
+    let invalid = || VaultError::bad_request(INVALID_ENTRY);
+    let without_metadata;
+    let entry = if ENTRY_METADATA_FIELDS.iter().any(|field| entry.get(*field).is_some()) {
+        if let Some(icon) = entry.get("icon") {
             crate::icons::parse_icon(icon).map_err(|_| VaultError::bad_request(INVALID_ENTRY))?;
-            let mut copy = entry.clone();
-            copy.as_object_mut().map(|object| object.remove("icon"));
-            without_icon = copy;
-            &without_icon
         }
-        None => entry,
+        if entry.get("favorite").is_some_and(|favorite| favorite.as_bool() != Some(true))
+            || entry.get("lastUsedAt").is_some_and(|date| canonical_date(Some(date)).is_none())
+        {
+            return Err(invalid());
+        }
+        let mut object = entry.as_object().ok_or_else(invalid)?.clone();
+        for field in ENTRY_METADATA_FIELDS {
+            object.shift_remove(field);
+        }
+        without_metadata = Value::Object(object);
+        &without_metadata
+    } else {
+        entry
     };
     let checked = match entry["type"].as_str() {
         Some("apiKey" | "creditCard" | "financial") => validate_additional(entry, expected_id),
         _ => validate_login(entry, expected_id),
     };
-    checked.ok_or_else(|| VaultError::bad_request(INVALID_ENTRY))
+    checked.ok_or_else(invalid)
 }
 
 fn validate_login(entry: &Value, expected_id: &str) -> Option<()> {
@@ -593,6 +604,13 @@ mod tests {
             assert!(change("serviceName", json!(" ")), "{kind}: an empty name");
             assert!(change("unexpected", json!(1)), "{kind}: an unknown field");
             assert!(change("group", json!(1)), "{kind}: a group that is not text");
+            assert!(change("favorite", json!(false)), "{kind}: false must be omitted");
+            assert!(change("favorite", json!("yes")), "{kind}: a favorite is a boolean");
+            assert!(change("lastUsedAt", json!("2029-01-02T00:00:00Z")), "{kind}: the use date must be canonical");
+            let mut marked = entry;
+            marked["favorite"] = json!(true);
+            marked["lastUsedAt"] = json!("2028-01-01T00:00:00.000Z");
+            assert_eq!(validate_stored_entry(&marked, id), Ok(()), "{kind}: a use date may precede creation");
         }
         let mut card = stored("creditCard");
         card["card"]["number"] = json!("4111 1111 1111 1111");

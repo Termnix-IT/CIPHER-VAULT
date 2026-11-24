@@ -14,6 +14,7 @@ pub mod maintenance;
 pub mod password;
 pub mod selection;
 pub mod session;
+mod settings;
 pub mod unlock_guard;
 pub mod v2;
 pub mod vault;

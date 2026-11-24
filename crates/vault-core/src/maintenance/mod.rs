@@ -11,7 +11,7 @@
 mod common;
 mod recovery_check;
 mod replacement;
-mod state_files;
+pub(crate) mod state_files;
 
 use crate::error::{Result, VaultError};
 use crate::files::{self, FileCheckFailed};

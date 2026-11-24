@@ -18,6 +18,8 @@ const UNSUPPORTED: &str = "未対応または破損したバックアップフ�
 const WRONG_PASSPHRASE: &str = "パスフレーズが違うか、バックアップファイルが破損しています";
 /// The first version whose entries may carry a list icon.
 const ICON_VERSION: u64 = 4;
+/// The first version whose entries may carry favorites and last-use dates.
+pub(crate) const USAGE_VERSION: u64 = 5;
 const LOGIN_FIELDS: [&str; 11] = ["id", "serviceName", "loginId", "password", "notes", "url", "tags", "group", "createdAt", "updatedAt", "passwordChangedAt"];
 
 pub struct Envelope {
@@ -31,7 +33,7 @@ pub struct Envelope {
 /// JavaScript compares numbers by value, so a version written as 1.0 is still version 1.
 fn version_of(value: Option<&Value>) -> Option<u64> {
     let number = value?.as_f64()?;
-    [1, 2, 3, 4].into_iter().find(|version| *version as f64 == number)
+    (1..=USAGE_VERSION).find(|version| *version as f64 == number)
 }
 
 /// parseRecord: an object whose keys are all among `fields`. Missing fields fail the later checks.
@@ -72,22 +74,25 @@ pub fn parse(content: &str) -> Result<Envelope> {
 /// validateBackupEntries for one login: all eleven fields, an id of 36 hex digits and dashes,
 /// and the checks a stored login passes.
 fn valid_login(entry: &Value, version: u64) -> Option<String> {
-    let with_icon: Vec<&str> = LOGIN_FIELDS.into_iter().chain((version >= ICON_VERSION).then_some("icon")).collect();
-    let object = record(entry, &with_icon)?;
+    let fields: Vec<&str> = LOGIN_FIELDS.into_iter()
+        .chain((version >= ICON_VERSION).then_some("icon"))
+        .chain((version >= USAGE_VERSION).then_some(["favorite", "lastUsedAt"]).into_iter().flatten())
+        .collect();
+    let object = record(entry, &fields)?;
     let id = object.get("id")?.as_str().filter(|id| input::is_entry_uuid(id))?;
     input::validate_stored_entry(entry, id).ok()?;
     Some(id.to_string())
 }
 
 /// validateBackupEntries (version 1, logins only) and validateVaultEntries (later versions).
-/// Only version 4 holds list icons.
+/// Earlier formats cannot hold metadata added in later releases.
 fn validate(entries: &Value, version: u64) -> Option<()> {
     validate_list(entries.as_array()?, version)
 }
 
-/// The entries of a vault, which may have every kind and icons.
+/// The entries of a vault can use all fields from the latest format.
 pub fn validate_entries(entries: &[Value]) -> bool {
-    validate_list(entries, ICON_VERSION).is_some()
+    validate_list(entries, USAGE_VERSION).is_some()
 }
 
 fn validate_list(entries: &[Value], version: u64) -> Option<()> {
@@ -97,7 +102,9 @@ fn validate_list(entries: &[Value], version: u64) -> Option<()> {
     let typed = version != 1;
     let mut ids = HashSet::new();
     for entry in entries {
-        if entry.get("icon").is_some() && version < ICON_VERSION {
+        if (entry.get("icon").is_some() && version < ICON_VERSION)
+            || ((entry.get("favorite").is_some() || entry.get("lastUsedAt").is_some()) && version < USAGE_VERSION)
+        {
             return None;
         }
         let id = match entry.get("type") {
@@ -137,13 +144,13 @@ pub fn decode(envelope: &Envelope, key: &[u8]) -> Result<Vec<Value>> {
 
 /// encodeVaultBackup: the lowest version that can hold the entries.
 pub fn encode(entries: Vec<Value>, key: &Secret, salt: &[u8], iv: &[u8]) -> Result<String> {
-    let entries = Value::Array(entries);
-    if validate(&entries, ICON_VERSION).is_none() {
+    if !validate_entries(&entries) {
         return Err(VaultError::bad_request("バックアップの項目が正しくありません"));
     }
-    let kinds: Vec<&str> = entries.as_array().into_iter().flatten().filter_map(|entry| entry["type"].as_str()).collect();
-    let has_icon = entries.as_array().into_iter().flatten().any(|entry| entry.get("icon").is_some());
-    let version = if has_icon {
+    let kinds: Vec<&str> = entries.iter().filter_map(|entry| entry["type"].as_str()).collect();
+    let version = if entries.iter().any(|entry| entry.get("favorite").is_some() || entry.get("lastUsedAt").is_some()) {
+        USAGE_VERSION
+    } else if entries.iter().any(|entry| entry.get("icon").is_some()) {
         ICON_VERSION
     } else if kinds.contains(&"financial") {
         3
@@ -205,7 +212,7 @@ mod tests {
     fn damaged_files_and_wrong_keys_get_the_app_messages() {
         let key = key();
         let content = encode(vec![login("11111111-1111-4111-8111-111111111111")], &key, &[7; 16], &[9; 12]).unwrap();
-        for damaged in ["", "[]", "{\"version\":5}", &content.replace("CIPHER-VAULT", "OTHER"), &content.replace("\"cipher\"", "\"extra\":1,\"cipher\"")] {
+        for damaged in ["", "[]", "{\"version\":6}", &content.replace("CIPHER-VAULT", "OTHER"), &content.replace("\"cipher\"", "\"extra\":1,\"cipher\"")] {
             assert_eq!(parse(damaged).err(), Some(VaultError::bad_request(UNSUPPORTED)), "{damaged}");
         }
         let wrong = crypto::derive_strong_key(b"synthetic-other-passphrase", &[7; 16]).unwrap();
@@ -227,8 +234,23 @@ mod tests {
         let mut pictured = login(id);
         pictured["icon"] = json!({ "kind": "letter", "color": "teal" });
         assert!(validate(&json!([pictured]), 4).is_some());
-        assert!(validate(&json!([pictured]), 3).is_none(), "only version 4 holds icons");
+        assert!(validate(&json!([pictured]), 3).is_none(), "icons require at least version 4");
         pictured["icon"] = json!({ "kind": "letter" });
         assert!(validate(&json!([pictured]), 4).is_none(), "an icon is checked like one from the screen");
+    }
+
+    #[test]
+    fn an_authenticated_version_four_file_cannot_carry_a_favorite() {
+        let mut entry = login("11111111-1111-4111-8111-111111111111");
+        entry["favorite"] = json!(true);
+        let key = [1; 32];
+        let iv = [2; 12];
+        let plaintext = json!({ "version": ICON_VERSION, "entries": [entry] }).to_string();
+        let (data, tag) = crypto::seal_backup(&key, &iv, plaintext.as_bytes(), ICON_VERSION).unwrap();
+        let content = json!({
+            "format": "CIPHER-VAULT", "version": ICON_VERSION, "kdf": KDF, "cipher": CIPHER,
+            "salt": STANDARD.encode([3; 16]), "iv": STANDARD.encode(iv), "tag": STANDARD.encode(tag), "data": STANDARD.encode(data),
+        }).to_string();
+        assert_eq!(decode(&parse(&content).unwrap(), &key), Err(VaultError::bad_request(WRONG_PASSPHRASE)));
     }
 }

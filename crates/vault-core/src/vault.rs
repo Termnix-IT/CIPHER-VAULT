@@ -19,9 +19,10 @@ use crate::input::{self, MAX_ENTRIES, now_iso};
 use crate::maintenance;
 use crate::password;
 use crate::selection::{self, Selection};
-use crate::session::{IDLE_TIMEOUT, LockReason, Session, Stamp, parse_session_id};
+use crate::session::{LockReason, Session, Stamp, parse_session_id};
+use crate::settings;
 use crate::unlock_guard::UnlockGuard;
-use crate::v2::{StoreError, V2Store};
+use crate::v2::{StoreError, USAGE_SCHEMA_VERSION, V2Store};
 use chrono::Utc;
 use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
@@ -35,6 +36,8 @@ const KDF_FAILED: &str = "鍵を導出できませんでした";
 const EMPTY_ONLY: &str = "復元できるのは空の保管庫のみです";
 /// The copy of a vault before list icons moved into its entries, beside the vault file.
 pub const BEFORE_V4: &str = "before-v4.sqlite";
+/// The copy that still opens in releases without favorites and last-use dates.
+pub const BEFORE_V5: &str = "before-v5.sqlite";
 const SWITCH_PENDING: &str = "保管庫の切り替えが完了するまでお待ちください";
 /// How long the steps of one read go on without looking at the vault's files again.
 const READ_CONTEXT_INTERVAL: Duration = Duration::from_millis(50);
@@ -151,6 +154,12 @@ fn v2_summary(entry: &Value) -> Value {
     if let Some(icon) = entry.get("icon") {
         summary["icon"] = icon.clone();
     }
+    if entry["favorite"] == true {
+        summary["favorite"] = json!(true);
+    }
+    if let Some(last_used_at) = entry.get("lastUsedAt") {
+        summary["lastUsedAt"] = last_used_at.clone();
+    }
     summary
 }
 
@@ -191,6 +200,7 @@ impl Vault {
         let storage = RwLock::new(Arc::new(open_storage(&root)?));
         // Opening the storage locks once, as openVaultStorage does, so the first status says "manual".
         let mut session = Session::new(clock());
+        session.set_idle_timeout(settings::read(&root));
         session.lock(LockReason::Manual);
         let session = Mutex::new(session);
         Ok(Self { root, storage, session, guard: UnlockGuard::default(), clock, failed: AtomicBool::new(false), writing: AtomicBool::new(false), backing_up: AtomicBool::new(false), auditing: AtomicBool::new(false), switching: AtomicBool::new(false), availability: OnceLock::new(), #[cfg(test)] context_checks: Default::default() })
@@ -293,7 +303,7 @@ impl Vault {
 
     /// getVaultStatus
     pub fn status(&self) -> Result<Value> {
-        let state = self.session_at(|session, now| session.state(now));
+        let (state, idle_timeout) = self.session_at(|session, now| (session.state(now), session.idle_timeout()));
         let maintenance = match &*self.storage() {
             Storage::Empty { .. } | Storage::V2 { .. } => json!({ "state": "ready", "format": "v2" }),
             Storage::RecoveryRequired { operation } => {
@@ -305,7 +315,11 @@ impl Vault {
             }
             Storage::Running { format, operation, source_session_id } => json!({ "state": "running", "format": format, "operation": operation, "sourceSessionId": source_session_id }),
         };
-        let mut status = json!({ "isConfigured": self.is_configured()?, "sessionId": state.session_id, "isUnlocked": state.is_unlocked, "idleTimeoutMs": IDLE_TIMEOUT.as_millis() as u64 });
+        let mut status = json!({
+            "isConfigured": self.is_configured()?, "sessionId": state.session_id, "isUnlocked": state.is_unlocked,
+            "autoLockMinutes": idle_timeout.map(|timeout| timeout.as_secs() / 60),
+            "idleTimeoutMs": idle_timeout.map(|timeout| timeout.as_millis() as u64),
+        });
         if let Some(reason) = state.lock_reason {
             status["lockReason"] = json!(reason.as_str());
         }
@@ -392,6 +406,38 @@ impl Vault {
         })
     }
 
+    /// Lets the desktop handle the saved URL only while the session that requested it is current.
+    /// The desktop calls `current` before opening the URL, just as it does for clipboard writes.
+    pub fn open_entry_url(&self, session_id: Option<&Value>, id: Option<&Value>, open: impl FnOnce(&str, &dyn Fn() -> Result<()>) -> Result<()>) -> Result<Value> {
+        self.within_session(session_id, |session| {
+            self.available()?;
+            let entry = self.entry(id)?;
+            let url = input::js_trim(entry["url"].as_str().unwrap_or_default());
+            if url.is_empty() {
+                return Err(VaultError::bad_request("URLが登録されていません"));
+            }
+            open(url, &|| {
+                self.available()?;
+                self.require_unlocked(Some(session)).map(|_| ())
+            })?;
+            Ok(Value::Null)
+        })
+    }
+
+    /// Saves the preference before changing the live deadline, so a failed write leaves it intact.
+    pub fn set_auto_lock(&self, session_id: Option<&Value>, payload: Option<&Value>) -> Result<Value> {
+        let (session, minutes) = self.with_session(session_id, |session| Ok((session.to_string(), settings::parse(payload)?)))?;
+        // Finish the session wrapper checks before the new deadline can lock the vault itself.
+        // Keep the file and the live timeout in the same order even if two saves overlap.
+        self.session_at(|current, now| {
+            current.require_unlocked(Some(&session), now)?;
+            settings::write(&self.root, minutes, false)?;
+            current.set_idle_timeout(settings::timeout(minutes));
+            Ok(())
+        })?;
+        self.status()
+    }
+
     /// recordVaultActivity
     pub fn record_activity(&self, session_id: Option<&Value>) -> Result<Value> {
         self.available()?;
@@ -443,6 +489,8 @@ impl Vault {
                 if !ready {
                     return Err(self.fail());
                 }
+                let idle_timeout = settings::setup(&self.root);
+                self.session.lock().unwrap().set_idle_timeout(idle_timeout);
                 self.require_generation(&intent)?;
                 self.install_key(root);
                 self.status()
@@ -559,6 +607,54 @@ impl Vault {
                 Ok(v2_summary(&entry))
             })
         })
+    }
+
+    /// Changes the list marker without moving the content's update date.
+    pub fn set_entry_favorite(&self, session_id: Option<&Value>, id: Option<&Value>, favorite: Option<&Value>) -> Result<Value> {
+        self.with_session(session_id, |_| {
+            let id = input::parse_entry_id(id)?;
+            let favorite = favorite.and_then(Value::as_bool).ok_or_else(|| VaultError::bad_request("お気に入りの指定が正しくありません"))?;
+            let store = self.store()?;
+            self.v2_mutation(&store, |store, root, active| {
+                let (mut entry, revision) = Self::read_v2(store, root, &id)?;
+                if entry.get("favorite").is_some() == favorite {
+                    return Ok(v2_summary(&entry));
+                }
+                let object = entry.as_object_mut().ok_or_else(invalid_entry)?;
+                if favorite {
+                    object.insert("favorite".into(), json!(true));
+                    Self::copy_before_v5(store, active)?;
+                } else {
+                    object.shift_remove("favorite");
+                }
+                Self::write_v2(store, root, &entry, &id, revision + 1, active)?;
+                Ok(v2_summary(&entry))
+            })
+        })
+    }
+
+    /// Tracks recent use without moving the content's update date, even if the clock moved back.
+    pub fn record_entry_use(&self, session_id: Option<&Value>, id: Option<&Value>) -> Result<Value> {
+        self.with_session(session_id, |_| {
+            let id = input::parse_entry_id(id)?;
+            let store = self.store()?;
+            self.v2_mutation(&store, |store, root, active| {
+                let (mut entry, revision) = Self::read_v2(store, root, &id)?;
+                entry["lastUsedAt"] = json!(not_before(&entry["lastUsedAt"]));
+                Self::copy_before_v5(store, active)?;
+                Self::write_v2(store, root, &entry, &id, revision + 1, active)?;
+                Ok(v2_summary(&entry))
+            })
+        })
+    }
+
+    /// Keeps the last old-format database before the first write that would raise its version.
+    fn copy_before_v5(store: &V2Store, active: &dyn Fn() -> Result<()>) -> std::result::Result<(), Failure> {
+        if store.schema_version()? < USAGE_SCHEMA_VERSION {
+            active()?;
+            store.copy_beside(BEFORE_V5).map_err(|_| VaultError::new(500, "保管庫の複製を作れなかったので、変更しませんでした"))?;
+        }
+        Ok(())
     }
 
     // ---- Entries.
@@ -716,8 +812,10 @@ impl Vault {
                 }
                 let changed = fields.get("type").is_none().then(|| if existing["password"] == fields["password"] { existing["passwordChangedAt"].clone() } else { json!(now) });
                 let mut entry = v2_entry(&id, &fields, &existing["createdAt"], &now, changed);
-                if let Some(icon) = existing.get("icon") {
-                    entry["icon"] = icon.clone();
+                for field in input::ENTRY_METADATA_FIELDS {
+                    if let Some(value) = existing.get(field) {
+                        entry[field] = value.clone();
+                    }
                 }
                 Self::write_v2(store, root, &entry, &id, revision + 1, active)?;
                 Ok(entry)
@@ -903,6 +1001,7 @@ mod tests {
     use super::*;
     use crate::files::tests::TemporaryDirectory;
     use crate::v2::tests::{s, v2_directory};
+    use std::fs;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -977,6 +1076,8 @@ mod tests {
 
         let set = vault.setup(some(&id(&first)), some(&password(MASTER))).unwrap();
         assert_eq!((set["isConfigured"].clone(), set["isUnlocked"].clone()), (json!(true), json!(true)));
+        assert_auto_lock(&set, Some(15));
+        assert_eq!(fs::read(directory.0.join(settings::NAME)).unwrap(), br#"{"autoLockMinutes":15}"#);
         assert_ne!(id(&set), id(&first), "unlocking starts a new session");
         let selected = selection::inspect(&directory.0).unwrap();
         assert!(matches!(selected, Selection::V2 { .. }), "{selected:?}");
@@ -995,6 +1096,81 @@ mod tests {
         assert_eq!(again["isUnlocked"], true);
         assert!(again.get("lockReason").is_none());
         assert_eq!(reopened.get_entry(some(&id(&again)), some(&created["id"])).unwrap(), created);
+    }
+
+    fn assert_auto_lock(status: &Value, minutes: Option<u64>) {
+        assert_eq!(status.get("autoLockMinutes"), Some(&json!(minutes)));
+        assert_eq!(status.get("idleTimeoutMs"), Some(&json!(minutes.map(|minutes| minutes * 60000))));
+    }
+
+    #[test]
+    fn absent_or_invalid_settings_keep_the_original_timeout_and_files() {
+        let (directory, _, _) = v2_directory();
+        let path = directory.0.join(settings::NAME);
+        assert_auto_lock(&Vault::open(&directory.0).unwrap().status().unwrap(), Some(5));
+        assert!(!path.exists());
+        for bytes in [
+            b"broken".to_vec(),
+            [br#"{"autoLockMinutes":15}"#.as_slice(), &vec![b' '; 4096]].concat(),
+            br#"{"unknown":15}"#.to_vec(),
+            br#"{"autoLockMinutes":7}"#.to_vec(),
+        ] {
+            fs::write(&path, &bytes).unwrap();
+            assert_auto_lock(&Vault::open(&directory.0).unwrap().status().unwrap(), Some(5));
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+        }
+        let link = directory.0.join("synthetic-settings-link.json");
+        let original = br#"{"autoLockMinutes":60}"#;
+        fs::write(&path, original).unwrap();
+        fs::hard_link(&path, &link).unwrap();
+        assert_auto_lock(&Vault::open(&directory.0).unwrap().status().unwrap(), Some(5));
+        assert_eq!(fs::read(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn setup_keeps_and_applies_an_existing_preference() {
+        let directory = TemporaryDirectory::new();
+        let path = directory.0.join(settings::NAME);
+        let original = br#"{ "autoLockMinutes": null }"#;
+        fs::write(&path, original).unwrap();
+        let vault = Vault::open(&directory.0).unwrap();
+        let status = vault.status().unwrap();
+        assert_auto_lock(&status, None);
+        let set = vault.setup(some(&id(&status)), some(&password(MASTER))).unwrap();
+        assert_auto_lock(&set, None);
+        assert_eq!(fs::read(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn auto_lock_changes_require_a_current_session_and_persist() {
+        let (directory, _, v2) = v2_directory();
+        let (offset, clock) = manual_clock();
+        let vault = Vault::open_with_clock(&directory.0, clock).unwrap();
+        let locked_id = id(&vault.status().unwrap());
+        let disabled = json!({ "autoLockMinutes": null });
+        assert_eq!(vault.set_auto_lock(some(&locked_id), some(&disabled)), Err(error::locked()));
+        let session = id(&unlocked(&vault, s(&v2["masterPassword"])));
+        assert_eq!(vault.set_auto_lock(some(&locked_id), some(&disabled)), Err(changed()));
+        for payload in [None, some(&json!({ "unknown": 15 })), some(&json!({ "autoLockMinutes": 15, "extra": true })),
+            some(&json!({ "autoLockMinutes": 7 })), some(&json!({ "autoLockMinutes": "15" }))] {
+            assert_eq!(vault.set_auto_lock(some(&session), payload), Err(VaultError::bad_request("自動ロックの時間が正しくありません")));
+        }
+        let path = directory.0.join(settings::NAME);
+        assert!(!path.exists());
+        fs::create_dir(&path).unwrap();
+        assert_eq!(vault.set_auto_lock(some(&session), some(&disabled)), Err(VaultError::new(500, "設定を保存できませんでした")));
+        assert_auto_lock(&vault.status().unwrap(), Some(5));
+        fs::remove_dir(&path).unwrap();
+
+        assert_auto_lock(&vault.set_auto_lock(some(&session), some(&disabled)).unwrap(), None);
+        assert_eq!(fs::read(&path).unwrap(), br#"{"autoLockMinutes":null}"#);
+        assert_auto_lock(&Vault::open(&directory.0).unwrap().status().unwrap(), None);
+        *offset.lock().unwrap() = Duration::from_secs(600);
+        assert!(vault.is_unlocked());
+        let shortened = vault.set_auto_lock(some(&session), some(&json!({ "autoLockMinutes": 1 }))).unwrap();
+        assert_auto_lock(&shortened, Some(1));
+        assert_eq!(shortened["lockReason"], "idle", "changing the setting does not renew activity");
+        assert_auto_lock(&Vault::open(&directory.0).unwrap().status().unwrap(), Some(1));
     }
 
     #[test]
@@ -1133,6 +1309,158 @@ mod tests {
         let store = vault.v2().unwrap();
         let version: i64 = store.lock().unwrap().connection().pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
         assert_eq!(version, 4, "an icon raises the format, and removing it never lowers it");
+    }
+
+    #[test]
+    fn favorites_keep_content_dates_and_only_write_when_changed() {
+        let (directory, vault, session) = created();
+        let entry = vault.create_entry(some(&session), some(&login())).unwrap();
+        let entry_id = &entry["id"];
+        let icon = json!({ "kind": "letter", "color": "teal" });
+        vault.set_entry_icon(some(&session), some(entry_id), some(&icon)).unwrap();
+        let store = vault.v2().unwrap();
+        let counters = || {
+            let store = store.lock().unwrap();
+            (store.revision(s(entry_id)).unwrap().unwrap(), store.encryption_count().unwrap(), store.schema_version().unwrap())
+        };
+        let initial = counters();
+        for invalid in [None, some(&Value::Null), some(&json!("yes"))] {
+            assert_eq!(vault.set_entry_favorite(some(&session), some(entry_id), invalid), Err(VaultError::bad_request("お気に入りの指定が正しくありません")));
+        }
+        let favorite = |value| vault.set_entry_favorite(some(&session), some(entry_id), some(&json!(value)));
+        assert!(favorite(false).unwrap().get("favorite").is_none());
+        assert_eq!(counters(), initial);
+
+        let Selection::V2 { database, .. } = selection::inspect(&directory.0).unwrap() else { panic!("a v2 vault") };
+        let copy_path = database.with_file_name(BEFORE_V5);
+        fs::create_dir(&copy_path).unwrap();
+        assert_eq!(favorite(true), Err(VaultError::new(500, "保管庫の複製を作れなかったので、変更しませんでした")));
+        assert_eq!(counters(), initial, "a failed copy must occur before any reservation");
+        fs::remove_dir(&copy_path).unwrap();
+
+        let marked = favorite(true).unwrap();
+        assert_eq!(marked["favorite"], true);
+        assert_eq!(marked["updatedAt"], entry["updatedAt"]);
+        assert_eq!(counters(), (initial.0 + 1, initial.1 + 1, 5));
+        assert_eq!(favorite(true).unwrap(), marked);
+        assert_eq!(counters(), (initial.0 + 1, initial.1 + 1, 5));
+        assert_eq!(vault.list_entries(some(&session)).unwrap()["items"][0], marked);
+        assert!(marked.get("password").is_none() && marked.get("notes").is_none());
+        let removed = favorite(false).unwrap();
+        assert!(removed.get("favorite").is_none());
+        assert_eq!(removed["updatedAt"], entry["updatedAt"]);
+        assert_eq!(favorite(false).unwrap(), removed);
+        assert_eq!(counters(), (initial.0 + 2, initial.1 + 2, 5));
+
+        let copy = rusqlite::Connection::open_with_flags(copy_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let version: i64 = copy.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
+        assert_eq!(version, 4);
+        let revision: i64 = copy.query_row("SELECT revision FROM vault_entries WHERE entry_id = ?1", [s(entry_id)], |row| row.get(0)).unwrap();
+        assert_eq!(u64::try_from(revision).unwrap(), initial.0, "the copy has the last revision before the format changed");
+    }
+
+    /// Installs a valid synthetic entry that the screen cannot write directly.
+    fn write_stored(vault: &Vault, session: &Value, entry: &Value) {
+        let store = vault.v2().unwrap();
+        let mut store = store.lock().unwrap();
+        let entry_id = s(&entry["id"]);
+        let revision = store.revision(entry_id).unwrap().unwrap();
+        store.write(&vault.key(s(session)).unwrap(), entry, entry_id, revision + 1, &|| Ok(())).unwrap();
+    }
+
+    #[test]
+    fn recording_use_advances_the_date_without_moving_the_content_date() {
+        let (directory, vault, session) = created();
+        let mut entry = vault.create_entry(some(&session), some(&login())).unwrap();
+        let first_use = vault.record_entry_use(some(&session), some(&entry["id"])).unwrap();
+        assert_eq!(first_use["updatedAt"], entry["updatedAt"]);
+        assert_eq!(vault.v2().unwrap().lock().unwrap().schema_version().unwrap(), 5);
+        assert_eq!(walk(&directory.0).iter().filter(|path| path.ends_with(BEFORE_V5)).count(), 1);
+
+        let earlier = "2000-01-01T00:00:00.000Z";
+        entry["lastUsedAt"] = json!(earlier);
+        write_stored(&vault, &session, &entry);
+        let used = vault.record_entry_use(some(&session), some(&entry["id"])).unwrap();
+        assert!(s(&used["lastUsedAt"]) > earlier);
+        assert_eq!(used["updatedAt"], entry["updatedAt"]);
+        assert_eq!(vault.list_entries(some(&session)).unwrap()["items"][0], used);
+
+        entry["lastUsedAt"] = json!("9999-01-01T00:00:00.000Z");
+        write_stored(&vault, &session, &entry);
+        let used = vault.record_entry_use(some(&session), some(&entry["id"])).unwrap();
+        assert_eq!(used["lastUsedAt"], entry["lastUsedAt"]);
+        assert_eq!(used["updatedAt"], entry["updatedAt"]);
+        assert_eq!(vault.v2().unwrap().lock().unwrap().revision(s(&entry["id"])).unwrap(), Some(6));
+    }
+
+    #[test]
+    fn entry_metadata_survives_group_edits_backup_restore_and_rekey() {
+        let (_directory, vault, session) = created();
+        let entry = vault.create_entry(some(&session), some(&login())).unwrap();
+        let entry_id = some(&entry["id"]);
+        let icon = json!({ "kind": "letter", "color": "teal" });
+        vault.set_entry_icon(some(&session), entry_id, some(&icon)).unwrap();
+        vault.set_entry_favorite(some(&session), entry_id, some(&json!(true))).unwrap();
+        let used = vault.record_entry_use(some(&session), entry_id).unwrap();
+        let assert_metadata = |entry: &Value| {
+            assert_eq!(entry["icon"], icon);
+            assert_eq!(entry["favorite"], true);
+            assert_eq!(entry["lastUsedAt"], used["lastUsedAt"]);
+        };
+        vault.set_entries_group(some(&session), some(&json!({ "ids": [entry["id"]], "group": "Moved" }))).unwrap();
+        let grouped = vault.get_entry(some(&session), entry_id).unwrap();
+        assert_eq!(grouped["group"], "Moved");
+        assert_metadata(&grouped);
+        let mut edited = login();
+        edited["serviceName"] = json!("Renamed");
+        let edited = vault.update_entry(some(&session), entry_id, some(&edited)).unwrap();
+        assert_eq!(edited["serviceName"], "Renamed");
+        assert_metadata(&edited);
+
+        let passphrase = "synthetic-backup-passphrase";
+        let exported = vault.export_backup(some(&session), some(&json!({ "passphrase": passphrase }))).unwrap();
+        assert_eq!(backup::parse(s(&exported["content"])).unwrap().version, 5);
+        let (_restored_directory, restored, restored_session) = created();
+        assert_eq!(restored.restore_backup(some(&restored_session), some(&json!({ "passphrase": passphrase, "content": exported["content"] }))).unwrap(),
+            json!({ "restoredCount": 1 }));
+        assert_eq!(restored.get_entry(some(&restored_session), entry_id).unwrap(), edited);
+        assert_eq!(restored.v2().unwrap().lock().unwrap().schema_version().unwrap(), 5);
+
+        let next_master = "synthetic-rekey-password";
+        let rekeyed = restored.run_maintenance(some(&restored_session), some(&json!({
+            "operation": "rekey", "masterPassword": MASTER,
+            "newMasterPassword": next_master, "confirmNewMasterPassword": next_master,
+            "backupPassphrase": passphrase, "confirmBackupPassphrase": passphrase,
+        }))).unwrap();
+        assert_eq!(rekeyed["isUnlocked"], false);
+        let next_session = id(&unlocked(&restored, next_master));
+        assert_eq!(restored.get_entry(some(&next_session), entry_id).unwrap(), edited);
+        assert_eq!(restored.v2().unwrap().lock().unwrap().schema_version().unwrap(), 5);
+    }
+
+    #[test]
+    fn the_url_callback_receives_only_a_nonempty_trimmed_url_in_the_current_session() {
+        let (_directory, vault, session) = created();
+        let mut entry = vault.create_entry(some(&session), some(&login())).unwrap();
+        entry["url"] = json!(" \t\u{feff} ");
+        write_stored(&vault, &session, &entry);
+        let entry_id = entry["id"].clone();
+        let entry_id = some(&entry_id);
+        let unexpected = |_: &str, _: &dyn Fn() -> Result<()>| panic!("the callback must not run");
+        assert_eq!(vault.open_entry_url(some(&session), entry_id, unexpected), Err(VaultError::bad_request("URLが登録されていません")));
+        assert_eq!(vault.open_entry_url(some(&json!("stale")), entry_id, unexpected), Err(changed()));
+
+        entry["url"] = json!("\u{feff} https://example.test/path \t");
+        write_stored(&vault, &session, &entry);
+        assert_eq!(vault.open_entry_url(some(&session), entry_id, |url, current| {
+            assert_eq!(url, "https://example.test/path");
+            current()
+        }).unwrap(), Value::Null);
+        assert_eq!(vault.open_entry_url(some(&session), entry_id, |_, current| {
+            vault.lock_for(LockReason::Manual);
+            current()
+        }), Err(error::locked()));
+        assert_eq!(vault.open_entry_url(some(&session), entry_id, unexpected), Err(error::locked()));
     }
 
     #[test]

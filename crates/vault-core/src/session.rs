@@ -8,7 +8,7 @@ use serde_json::Value;
 use std::time::{Duration, Instant, SystemTime};
 use uuid::Uuid;
 
-pub const IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const SESSION_ID_BYTES: usize = 128;
 
 /// Both clocks, because each one misses something: the monotonic clock can pause during
@@ -78,6 +78,7 @@ pub struct Session {
     lock_reason: Option<LockReason>,
     activity: Stamp,
     observed: Stamp,
+    idle_timeout: Option<Duration>,
 }
 
 /// parseSessionId: anything but a short non-empty string asks the screen to read the state again.
@@ -94,7 +95,16 @@ fn new_id() -> String {
 
 impl Session {
     pub fn new(now: Stamp) -> Self {
-        Self { key: None, id: new_id(), lock_reason: None, activity: now, observed: now }
+        Self { key: None, id: new_id(), lock_reason: None, activity: now, observed: now, idle_timeout: Some(DEFAULT_IDLE_TIMEOUT) }
+    }
+
+    /// Changes the deadline measured from the last activity, so a shorter time can expire at once.
+    pub fn set_idle_timeout(&mut self, timeout: Option<Duration>) {
+        self.idle_timeout = timeout;
+    }
+
+    pub fn idle_timeout(&self) -> Option<Duration> {
+        self.idle_timeout
     }
 
     pub fn state(&mut self, now: Stamp) -> SessionState {
@@ -170,7 +180,7 @@ impl Session {
         }
         self.observed = now;
         // Wall time covers suspend on platforms where the monotonic clock pauses.
-        if now.monotonic.saturating_duration_since(self.activity.monotonic).max(wall) >= IDLE_TIMEOUT {
+        if self.idle_timeout.is_some_and(|timeout| now.monotonic.saturating_duration_since(self.activity.monotonic).max(wall) >= timeout) {
             self.lock(LockReason::Idle);
         }
     }
@@ -196,16 +206,41 @@ mod tests {
         let start = Stamp::now();
         let mut session = unlocked(start);
         let id = session.id(start);
-        session.expire(later(start, IDLE_TIMEOUT - Duration::from_millis(1), Duration::from_secs(1)));
-        assert!(session.state(later(start, IDLE_TIMEOUT - Duration::from_millis(1), Duration::from_secs(1))).is_unlocked);
-        let state = session.state(later(start, IDLE_TIMEOUT, IDLE_TIMEOUT));
+        assert_eq!(session.idle_timeout(), Some(Duration::from_secs(300)));
+        session.expire(later(start, DEFAULT_IDLE_TIMEOUT - Duration::from_millis(1), Duration::from_secs(1)));
+        assert!(session.state(later(start, DEFAULT_IDLE_TIMEOUT - Duration::from_millis(1), Duration::from_secs(1))).is_unlocked);
+        let state = session.state(later(start, DEFAULT_IDLE_TIMEOUT, DEFAULT_IDLE_TIMEOUT));
         assert!(!state.is_unlocked);
         assert_eq!(state.lock_reason, Some(LockReason::Idle));
         assert_ne!(state.session_id, id, "a lock starts a new session");
 
         // A suspended machine: the monotonic clock paused while the wall clock moved on.
         let mut session = unlocked(start);
-        assert_eq!(session.state(later(start, Duration::from_secs(1), IDLE_TIMEOUT)).lock_reason, Some(LockReason::Idle));
+        assert_eq!(session.state(later(start, Duration::from_secs(1), DEFAULT_IDLE_TIMEOUT)).lock_reason, Some(LockReason::Idle));
+    }
+
+    #[test]
+    fn disabling_idle_expiry_still_checks_both_clocks() {
+        let start = Stamp::now();
+        let hour = Duration::from_secs(3600);
+        let observed = later(start, hour, hour);
+        for moved in [later(start, hour - Duration::from_secs(1), hour), later(start, hour, hour - Duration::from_secs(1))] {
+            let mut session = unlocked(start);
+            session.set_idle_timeout(None);
+            assert!(session.state(observed).is_unlocked);
+            assert_eq!(session.state(moved).lock_reason, Some(LockReason::ClockChange));
+        }
+    }
+
+    #[test]
+    fn shortening_the_timeout_counts_time_already_idle() {
+        let start = Stamp::now();
+        let mut session = unlocked(start);
+        let minute = Duration::from_secs(60);
+        let now = later(start, 2 * minute, 2 * minute);
+        assert!(session.state(now).is_unlocked);
+        session.set_idle_timeout(Some(minute));
+        assert_eq!(session.state(now).lock_reason, Some(LockReason::Idle));
     }
 
     #[test]
