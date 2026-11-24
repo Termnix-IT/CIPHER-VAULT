@@ -37,3 +37,28 @@ export function readSidebarCollapsed() {
 export function saveSidebarCollapsed(collapsed: boolean) {
   try { localStorage.setItem(COLLAPSED_KEY, String(collapsed)); } catch { /* the choice lasts for this run */ }
 }
+
+// The list's order and whether it shows favorites only. They name a view, never an entry.
+const SORT_KEY = "cipher-vault.list-sort";
+const FAVORITES_KEY = "cipher-vault.list-favorites-only";
+const SORT_ORDERS = ["name", "updated", "used"] as const;
+export type ListSortOrder = (typeof SORT_ORDERS)[number];
+
+export function readListSort(): ListSortOrder {
+  try {
+    const saved = localStorage.getItem(SORT_KEY);
+    return SORT_ORDERS.find((order) => order === saved) ?? "name";
+  } catch { return "name"; }
+}
+
+export function saveListSort(order: ListSortOrder) {
+  try { localStorage.setItem(SORT_KEY, order); } catch { /* the choice lasts for this run */ }
+}
+
+export function readFavoritesOnly() {
+  try { return localStorage.getItem(FAVORITES_KEY) === "true"; } catch { return false; }
+}
+
+export function saveFavoritesOnly(favoritesOnly: boolean) {
+  try { localStorage.setItem(FAVORITES_KEY, String(favoritesOnly)); } catch { /* the choice lasts for this run */ }
+}

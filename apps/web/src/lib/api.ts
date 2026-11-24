@@ -1,5 +1,5 @@
 import type {
-  BackupExportPayload, BackupRestorePayload, BackupFile, EntriesGroupPayload, EntryIcon, SecurityAudit,
+  AutoLockPayload, BackupExportPayload, BackupRestorePayload, BackupFile, EntriesGroupPayload, EntryIcon, SecurityAudit,
   PasswordGenerationOptions, PasswordGenerationResult, PasswordManagerDesktopApi,
   VaultEntry, VaultEntrySummary, VaultEntryUpsertPayload,
   VaultSetupPayload, VaultStatus, VaultUnlockPayload, VaultMaintenancePayload
@@ -104,6 +104,18 @@ export function setEntriesGroup(payload: EntriesGroupPayload) {
 export function setEntryIcon(entryId: string, icon: EntryIcon | null) {
   return run((id) => desktop().setEntryIcon(entryId, icon, id));
 }
+export function setEntryFavorite(entryId: string, favorite: boolean) {
+  return run((id) => desktop().setEntryFavorite(entryId, favorite, id));
+}
+export function recordEntryUse(entryId: string) {
+  return run((id) => desktop().recordEntryUse(entryId, id));
+}
+export function openEntryUrl(entryId: string) {
+  return run((id) => desktop().openEntryUrl(entryId, id));
+}
+export function setAutoLock(payload: AutoLockPayload) {
+  return run((id) => desktop().setAutoLock(payload, id));
+}
 export function generatePassword(options: PasswordGenerationOptions = {}) {
   return run((id) => desktop().generatePassword(options, id));
 }
@@ -125,5 +137,7 @@ export const windowControls = {
   minimize: () => desktop().minimizeWindow(),
   toggleMaximize: () => desktop().toggleMaximizeWindow(),
   close: () => desktop().closeWindow(),
-  isMaximized: () => desktop().isWindowMaximized()
+  isMaximized: () => desktop().isWindowMaximized(),
+  setCompact: (compact: boolean) => desktop().setCompactWindow(compact),
+  setAlwaysOnTop: (onTop: boolean) => desktop().setAlwaysOnTop(onTop)
 };

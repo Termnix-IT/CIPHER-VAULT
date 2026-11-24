@@ -8,6 +8,10 @@ export type PasswordEntrySummary = {
   updatedAt: string;
   /** The list icon, kept inside the entry. Without it the list shows the first letter. */
   icon?: EntryIcon;
+  /** Present only on a favorite. Kept inside the entry, like the icon. */
+  favorite?: true;
+  /** When the user last copied from or opened the entry. Kept inside the entry, like the icon. */
+  lastUsedAt?: string;
 };
 
 export type PasswordEntry = PasswordEntrySummary & {
@@ -82,12 +86,20 @@ export type VaultLockReason = "manual" | "idle" | "clock-change" | "reset" | "wi
 export type VaultSessionState = {
   sessionId: string;
   isUnlocked: boolean;
-  idleTimeoutMs: number;
+  /** null when auto-lock is turned off. */
+  idleTimeoutMs: number | null;
   lockReason?: VaultLockReason;
 };
 
+/** The auto-lock times the settings offer, in minutes; null turns auto-lock off. */
+export const AUTO_LOCK_MINUTES = [1, 5, 10, 15, 30, 60, 120] as const;
+export type AutoLockMinutes = (typeof AUTO_LOCK_MINUTES)[number] | null;
+export type AutoLockPayload = { autoLockMinutes: AutoLockMinutes };
+
 export type VaultStatus = VaultSessionState & {
   isConfigured: boolean;
+  /** The auto-lock time in minutes, null when it is turned off. */
+  autoLockMinutes?: AutoLockMinutes;
   /** Only before setup: a vault of the legacy format is in the data folder, which this version cannot open. */
   legacyVaultFound?: boolean;
   maintenance?: VaultMaintenanceState;
@@ -152,12 +164,19 @@ export type PasswordManagerDesktopApi = {
   deleteEntry: (id: string, sessionId: string) => Promise<{ success: boolean }>;
   setEntriesGroup: (payload: EntriesGroupPayload, sessionId: string) => Promise<{ updatedCount: number }>;
   setEntryIcon: (id: string, icon: EntryIcon | null, sessionId: string) => Promise<VaultEntrySummary>;
+  setEntryFavorite: (id: string, favorite: boolean, sessionId: string) => Promise<VaultEntrySummary>;
+  recordEntryUse: (id: string, sessionId: string) => Promise<VaultEntrySummary>;
+  /** Opens the entry's own URL in the default browser; only http and https addresses open. */
+  openEntryUrl: (id: string, sessionId: string) => Promise<void>;
+  setAutoLock: (payload: AutoLockPayload, sessionId: string) => Promise<VaultStatus>;
   generatePassword: (options: PasswordGenerationOptions, sessionId: string) => Promise<PasswordGenerationResult>;
   copyText: (value: string, sessionId: string) => Promise<void>;
   minimizeWindow: () => Promise<void>;
   toggleMaximizeWindow: () => Promise<void>;
   closeWindow: () => Promise<void>;
   isWindowMaximized: () => Promise<boolean>;
+  setCompactWindow: (compact: boolean) => Promise<void>;
+  setAlwaysOnTop: (onTop: boolean) => Promise<void>;
 };
 
 export type BackupExportPayload = { passphrase: string };

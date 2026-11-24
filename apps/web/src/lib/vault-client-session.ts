@@ -36,6 +36,10 @@ export class VaultClientSession {
       this.state = state;
       this.revision++;
       for (const listener of this.listeners) listener(state);
+    } else if (this.state.autoLockMinutes !== state.autoLockMinutes || this.state.idleTimeoutMs !== state.idleTimeoutMs) {
+      // A new auto-lock time is shown, but it is the same session, so calls in progress stay valid.
+      this.state = state;
+      for (const listener of this.listeners) listener(state);
     }
     return state;
   }

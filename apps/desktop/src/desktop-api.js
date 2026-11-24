@@ -45,6 +45,10 @@
     deleteEntry: (id, sessionId) => call("entries_delete", { sessionId, id }),
     setEntriesGroup: (payload, sessionId) => call("entries_set_group", { sessionId, payload }),
     setEntryIcon: (id, icon, sessionId) => call("entry_icon_set", { sessionId, id, icon }),
+    setEntryFavorite: (id, favorite, sessionId) => call("entry_favorite_set", { sessionId, id, favorite }),
+    recordEntryUse: (id, sessionId) => call("entry_use_record", { sessionId, id }),
+    openEntryUrl: (id, sessionId) => call("entry_url_open", { sessionId, id }),
+    setAutoLock: (payload, sessionId) => call("settings_auto_lock_set", { sessionId, payload }),
     generatePassword: (options, sessionId) => call("password_generate", { sessionId, options }),
     exportBackup: (payload, sessionId) => call("backup_export", { sessionId, payload }),
     restoreBackup: (payload, sessionId) => call("backup_restore", { sessionId, payload }),
@@ -59,7 +63,10 @@
     minimizeWindow: () => call("plugin:window|minimize", { label: "main" }),
     toggleMaximizeWindow: () => call("plugin:window|toggle_maximize", { label: "main" }),
     closeWindow: () => call("plugin:window|close", { label: "main" }),
-    isWindowMaximized: () => call("plugin:window|is_maximized", { label: "main" })
+    isWindowMaximized: () => call("plugin:window|is_maximized", { label: "main" }),
+    // The compact layout and always-on-top are app commands, so the screen can pick only between fixed layouts.
+    setCompactWindow: (compact) => call("window_set_compact", { compact }),
+    setAlwaysOnTop: (onTop) => call("window_set_always_on_top", { onTop })
   };
   Object.defineProperty(window, "passwordManager", { value: Object.freeze(api) });
 })();

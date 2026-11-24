@@ -573,6 +573,58 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 @property --flow-1 { syntax: "<color>"; inherits: true; initial-value: #6bb3ad; }
 @property --flow-2 { syntax: "<color>"; inherits: true; initial-value: #8fd0e0; }
 /* The change is too slow to see between steps, so 5 updates a second look smooth and avoid repainting every frame. */
+/* =============================
+   FAVORITES, SHORTCUT HINTS AND SETTINGS
+   ============================= */
+.app-menu-shortcut { margin-left: auto; padding-left: 24px; font: 11px var(--font-mono); color: var(--text-faint); }
+.app-menu-item:disabled .app-menu-shortcut { opacity: .6; }
+.favorites-toggle--on, .favorites-toggle--on:hover:not(:disabled) { color: var(--warning); }
+.favorites-toggle svg { transition: transform 120ms var(--ease); }
+.favorites-toggle:active:not(:disabled) svg { transform: scale(.86); }
+.list-meta-start { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.list-meta .favorites-toggle { width: 24px; height: 24px; margin-left: -6px; }
+.list-meta .favorites-toggle svg { width: 14px; height: 14px; }
+.entry-favorite { display: inline-flex; flex-shrink: 0; color: var(--warning); }
+.entry-favorite svg { width: 12px; height: 12px; }
+
+.settings-dialog { --tool-label: 96px; height: min(340px, calc(100vh - 48px)); }
+.settings-form { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.settings-field {
+  display: grid; grid-template-columns: var(--tool-label) minmax(0, 1fr); align-items: center; gap: 8px;
+  min-height: 44px; padding: 0 12px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--text-dim);
+}
+.settings-field select {
+  width: 100%; min-width: 0; height: 28px; padding: 0 6px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--raised); color: var(--text); font-size: 13px;
+}
+.settings-field select:focus { outline: none; border-color: var(--accent); }
+.settings-field select option { background: var(--raised); color: var(--text); }
+.settings-warning {
+  margin: 0 12px 8px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent); border-radius: var(--radius);
+  background: color-mix(in srgb, var(--warning) 10%, transparent); color: var(--warning); font-size: 12px; line-height: 1.6;
+}
+.settings-dialog .form-error { padding: 0 12px 8px; font-size: 12px; }
+
+/* =============================
+   COMPACT VIEW
+   One narrow column: the list, or one entry's sign-in values. The toast spans the column.
+   ============================= */
+.compact-view { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; background: var(--surface); }
+.compact-head { height: 48px; padding: 0 8px; display: flex; align-items: center; gap: 2px; flex-shrink: 0; border-bottom: 1px solid var(--border); }
+.compact-head .search-box { margin-right: 4px; }
+.compact-pin--on, .compact-pin--on:hover:not(:disabled) { color: var(--accent); }
+.compact-list .entry-row { height: 48px; }
+.compact-detail { --detail-pad-right: 12px; flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
+.compact-detail-head { height: 56px; padding: 0 8px 0 4px; display: flex; align-items: center; gap: 8px; flex-shrink: 0; border-bottom: 1px solid var(--border); }
+.compact-detail-heading { flex: 1; min-width: 0; }
+.compact-detail-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 500; line-height: 1.35; }
+.compact-detail > .empty-state-text { padding: 16px 12px; }
+.entry-editor--compact .editor-scroll { padding: 4px 12px 16px; }
+.entry-editor--compact .entry-view-field { grid-template-columns: 84px minmax(0, 1fr) 72px; }
+.entry-editor--compact.entry-editor--financial .entry-view-field { grid-template-columns: 112px minmax(0, 1fr) 72px; }
+.compact-view .toast-region { left: 12px; right: 12px; bottom: 12px; justify-items: stretch; }
+.compact-view .toast { max-width: none; }
+
 @keyframes luminous-flow {
   0%, 100% { --flow-1: #6bb3ad; --flow-2: #8fd0e0; }
   33.333% { --flow-1: #8fd0e0; --flow-2: #b9c8f7; }
@@ -654,6 +706,18 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 [data-design="luminous"] .app-info-dialog { border-radius: 16px; }
 [data-design="luminous"] .file-drop,
 [data-design="luminous"] .lock-legacy { border-radius: var(--radius-lg); }
+[data-design="luminous"] .favorites-toggle--on svg { filter: drop-shadow(0 0 4px color-mix(in srgb, var(--warning) 45%, transparent)); }
+[data-design="luminous"] .settings-warning { border-radius: var(--radius-lg); }
+[data-design="luminous"] .compact-view {
+  margin: 8px; border: 1px solid var(--panel-edge); border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--panel-shadow);
+  background:
+    radial-gradient(circle at 100% 0, color-mix(in srgb, var(--flow-1) 12%, transparent), transparent 50%),
+    var(--surface);
+}
+[data-design="luminous"] .compact-head,
+[data-design="luminous"] .compact-detail-head { border-bottom-color: color-mix(in srgb, var(--flow-1) 10%, #2e363e); }
+[data-design="luminous"] .compact-detail { background: transparent; }
+[data-design="luminous"] .compact-list .entry-row--active { box-shadow: inset 2px 0 0 var(--flow-1); }
 
 /* =============================
    NARROW WINDOWS

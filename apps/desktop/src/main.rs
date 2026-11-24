@@ -13,6 +13,7 @@ mod backup_download;
 mod clipboard;
 mod data_directory;
 mod electron_guard;
+mod external_url;
 mod os_events;
 mod single_instance;
 mod updates;
@@ -27,11 +28,11 @@ use cipher_vault_core::{LockReason, Vault};
 use clipboard::ExpiringClipboard;
 use os_events::{OsEvent, PowerGuard};
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tauri::webview::NewWindowResponse;
-use tauri::{AppHandle, Manager, RunEvent, State, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, LogicalSize, Manager, RunEvent, State, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
 use updates::Updates;
 use zeroize::Zeroize;
 
@@ -217,6 +218,37 @@ async fn entry_icon_set(vault: State<'_, Shared>, session_id: Option<Value>, id:
     run(vault, move |vault| vault.set_entry_icon(session_id.as_ref(), id.as_ref(), icon.as_ref())).await
 }
 
+/// The auto-lock time the user chose. The core keeps it beside the vault and applies it at once.
+#[tauri::command]
+async fn settings_auto_lock_set(vault: State<'_, Shared>, session_id: Option<Value>, payload: Option<Value>) -> Result<Value, String> {
+    run(vault, move |vault| vault.set_auto_lock(session_id.as_ref(), payload.as_ref())).await
+}
+
+#[tauri::command]
+async fn entry_favorite_set(vault: State<'_, Shared>, session_id: Option<Value>, id: Option<Value>, favorite: Option<Value>) -> Result<Value, String> {
+    run(vault, move |vault| vault.set_entry_favorite(session_id.as_ref(), id.as_ref(), favorite.as_ref())).await
+}
+
+/// Records that the user copied from or opened an entry, for the list of recently used entries.
+#[tauri::command]
+async fn entry_use_record(vault: State<'_, Shared>, session_id: Option<Value>, id: Option<Value>) -> Result<Value, String> {
+    run(vault, move |vault| vault.record_entry_use(session_id.as_ref(), id.as_ref())).await
+}
+
+/// Opens the URL stored in an entry. The screen names only the entry, so it cannot have any other
+/// address opened, and only web addresses are handed to the browser (external_url.rs).
+#[tauri::command]
+async fn entry_url_open(vault: State<'_, Shared>, session_id: Option<Value>, id: Option<Value>) -> Result<Value, String> {
+    run(vault, move |vault| {
+        vault.open_entry_url(session_id.as_ref(), id.as_ref(), |text, current| {
+            let url = external_url::launchable(text).ok_or_else(|| VaultError::bad_request(external_url::REFUSED))?;
+            current()?;
+            external_url::open(&url).map_err(|message| VaultError::new(500, message))
+        })
+    })
+    .await
+}
+
 #[tauri::command]
 async fn password_generate(vault: State<'_, Shared>, session_id: Option<Value>, options: Option<Value>) -> Result<Value, String> {
     run(vault, move |vault| vault.generate_password(session_id.as_ref(), options.as_ref())).await
@@ -263,6 +295,82 @@ async fn update_install(app: AppHandle, updates: State<'_, Updates>, desktop: St
 #[tauri::command]
 fn update_open_releases() -> Result<(), String> {
     updates::open_release_page()
+}
+
+/// The compact layout's size in logical pixels: one column for finding an entry and copying from it.
+/// The reasons are in docs/設計.md (コンパクト表示).
+const COMPACT_WIDTH: f64 = 400.0;
+const COMPACT_HEIGHT: (f64, f64) = (480.0, 720.0);
+const COMPACT_MIN: (f64, f64) = (360.0, 480.0);
+const WINDOW_FAILED: &str = "ウィンドウの大きさを変えられませんでした";
+
+/// The size the window had before the compact layout, to return to it. None while not compact.
+#[derive(Default)]
+struct WindowLayout {
+    normal: Mutex<Option<NormalWindow>>,
+}
+
+#[derive(Clone, Copy)]
+struct NormalWindow {
+    width: f64,
+    height: f64,
+    maximized: bool,
+}
+
+/// The compact layout's size: the fixed width, and the current height kept within the compact range.
+fn compact_size(height: Option<f64>) -> (f64, f64) {
+    (COMPACT_WIDTH, height.unwrap_or(640.0).clamp(COMPACT_HEIGHT.0, COMPACT_HEIGHT.1))
+}
+
+/// Switches the window between the normal and the compact layout. The screen can choose only
+/// between the two, never a size or a place of its own.
+#[tauri::command]
+fn window_set_compact(window: WebviewWindow, layout: State<'_, WindowLayout>, compact: Option<Value>) -> Result<(), String> {
+    let compact = compact.as_ref().and_then(Value::as_bool).ok_or("表示の指定が正しくありません")?;
+    let failed = |_| WINDOW_FAILED.to_string();
+    let mut normal = layout.normal.lock().unwrap();
+    if compact {
+        if normal.is_none() {
+            let maximized = window.is_maximized().map_err(failed)?;
+            let size = window.inner_size().map_err(failed)?.to_logical::<f64>(window.scale_factor().map_err(failed)?);
+            // A maximized window has no size of its own to come back to, so it returns maximized.
+            let (width, height) = if maximized { WINDOW_DEFAULT } else { (size.width, size.height) };
+            let previous = NormalWindow { width, height, maximized };
+            if maximized {
+                window.unmaximize().map_err(failed)?;
+            }
+            let (width, height) = compact_size((!maximized).then_some(size.height));
+            window.set_min_size(Some(LogicalSize::new(COMPACT_MIN.0, COMPACT_MIN.1))).map_err(failed)?;
+            window.set_size(LogicalSize::new(width, height)).map_err(failed)?;
+            // A maximized narrow column would lose its point, so the compact window cannot be maximized.
+            window.set_maximizable(false).map_err(failed)?;
+            // Kept only once the window is compact, so a failed change can be asked for again.
+            *normal = Some(previous);
+        }
+    } else if let Some(previous) = *normal {
+        window.set_maximizable(true).map_err(failed)?;
+        if window.is_maximized().map_err(failed)? {
+            window.unmaximize().map_err(failed)?;
+        }
+        // The size first, so the larger minimum never resizes the window on its own.
+        window.set_size(LogicalSize::new(previous.width.max(WINDOW_MIN.0), previous.height.max(WINDOW_MIN.1))).map_err(failed)?;
+        window.set_min_size(Some(LogicalSize::new(WINDOW_MIN.0, WINDOW_MIN.1))).map_err(failed)?;
+        if previous.maximized {
+            window.maximize().map_err(failed)?;
+        }
+        // Forgotten only once the window is back, so a failed change can be asked for again.
+        *normal = None;
+    }
+    Ok(())
+}
+
+/// Keeps the window above other windows, or stops doing so. It is not saved: each start is normal.
+#[tauri::command]
+fn window_set_always_on_top(window: WebviewWindow, on_top: Option<Value>) -> Result<(), String> {
+    let on_top = on_top.as_ref().and_then(Value::as_bool).ok_or("表示の指定が正しくありません")?;
+    window.set_always_on_top(on_top).map_err(|_| "最前面の表示を切り替えられませんでした".to_string())?;
+    trace(&format!("always-on-top {}", window.is_always_on_top().unwrap_or(!on_top)));
+    Ok(())
 }
 
 /// The window's size in logical pixels; the reasons are in docs/設計.md (ウィンドウの大きさ).
@@ -388,6 +496,7 @@ fn main() {
     let app = tauri::Builder::default()
         .manage(vault)
         .manage(Arc::clone(&desktop))
+        .manage(WindowLayout::default())
         // Its commands for the screen are granted to no window; see updates.rs.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
@@ -404,6 +513,10 @@ fn main() {
             entries_delete,
             entries_set_group,
             entry_icon_set,
+            entry_favorite_set,
+            entry_use_record,
+            entry_url_open,
+            settings_auto_lock_set,
             password_generate,
             backup_export,
             backup_restore,
@@ -413,7 +526,9 @@ fn main() {
             update_check,
             update_download,
             update_install,
-            update_open_releases
+            update_open_releases,
+            window_set_compact,
+            window_set_always_on_top
         ])
         .setup(|app| {
             let supported = updates::supported(app.handle());
@@ -484,6 +599,15 @@ mod tests {
         assert_eq!(initial_window_size(Some((1092.8, 566.4))), (960.0, 566.4));
         assert_eq!(initial_window_size(Some((1280.0, 672.0))), (960.0, 672.0));
         assert_eq!(initial_window_size(Some((640.0, 400.0))), (720.0, 560.0));
+    }
+
+    #[test]
+    fn the_compact_window_keeps_its_height_within_range() {
+        assert_eq!(compact_size(None), (400.0, 640.0));
+        assert_eq!(compact_size(Some(680.0)), (400.0, 680.0));
+        assert_eq!(compact_size(Some(1032.0)), (400.0, 720.0));
+        assert_eq!(compact_size(Some(300.0)), (400.0, 480.0));
+        assert!(COMPACT_MIN.0 <= COMPACT_WIDTH && COMPACT_MIN.1 <= COMPACT_HEIGHT.0);
     }
 
     #[test]

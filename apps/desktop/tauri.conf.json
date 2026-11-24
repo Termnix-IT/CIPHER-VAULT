@@ -12,7 +12,7 @@
       "capabilities": [
         {
           "identifier": "main-window",
-          "description": "The only window, showing the bundled screen. It may call the app commands listed in build.rs and the window operations its title bar needs, and nothing else.",
+          "description": "The only window, showing the bundled screen. It may call the app commands listed in build.rs (the compact layout and always-on-top among them) and the window operations its title bar needs, and nothing else.",
           "windows": [
             "main"
           ],
@@ -30,6 +30,10 @@
             "allow-entries-delete",
             "allow-entries-set-group",
             "allow-entry-icon-set",
+            "allow-entry-favorite-set",
+            "allow-entry-use-record",
+            "allow-entry-url-open",
+            "allow-settings-auto-lock-set",
             "allow-password-generate",
             "allow-backup-export",
             "allow-backup-restore",
@@ -40,6 +44,8 @@
             "allow-update-download",
             "allow-update-install",
             "allow-update-open-releases",
+            "allow-window-set-compact",
+            "allow-window-set-always-on-top",
             "core:window:allow-minimize",
             "core:window:allow-toggle-maximize",
             "core:window:allow-internal-toggle-maximize",

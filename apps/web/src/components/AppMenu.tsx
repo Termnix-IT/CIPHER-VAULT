@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { PasswordEntry, VaultEntry, VaultMaintenanceOperation } from "@password-manager/shared/types";
+import type { VaultEntry, VaultMaintenanceOperation } from "@password-manager/shared/types";
 import type { DesignMode } from "../lib/design-mode";
 import { windowControls } from "../lib/api";
+import { loginIdOf, primarySecretOf } from "../lib/entry-list";
 import { EntriesIcon, EyeIcon, HelpIcon, LockIcon, MaximizeIcon, MinimizeIcon, RestoreIcon, SidebarIcon, WindowCloseIcon, WrenchIcon } from "./Icons";
 import { AppInfo } from "./AppInfo";
 import { VaultTools } from "./VaultTools";
@@ -10,7 +11,7 @@ import { VaultTools } from "./VaultTools";
 // The former File and Edit menus are one entries menu, Lock and Help are single buttons, and the
 // list pane's toggle sits first, so every former menu item still has a way in.
 type MenuName = "entries" | "view" | "tools";
-type MenuItem = { label: string; disabled?: boolean; selected?: boolean; action: () => void | Promise<void> } | "separator";
+type MenuItem = { label: string; shortcut?: string; disabled?: boolean; selected?: boolean; action: () => void | Promise<void> } | "separator";
 type AppMenuProps = {
   isUnlocked: boolean;
   isBusy: boolean;
@@ -18,6 +19,7 @@ type AppMenuProps = {
   hasUnsavedChanges: boolean;
   entryCount: number;
   selectedEntry: VaultEntry | null;
+  selectedFavorite: boolean;
   isFormOpen: boolean;
   isEditingEntry: boolean;
   isGroupedView: boolean;
@@ -31,14 +33,21 @@ type AppMenuProps = {
   onEditEntry: () => void;
   onGroupedViewChange: (grouped: boolean) => void;
   onSelectEntry: (id: string) => Promise<void>;
-  onCopy: (value: string, label: string) => Promise<void>;
+  onCopyLoginId: () => void;
+  onCopySecret: () => void;
+  onOpenUrl: () => void;
+  onToggleFavorite: () => void;
+  isCompact: boolean;
+  onCompactChange: (compact: boolean) => void;
+  isAlwaysOnTop: boolean;
+  onAlwaysOnTopChange: (onTop: boolean) => void;
+  onOpenSettings: () => void;
   onMaintenance: (operation: VaultMaintenanceOperation) => void;
 };
 
 export function AppMenu(props: AppMenuProps) {
   const selected = props.selectedEntry;
-  const selectedLogin = selected?.type === "financial" ? { loginId: selected.financial.loginId, password: selected.financial.loginPassword }
-    : selected?.type === "apiKey" || selected?.type === "creditCard" ? null : selected as PasswordEntry | null;
+  const secret = selected ? primarySecretOf(selected) : null;
   const [opened, setOpened] = useState<MenuName | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const triggerRefs = useRef<Partial<Record<MenuName, HTMLButtonElement | null>>>({});
@@ -57,6 +66,8 @@ export function AppMenu(props: AppMenuProps) {
     return () => { active = false; clearTimeout(timer); window.removeEventListener("resize", settled); };
   }, []);
   const toolsDisabled = disabled || props.hasUnsavedChanges || props.isLoading;
+  // The same rules as the shortcuts: an entry that is open, not being edited.
+  const selectedDisabled = disabled || props.isLoading || props.isFormOpen || props.isEditingEntry;
   const sidebarLabel = props.isSidebarCollapsed ? "一覧を広げる" : "一覧をアイコンだけにする";
 
   useEffect(() => {
@@ -97,6 +108,7 @@ export function AppMenu(props: AppMenuProps) {
           <button type="button" className="app-menu-item" key={item.label}
             disabled={item.disabled} aria-pressed={item.selected} onClick={() => run(item.action)}>
             {item.selected !== undefined && <span className="app-menu-check" aria-hidden="true">{item.selected ? "✓" : ""}</span>}{item.label}
+            {item.shortcut && <kbd className="app-menu-shortcut" aria-label={`ショートカット ${item.shortcut}`}>{item.shortcut}</kbd>}
           </button>)}
       </div>}
     </div>;
@@ -112,32 +124,42 @@ export function AppMenu(props: AppMenuProps) {
             if (!event.currentTarget.contains(event.relatedTarget)) setOpened(null);
           }}>
             {props.isUnlocked && <>
-              <button type="button" className="app-menu-trigger" aria-label={sidebarLabel} data-tooltip={sidebarLabel}
-                onClick={() => { setOpened(null); props.onSidebarCollapsedChange(!props.isSidebarCollapsed); }}><SidebarIcon collapsed={props.isSidebarCollapsed} /></button>
-              <span className="app-menu-divider" aria-hidden="true" />
+              {!props.isCompact && <>
+                <button type="button" className="app-menu-trigger" aria-label={sidebarLabel} data-tooltip={sidebarLabel}
+                  onClick={() => { setOpened(null); props.onSidebarCollapsedChange(!props.isSidebarCollapsed); }}><SidebarIcon collapsed={props.isSidebarCollapsed} /></button>
+                <span className="app-menu-divider" aria-hidden="true" />
+              </>}
               {group("entries", "項目", <EntriesIcon />, [
-                { label: "新しい項目", disabled: disabled || props.isFormOpen || props.isLoading, action: props.onNewEntry },
+                { label: "新しい項目", shortcut: "Ctrl+N", disabled: disabled || props.isFormOpen || props.isLoading, action: props.onNewEntry },
                 { label: "選択中の項目を編集", disabled: disabled || props.isLoading || props.isFormOpen || props.isEditingEntry || !props.selectedEntry, action: props.onEditEntry },
                 "separator",
-                { label: "ログインIDをコピー", disabled: disabled || props.isLoading || props.isFormOpen || !selectedLogin, action: () => selectedLogin ? props.onCopy(selectedLogin.loginId, "ログインID") : undefined },
-                { label: "パスワードをコピー", disabled: disabled || props.isLoading || props.isFormOpen || !selectedLogin, action: () => selectedLogin ? props.onCopy(selectedLogin.password, "パスワード") : undefined },
+                { label: "ログインIDをコピー", shortcut: "Ctrl+B", disabled: selectedDisabled || !selected || !loginIdOf(selected), action: props.onCopyLoginId },
+                { label: `${secret?.label ?? "パスワード"}をコピー`, shortcut: "Ctrl+Shift+C", disabled: selectedDisabled || !secret?.value, action: props.onCopySecret },
+                { label: "URLをブラウザで開く", shortcut: "Ctrl+U", disabled: selectedDisabled || !selected?.url?.trim(), action: props.onOpenUrl },
+                { label: props.selectedFavorite ? "お気に入りから外す" : "お気に入りに追加", disabled: disabled || props.isLoading || !selected, action: props.onToggleFavorite },
                 "separator",
                 { label: "一覧を更新", disabled: disabled || props.isLoading, action: props.onRefresh }
               ])}
             </>}
             {group("view", "表示", <EyeIcon />, [
-              ...(props.isUnlocked ? [
+              ...(props.isUnlocked && !props.isCompact ? [
                 { label: "すべて", disabled, selected: !props.isGroupedView, action: () => props.onGroupedViewChange(false) },
                 { label: "グループ別", disabled, selected: props.isGroupedView, action: () => props.onGroupedViewChange(true) },
                 "separator" as const,
                 { label: "一覧をアイコンだけで表示", selected: props.isSidebarCollapsed, action: () => props.onSidebarCollapsedChange(!props.isSidebarCollapsed) },
                 "separator" as const
               ] : []),
+              // The window's layout is not vault data either, so it can change while locked.
+              { label: "コンパクト表示", shortcut: "Ctrl+Shift+M", selected: props.isCompact, action: () => props.onCompactChange(!props.isCompact) },
+              { label: "常に手前に表示", selected: props.isAlwaysOnTop, action: () => props.onAlwaysOnTopChange(!props.isAlwaysOnTop) },
+              "separator",
               // The design is not vault data, so it stays available on the lock screen.
               { label: "シンプルデザイン", selected: props.designMode === "simple", action: () => props.onDesignModeChange("simple") },
               { label: "ルミナスデザイン", selected: props.designMode === "luminous", action: () => props.onDesignModeChange("luminous") }
             ])}
             {props.isUnlocked && group("tools", "ツール", <WrenchIcon />, [
+              { label: "設定…", disabled: toolsDisabled, action: props.onOpenSettings },
+              "separator",
               { label: "パスワードの点検", disabled: toolsDisabled, action: () => openTool("audit") },
               { label: "バックアップ", disabled: toolsDisabled, action: () => openTool("backup") },
               "separator",
@@ -148,7 +170,7 @@ export function AppMenu(props: AppMenuProps) {
               onClick={() => { setOpened(null); openInfo(); }}><HelpIcon /></button>
             {props.isUnlocked && <>
               <span className="app-menu-divider" aria-hidden="true" />
-              <button type="button" className="app-menu-trigger" aria-label="ロック" data-tooltip="ロック" disabled={disabled || props.isLoading}
+              <button type="button" className="app-menu-trigger" aria-label="ロック" data-tooltip="ロック（Ctrl+L）" disabled={disabled || props.isLoading}
                 onClick={() => { setOpened(null); void Promise.resolve().then(props.onLock).catch(() => undefined); }}><LockIcon /></button>
             </>}
           </div>
@@ -156,8 +178,8 @@ export function AppMenu(props: AppMenuProps) {
           <div className="window-controls" aria-label="ウィンドウ">
             <button type="button" className="window-control" aria-label="最小化" title="最小化"
               onClick={() => { void windowControls.minimize().catch(() => undefined); }}><MinimizeIcon /></button>
-            <button type="button" className="window-control" aria-label={isMaximized ? "元に戻す" : "最大化"} title={isMaximized ? "元に戻す" : "最大化"}
-              onClick={() => { void windowControls.toggleMaximize().catch(() => undefined); }}>{isMaximized ? <RestoreIcon /> : <MaximizeIcon />}</button>
+            {!props.isCompact && <button type="button" className="window-control" aria-label={isMaximized ? "元に戻す" : "最大化"} title={isMaximized ? "元に戻す" : "最大化"}
+              onClick={() => { void windowControls.toggleMaximize().catch(() => undefined); }}>{isMaximized ? <RestoreIcon /> : <MaximizeIcon />}</button>}
             <button type="button" className="window-control window-control--close" aria-label="閉じる" title="閉じる"
               onClick={() => { void windowControls.close().catch(() => undefined); }}><WindowCloseIcon /></button>
           </div>

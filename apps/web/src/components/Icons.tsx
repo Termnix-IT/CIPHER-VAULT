@@ -33,3 +33,13 @@ export const WrenchIcon = () => <Icon><path d="M12.5 9.9A5 5 0 0 1 18.8 3.5L16.4
 export const HelpIcon = () => <Icon><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6" /><path d="M12 17h.01" /></Icon>;
 export const GripIcon = () => <Icon><circle cx="9" cy="6" r="1" /><circle cx="15" cy="6" r="1" /><circle cx="9" cy="12" r="1" /><circle cx="15" cy="12" r="1" /><circle cx="9" cy="18" r="1" /><circle cx="15" cy="18" r="1" /></Icon>;
 export const ImageIcon = () => <Icon><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="m21 16-5-5-9 9" /></Icon>;
+// Favorites, the compact view and opening a URL. The star is filled for a favorite.
+export const StarIcon = ({ filled = false }: { filled?: boolean }) => <svg viewBox="0 0 24 24" fill={filled ? "currentColor" : "none"} stroke="currentColor"
+  strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.8-5.2 2.8 1-5.8-4.3-4.1 5.9-.9z" /></svg>;
+export const PinIcon = ({ pinned = false }: { pinned?: boolean }) => <Icon>
+  <path d="M9 4h6l-1 6 3 3H7l3-3z" fill={pinned ? "currentColor" : "none"} /><path d="M12 13v7" />
+</Icon>;
+export const ExternalLinkIcon = () => <Icon><path d="M14 4h6v6" /><path d="M20 4 11 13" /><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4" /></Icon>;
+export const CompactIcon = () => <Icon><rect x="7" y="3" width="10" height="18" rx="2" /><path d="M10 7h4M10 11h4" /></Icon>;
+export const ExpandIcon = () => <Icon><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /><path d="m13 10 2 2-2 2" /></Icon>;
+export const BackIcon = () => <Icon><path d="m15 6-6 6 6 6" /></Icon>;

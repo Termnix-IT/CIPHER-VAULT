@@ -2,12 +2,14 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { UNGROUPED_GROUP_NAME as UNGROUPED } from "@password-manager/shared";
 import type { EntryIcon, VaultEntry, VaultEntrySummary, VaultEntryType, VaultEntryUpsertPayload } from "@password-manager/shared/types";
 import { EntryContextMenu } from "../components/EntryContextMenu";
-import { EntryEditor, entryTypeLabel } from "../components/EntryEditor";
+import { EntryEditor } from "../components/EntryEditor";
 import { GroupDialog } from "../components/GroupDialog";
 import { EntryIconBadge } from "../components/EntryIconBadge";
 import { EntryIconPicker } from "../components/EntryIconPicker";
-import { SIDEBAR_DEFAULT_WIDTH, clampSidebarWidth, readSidebarWidth, saveSidebarWidth } from "../lib/layout-prefs";
-import { ChevronIcon, CloseIcon, FolderPlusIcon, PlusIcon, SearchIcon } from "../components/Icons";
+import { FeedbackToast } from "../components/FeedbackToast";
+import { SIDEBAR_DEFAULT_WIDTH, clampSidebarWidth, readFavoritesOnly, readListSort, readSidebarWidth, saveFavoritesOnly, saveListSort, saveSidebarWidth } from "../lib/layout-prefs";
+import { ChevronIcon, CloseIcon, FolderPlusIcon, PlusIcon, SearchIcon, StarIcon } from "../components/Icons";
+import { type SortOrder, entrySubtitle, entryType, entryTypeLabel, matchesSearch, normalizeSearch, sectionLabel, sections, sortFor } from "../lib/entry-list";
 
 export type CopyNotice = { id: number; text: string; clearsInMs: number | null };
 
@@ -42,41 +44,15 @@ type VaultDashboardProps = {
   onDeleteEntry: (id: string) => Promise<void>;
   onSetEntriesGroup: (ids: string[], group: string | null) => Promise<void>;
   onGeneratePassword: () => Promise<string>;
-  onCopyToClipboard: (value: string, label: string) => Promise<void>;
+  /** entryId names the saved entry the value came from, so the copy counts as using it. */
+  onCopyToClipboard: (value: string, label: string, entryId?: string) => Promise<void>;
+  onSetEntryFavorite: (id: string, favorite: boolean) => void;
+  onOpenUrl: (id: string) => void;
+  /** Grows each time Ctrl+F asks for the search box. */
+  searchFocusRequest: number;
 };
 
 const TYPE_FILTERS: { type: VaultEntryType; label: string }[] = [{ type: "login", label: "ログイン" }, { type: "apiKey", label: "APIキー" }, { type: "creditCard", label: "カード" }, { type: "financial", label: "銀行/証券" }];
-const KANA_ROWS = ["あ", "か", "さ", "た", "な", "は", "ま", "や", "ら", "わ"];
-const DAY_MS = 24 * 60 * 60 * 1000;
-type SortOrder = "name" | "updated";
-
-const entryType = (entry: VaultEntrySummary): VaultEntryType => entry.type ?? "login";
-const byName = (a: VaultEntrySummary, b: VaultEntrySummary) => a.serviceName.localeCompare(b.serviceName, "ja", { numeric: true, sensitivity: "base" });
-const byUpdated = (a: VaultEntrySummary, b: VaultEntrySummary) => b.updatedAt.localeCompare(a.updatedAt) || byName(a, b);
-
-/** Index heading for name order: Latin initial, kana row, kanji, or "#" for digits and symbols. */
-function nameSection(name: string) {
-  const first = name.trim().normalize("NFKC").charAt(0);
-  if (/[a-z]/i.test(first)) return first.toUpperCase();
-  // Katakana to hiragana, then drop voicing marks so が falls under か.
-  const kana = first.replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60)).normalize("NFD").charAt(0);
-  if (/[ぁ-ゖ]/.test(kana)) return `${[...KANA_ROWS].reverse().find((row) => row <= kana) ?? "あ"}行`;
-  if (/\p{Script=Han}/u.test(first)) return "漢字";
-  return "#";
-}
-function updatedSection(updatedAt: string, now: number) {
-  const age = now - new Date(updatedAt).getTime();
-  return age < DAY_MS ? "24時間以内" : age < 7 * DAY_MS ? "7日以内" : age < 30 * DAY_MS ? "30日以内" : "それ以前";
-}
-function sections(items: VaultEntrySummary[], label: (entry: VaultEntrySummary) => string) {
-  const result = new Map<string, VaultEntrySummary[]>();
-  for (const entry of items) { const key = label(entry); result.set(key, [...(result.get(key) ?? []), entry]); }
-  return [...result.entries()];
-}
-
-function entrySubtitle(entry: VaultEntrySummary) {
-  return entry.type === "creditCard" ? `•••• ${entry.cardLast4}` : entry.type === "apiKey" || entry.type === "financial" ? entryTypeLabel(entry.type) : entry.loginId;
-}
 
 export function VaultDashboard(props: VaultDashboardProps) {
   const { entries, selectedEntry, isFormOpen, isGroupedView, isSidebarCollapsed: collapsed, entryIcons } = props;
@@ -92,7 +68,8 @@ export function VaultDashboard(props: VaultDashboardProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [typeFilter, setTypeFilter] = useState<VaultEntryType | "all">("all");
-  const [sortOrder, setSortOrder] = useState<SortOrder>("name");
+  const [sortOrder, setSortOrder] = useState<SortOrder>(readListSort);
+  const [favoritesOnly, setFavoritesOnly] = useState(readFavoritesOnly);
   const [savedNotice, setSavedNotice] = useState(false);
   const [entryMenu, setEntryMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [groupDialogIds, setGroupDialogIds] = useState<string[] | null>(null);
@@ -101,17 +78,14 @@ export function VaultDashboard(props: VaultDashboardProps) {
   const highlightRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLElement>(null);
   const previousSelection = useRef<string | null>(null);
-  const search = searchTerm.trim().toLocaleLowerCase("ja-JP");
+  const search = normalizeSearch(searchTerm);
   const presentTypes = useMemo(() => TYPE_FILTERS.filter(({ type }) => entries.some((entry) => entryType(entry) === type)), [entries]);
   // A filter for a type that no longer exists falls back to all items instead of showing an empty list.
   const activeType = presentTypes.length > 1 && presentTypes.some(({ type }) => type === typeFilter) ? typeFilter : "all";
-  const filtered = useMemo(() => entries.filter((entry) => (activeType === "all" || entryType(entry) === activeType) && (!search ||
-    [entry.serviceName, entry.loginId ?? "", entry.group ?? "", entryTypeLabel(entry.type), ...entry.tags]
-      .some((field) => field.toLocaleLowerCase("ja-JP").includes(search)))).sort(sortOrder === "name" ? byName : byUpdated), [entries, search, activeType, sortOrder]);
-  const listSections = useMemo(() => {
-    const now = Date.now();
-    return sections(filtered, sortOrder === "name" ? (entry) => nameSection(entry.serviceName) : (entry) => updatedSection(entry.updatedAt, now));
-  }, [filtered, sortOrder]);
+  const favoriteCount = useMemo(() => entries.filter((entry) => entry.favorite).length, [entries]);
+  const filtered = useMemo(() => entries.filter((entry) => (activeType === "all" || entryType(entry) === activeType)
+    && (!favoritesOnly || entry.favorite) && matchesSearch(entry, search)).sort(sortFor(sortOrder)), [entries, search, activeType, sortOrder, favoritesOnly]);
+  const listSections = useMemo(() => sections(filtered, sectionLabel(sortOrder, Date.now())), [filtered, sortOrder]);
   const groups = useMemo(() => {
     const result = new Map<string, VaultEntrySummary[]>();
     for (const entry of filtered) {
@@ -169,6 +143,15 @@ export function VaultDashboard(props: VaultDashboardProps) {
   useEffect(() => {
     if (!collapsed && focusSearch.current) { focusSearch.current = false; searchRef.current?.focus(); }
   }, [collapsed]);
+  // Ctrl+F: the icon rail first widens the list, and the effect above then moves to the search box.
+  const handledFocusRequest = useRef(props.searchFocusRequest);
+  useEffect(() => {
+    // Only a request made while this view is shown; one made before it opened was for the other view.
+    if (props.searchFocusRequest === handledFocusRequest.current) return;
+    handledFocusRequest.current = props.searchFocusRequest;
+    if (collapsed) { focusSearch.current = true; props.onSidebarCollapsedChange(false); return; }
+    searchRef.current?.focus(); searchRef.current?.select();
+  }, [props.searchFocusRequest]);
 
   useLayoutEffect(() => {
     if (props.isLoadingDetail) return;
@@ -249,6 +232,8 @@ export function VaultDashboard(props: VaultDashboardProps) {
     entryMenuRow.current = event.currentTarget;
     setEntryMenu({ id, x: fromPointer ? event.clientX : rect.left + 16, y: fromPointer ? event.clientY : rect.bottom });
   }
+  function changeSortOrder(order: SortOrder) { setSortOrder(order); saveListSort(order); }
+  function changeFavoritesOnly(next: boolean) { setFavoritesOnly(next); saveFavoritesOnly(next); }
   function openIconPicker(id: string, opener: HTMLElement | null, x: number, y: number) {
     if (!busy) setIconPicker({ id, x, y, opener });
   }
@@ -310,9 +295,14 @@ export function VaultDashboard(props: VaultDashboardProps) {
         <span className="entry-name">{entry.serviceName}</span>
         <span className="entry-login">{entrySubtitle(entry)}</span>
       </span>}
+      {!collapsed && entry.favorite && <span className="entry-favorite" role="img" aria-label="お気に入り"><StarIcon filled /></span>}
     </button>;
   }
-  const feedback = props.errorMessage || props.copyNotice?.text;
+  function favoriteButton(id: string, favorite: boolean) {
+    const label = favorite ? "お気に入りから外す" : "お気に入りに追加";
+    return <button className={`icon-btn favorites-toggle ${favorite ? "favorites-toggle--on" : ""}`} type="button" aria-pressed={favorite}
+      aria-label={label} data-tooltip={label} onClick={() => props.onSetEntryFavorite(id, !favorite)}><StarIcon filled={favorite} /></button>;
+  }
   const showHeader = isFormOpen || Boolean(selectedEntry) || props.isLoadingDetail;
   const renderSection = ([name, items]: [string, VaultEntrySummary[]]) => <div key={name} role="group" aria-label={name}>
     <p className="list-section" aria-hidden="true">{name}</p>
@@ -320,6 +310,8 @@ export function VaultDashboard(props: VaultDashboardProps) {
   </div>;
 
   const pickerEntry = iconPicker && entries.find((entry) => entry.id === iconPicker.id);
+  const selectedSummary = selectedEntry && entries.find((entry) => entry.id === selectedEntry.id);
+  const favoritesLabel = favoritesOnly ? "すべての項目を表示" : "お気に入りだけを表示";
   const searchLabel = search ? `検索（「${searchTerm.trim()}」で絞り込み中）` : "検索";
 
   return <div className={`cipher-dashboard ${collapsed ? "cipher-dashboard--collapsed" : ""} ${resizing ? "cipher-dashboard--resizing" : ""}`} ref={dashboardRef}
@@ -330,6 +322,8 @@ export function VaultDashboard(props: VaultDashboardProps) {
           aria-label={searchLabel} data-tooltip={searchLabel} data-tooltip-side="right"
           onClick={() => { focusSearch.current = true; props.onSidebarCollapsedChange(false); }}><SearchIcon /></button>
         <button className="icon-btn" type="button" aria-label="新しい項目" data-tooltip="新しい項目" data-tooltip-side="right" disabled={busy || isFormOpen} onClick={openCreate}><PlusIcon /></button>
+        <button className={`icon-btn favorites-toggle ${favoritesOnly ? "favorites-toggle--on" : ""}`} type="button" aria-pressed={favoritesOnly}
+          aria-label={favoritesLabel} data-tooltip={favoritesLabel} data-tooltip-side="right" onClick={() => changeFavoritesOnly(!favoritesOnly)}><StarIcon filled={favoritesOnly} /></button>
       </div> : <div className="sidebar-controls">
         <div className="sidebar-head">
           <div className="search-box">
@@ -347,10 +341,15 @@ export function VaultDashboard(props: VaultDashboardProps) {
           {presentTypes.map(({ type, label }) => <button key={type} type="button" aria-pressed={activeType === type} onClick={() => setTypeFilter(type)}>{label}</button>)}
         </div>}
         {entries.length > 0 && <div className="list-meta">
-          <span>{filtered.length}件</span>
-          <select className="list-sort" aria-label="並び順" value={sortOrder} onChange={(event) => setSortOrder(event.target.value as SortOrder)}>
+          <span className="list-meta-start">
+            <button className={`icon-btn favorites-toggle ${favoritesOnly ? "favorites-toggle--on" : ""}`} type="button" aria-pressed={favoritesOnly}
+              aria-label={favoritesLabel} data-tooltip={favoritesLabel} onClick={() => changeFavoritesOnly(!favoritesOnly)}><StarIcon filled={favoritesOnly} /></button>
+            <span>{favoritesOnly ? `お気に入り ${filtered.length}件` : `${filtered.length}件`}</span>
+          </span>
+          <select className="list-sort" aria-label="並び順" value={sortOrder} onChange={(event) => changeSortOrder(event.target.value as SortOrder)}>
             <option value="name">名前順</option>
             <option value="updated">更新順</option>
+            <option value="used">最近使用順</option>
           </select>
         </div>}
       </div>}
@@ -359,6 +358,8 @@ export function VaultDashboard(props: VaultDashboardProps) {
           <div className="entry-highlight" ref={highlightRef} aria-hidden="true" hidden />
           {props.isLoading && <p className="empty-state-text" role="status">読み込み中…</p>}
           {!props.isLoading && search && filtered.length === 0 && <p className="empty-state-text">見つかりません</p>}
+          {!props.isLoading && !search && !collapsed && favoritesOnly && filtered.length === 0 && entries.length > 0 && <p className="empty-state-text">
+            {favoriteCount ? "この種類のお気に入りはありません" : "お気に入りはまだありません。項目の詳細の☆で追加できます"}</p>}
           {!props.isLoading && collapsed && (isGroupedView && !search
             ? groups.map(([name, items]) => <div key={name} className="rail-group" role="group" aria-label={name}>{items.map(renderEntry)}</div>)
             : filtered.map(renderEntry))}
@@ -392,6 +393,7 @@ export function VaultDashboard(props: VaultDashboardProps) {
           </p>}
         </div>
         {selectedEntry && !isFormOpen && !props.isEditingEntry && <div className="inspector-actions">
+          {favoriteButton(selectedEntry.id, Boolean(selectedSummary?.favorite))}
           <button className="btn" type="button" disabled={busy} onClick={props.onEditEntry}>編集</button>
           <button className="btn btn--danger" type="button" disabled={busy} onClick={deleteSelected}>削除</button>
         </div>}
@@ -400,7 +402,9 @@ export function VaultDashboard(props: VaultDashboardProps) {
         <EntryEditor key={isFormOpen ? "new" : selectedEntry!.id}
           entry={isFormOpen ? null : selectedEntry} isEditing={isFormOpen || props.isEditingEntry} busy={busy} isSaving={props.isCreating || props.isUpdating}
           isGenerating={props.isGeneratingPassword} onDirtyChange={props.onDirtyChange}
-          onGenerate={props.onGeneratePassword} onCopy={props.onCopyToClipboard}
+          onGenerate={props.onGeneratePassword}
+          onCopy={(value, label) => props.onCopyToClipboard(value, label, !isFormOpen && !props.isEditingEntry ? selectedEntry?.id : undefined)}
+          onOpenUrl={!isFormOpen && !props.isEditingEntry && selectedEntry ? () => props.onOpenUrl(selectedEntry.id) : undefined}
           onSave={async (payload) => {
             if (isFormOpen) { await props.onCreateEntry(payload); props.onFormOpenChange(false); }
             else if (selectedEntry) await props.onUpdateEntry(selectedEntry.id, payload);
@@ -412,18 +416,12 @@ export function VaultDashboard(props: VaultDashboardProps) {
           <h2>最初のパスワードを追加しましょう</h2>
           <button className="btn btn--primary" type="button" disabled={busy} onClick={openCreate}><PlusIcon />追加</button>
         </div> : <div className="inspector-empty"><p>項目を選ぶと、ここに表示されます</p></div>}
-      <div className="toast-region">
-        {feedback && <p key={props.errorMessage || props.copyNotice?.id} className={`toast ${props.errorMessage ? "toast--error" : "toast--copy"}`} role={props.errorMessage ? "alert" : "status"}>
-          {!props.errorMessage && (props.copyNotice?.clearsInMs ?? 0) > 0 && <svg className="copy-ring" viewBox="0 0 16 16" aria-hidden="true" style={{ ["--clear-ms" as string]: `${props.copyNotice?.clearsInMs}ms` }}>
-            <circle cx="8" cy="8" r="6" /><circle className="copy-ring-remaining" cx="8" cy="8" r="6" pathLength="100" />
-          </svg>}
-          {feedback}
-        </p>}
-      </div>
+      <FeedbackToast errorMessage={props.errorMessage} copyNotice={props.copyNotice} />
     </section>
     {entryMenu && menuEntry && <EntryContextMenu key={menuEntry.id} entry={menuEntry} x={entryMenu.x} y={entryMenu.y} groupNames={groupNames} onClose={closeEntryMenu}
       onAddToGroup={(group) => setGroup(menuEntry.id, group)} onNewGroup={() => openGroupDialog([menuEntry.id])}
       onRemoveFromGroup={() => setGroup(menuEntry.id, null)} onDelete={() => deleteTarget(menuEntry)}
+      onToggleFavorite={() => props.onSetEntryFavorite(menuEntry.id, !menuEntry.favorite)}
       onChangeIcon={() => openIconPicker(menuEntry.id, entryMenuRow.current, entryMenu.x, entryMenu.y)} />}
     {iconPicker && pickerEntry && <EntryIconPicker key={pickerEntry.id} name={pickerEntry.serviceName} icon={entryIcons[pickerEntry.id] ?? null}
       x={iconPicker.x} y={iconPicker.y} onClose={closeIconPicker} onSave={(icon) => props.onSetEntryIcon(pickerEntry.id, icon)} />}

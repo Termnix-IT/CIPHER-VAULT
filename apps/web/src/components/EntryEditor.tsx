@@ -1,7 +1,10 @@
 import { Fragment, useEffect, useId, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { FinancialExtraSecret, VaultEntry, VaultEntryType, VaultEntryUpsertPayload } from "@password-manager/shared/types";
-import { CheckIcon, CloseIcon, CopyIcon, EyeIcon, GripIcon } from "./Icons";
+import { CheckIcon, CloseIcon, CopyIcon, ExternalLinkIcon, EyeIcon, GripIcon } from "./Icons";
+import { entryTypeLabel } from "../lib/entry-list";
+
+export { entryTypeLabel };
 
 type Draft = {
   type: VaultEntryType; serviceName: string; loginId: string; password: string; url: string; group: string; tags: string; notes: string;
@@ -24,14 +27,15 @@ type EntryEditorProps = {
   onSave: (payload: VaultEntryUpsertPayload) => Promise<void>;
   onDelete?: () => void;
   onCancel: () => void;
+  /** Opens the saved entry's URL in the browser. The URL is read from the vault, not from this form. */
+  onOpenUrl?: () => void;
+  /** The compact view: the values used to sign in, without the group, tags and notes. */
+  compact?: boolean;
 };
 
 const TYPES: { type: VaultEntryType; label: string }[] = [{ type: "login", label: "ログイン" }, { type: "apiKey", label: "APIキー" }, { type: "creditCard", label: "カード" }, { type: "financial", label: "銀行/証券" }];
 const MAX_EXTRA_SECRETS = 8;
 
-export function entryTypeLabel(type?: VaultEntryType) {
-  return type === "apiKey" ? "APIキー" : type === "creditCard" ? "クレジットカード" : type === "financial" ? "銀行/証券" : "ログイン";
-}
 function hiddenSecrets(): Record<SecretField, Visibility> {
   return { password: "hidden", apiKey: "hidden", cardNumber: "hidden", securityCode: "hidden", tradingPassword: "hidden" };
 }
@@ -46,7 +50,7 @@ function toDraft(entry: VaultEntry | null, type: VaultEntryType = "login"): Draf
     expiryMonth: entry?.type === "creditCard" ? entry.card.expiryMonth ?? "" : "", securityCode: entry?.type === "creditCard" ? entry.card.securityCode : "" };
 }
 
-export function EntryEditor({ entry, isEditing, busy, isSaving, isGenerating, onDirtyChange, onGenerate, onCopy, onSave, onDelete, onCancel }: EntryEditorProps) {
+export function EntryEditor({ entry, isEditing, busy, isSaving, isGenerating, onDirtyChange, onGenerate, onCopy, onSave, onDelete, onCancel, onOpenUrl, compact = false }: EntryEditorProps) {
   const [initial, setInitial] = useState(() => toDraft(entry));
   const [draft, setDraft] = useState(initial);
   const [copiedLabel, setCopiedLabel] = useState<string | null>(null);
@@ -225,6 +229,16 @@ export function EntryEditor({ entry, isEditing, busy, isSaving, isGenerating, on
     return <div className="entry-view-field"><dt>{label}</dt><dd className={plain ? "entry-view-plain" : undefined}>{value}</dd>
       <span className="field-actions">{copyable && copyButton(value, label)}{draggable && dragHandle(value, label)}</span></div>;
   }
+  /** The URL with its own open button beside the copy button, so opening never copies and copying never opens. */
+  function urlField(value: string) {
+    if (!value) return null;
+    return <div className="entry-view-field"><dt>URL</dt><dd>{value}</dd>
+      <span className="field-actions">
+        {onOpenUrl && <button className="icon-btn open-url-btn" type="button" disabled={busy} aria-label="URLをブラウザで開く"
+          data-tooltip="ブラウザで開く（Ctrl+U）" onClick={onOpenUrl}><ExternalLinkIcon /></button>}
+        {copyButton(value, "URL")}
+      </span></div>;
+  }
   function secretView(key: SecretField, label: string, value: string, masked = "••••••••••••") {
     if (!value) return null;
     return <div className="entry-view-field"><dt>{label}</dt>
@@ -232,7 +246,7 @@ export function EntryEditor({ entry, isEditing, busy, isSaving, isGenerating, on
       <span className="field-actions">{secretToggle(key, label)}{copyButton(value, label)}</span></div>;
   }
 
-  return <form className={`entry-editor entry-editor--${draft.type} ${editing ? "entry-editor--editing" : ""}`} onSubmit={submit}
+  return <form className={`entry-editor entry-editor--${draft.type} ${editing ? "entry-editor--editing" : ""} ${compact ? "entry-editor--compact" : ""}`} onSubmit={submit}
     onKeyDown={(event) => {
       if (event.key === "Escape" && Object.values(visibility).some((value) => value !== "hidden")) {
         event.stopPropagation(); setVisibility(hiddenSecrets());
@@ -301,10 +315,12 @@ export function EntryEditor({ entry, isEditing, busy, isSaving, isGenerating, on
           {viewField("ログインID", entry.loginId, true, false, true)}
           {secretView("password", "パスワード", entry.password)}
         </>}
-        {viewField("URL", entry.url, true)}
-        {viewField("グループ", entry.group ?? "", false, true)}
-        {entry.tags.length > 0 && <div className="entry-view-field"><dt>タグ</dt><dd className="entry-view-tags">{entry.tags.map((tag, index) => <span key={`${tag}-${index}`} className="tag-chip">{tag}</span>)}</dd><span /></div>}
-        {entry.notes && <div className="entry-view-field entry-view-notes"><dt>メモ</dt><dd>{entry.notes}</dd><span /></div>}
+        {urlField(entry.url)}
+        {!compact && <>
+          {viewField("グループ", entry.group ?? "", false, true)}
+          {entry.tags.length > 0 && <div className="entry-view-field"><dt>タグ</dt><dd className="entry-view-tags">{entry.tags.map((tag, index) => <span key={`${tag}-${index}`} className="tag-chip">{tag}</span>)}</dd><span /></div>}
+          {entry.notes && <div className="entry-view-field entry-view-notes"><dt>メモ</dt><dd>{entry.notes}</dd><span /></div>}
+        </>}
       </dl>}
     </div>
     {editing && <div className="editor-actions">

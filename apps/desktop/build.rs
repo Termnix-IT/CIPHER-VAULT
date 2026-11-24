@@ -14,6 +14,10 @@ const COMMANDS: &[&str] = &[
     "entries_delete",
     "entries_set_group",
     "entry_icon_set",
+    "entry_favorite_set",
+    "entry_use_record",
+    "entry_url_open",
+    "settings_auto_lock_set",
     "password_generate",
     "backup_export",
     "backup_restore",
@@ -24,6 +28,8 @@ const COMMANDS: &[&str] = &[
     "update_download",
     "update_install",
     "update_open_releases",
+    "window_set_compact",
+    "window_set_always_on_top",
 ];
 
 fn main() {
