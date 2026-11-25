@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import type { FinancialExtraSecret, VaultEntry, VaultEntryType, VaultEntryUpsertPayload } from "@password-manager/shared/types";
 import { CheckIcon, CloseIcon, CopyIcon, ExternalLinkIcon, EyeIcon, GripIcon } from "./Icons";
 import { entryTypeLabel } from "../lib/entry-list";
+import { askConfirm } from "../lib/confirm";
 
 export { entryTypeLabel };
 
@@ -95,10 +96,15 @@ export function EntryEditor({ entry, isEditing, busy, isSaving, isGenerating, on
   function changeExtraSecret(index: number, patch: Partial<FinancialExtraSecret>) {
     changeExtraSecrets((secrets) => secrets.map((secret, position) => position === index ? { ...secret, ...patch } : secret));
   }
-  function changeType(type: VaultEntryType) {
+  async function changeType(type: VaultEntryType) {
     if (entry || busy || isGenerating || type === draft.type) return;
     const hasSpecificValues = draft.extraSecrets.length > 0 || [draft.loginId, draft.password, draft.tradingPassword, draft.apiKey, draft.keyId, draft.expiresOn, draft.cardNumber, draft.cardholder, draft.expiryMonth, draft.securityCode].some(Boolean);
-    if (hasSpecificValues && !window.confirm("種類を変えると、入力中のIDやパスワードなどは消えます。名前・URL・グループ・タグ・メモは残ります。変えますか？")) return;
+    const epoch = draftEpoch.current;
+    if (hasSpecificValues && (!await askConfirm({
+      title: "種類を変えますか？",
+      message: "種類を変えると、入力中のIDやパスワードなどは消えます。名前・URL・グループ・タグ・メモは残ります。",
+      confirmLabel: "種類を変える"
+    }) || epoch !== draftEpoch.current)) return;
     draftEpoch.current++; copyRequest.current++;
     setDraft((current) => ({ ...toDraft(null, type), serviceName: current.serviceName, url: current.url, group: current.group, tags: current.tags, notes: current.notes }));
     setVisibility(hiddenSecrets()); setCopiedLabel(null);
@@ -256,7 +262,7 @@ export function EntryEditor({ entry, isEditing, busy, isSaving, isGenerating, on
       {editing && !entry && <div className="type-tabs-row">
         <div className="segmented type-tabs" role="tablist" aria-label="保存する種類">
           {TYPES.map(({ type, label }) => <button key={type} type="button" role="tab" data-type={type} aria-selected={draft.type === type}
-            disabled={busy || isGenerating} onClick={() => changeType(type)}>{label}</button>)}
+            disabled={busy || isGenerating} onClick={() => void changeType(type)}>{label}</button>)}
         </div>
       </div>}
       {editing ? <div className="editor-fields">

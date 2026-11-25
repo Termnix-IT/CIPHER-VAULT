@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use tauri::utils::config::BundleType;
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Runtime};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 pub const RELEASE_PAGE: &str = "https://github.com/Termnix-IT/CIPHER-VAULT/releases/latest";
@@ -21,8 +21,6 @@ const FAILED: &str = "更新処理に失敗しました。通信環境と公開�
 const INVALID_REQUEST: &str = "Invalid update request";
 /// The screen shows at most this many UTF-16 units of the notes, as the Electron app does.
 const NOTES_LIMIT: usize = 20000;
-const DISCARD: &str = "破棄して更新";
-const BACK_TO_EDITING: &str = "編集に戻る";
 
 #[derive(Clone, Default)]
 struct State {
@@ -194,18 +192,16 @@ impl Updates {
         }
     }
 
-    /// Some(false) when the user went back to editing; None when the step does not apply.
-    pub async fn install<R: Runtime>(&self, app: &AppHandle<R>, desktop: &SharedDesktop, has_unsaved_changes: Option<Value>) -> Result<Option<bool>, String> {
+    /// Some(false) when unsaved edits remain; None when the step does not apply. The screen asks about
+    /// unsaved edits in its own dialog first, so `true` here means the answer was to keep them.
+    pub async fn install(&self, desktop: &SharedDesktop, has_unsaved_changes: Option<Value>) -> Result<Option<bool>, String> {
         let Some(Value::Bool(has_unsaved_changes)) = has_unsaved_changes else {
             return Err(INVALID_REQUEST.to_string());
         };
         let Some(_busy) = self.begin(&["downloaded"]) else {
             return Ok(None);
         };
-        let Some(window) = app.get_webview_window("main") else {
-            return Ok(Some(false));
-        };
-        if has_unsaved_changes && !confirm_discard(window).await {
+        if has_unsaved_changes {
             return Ok(Some(false));
         }
         desktop.lock_and_clear(LockReason::Update);
@@ -230,36 +226,6 @@ impl Updates {
         }
         Ok(None)
     }
-}
-
-/// The question the Electron app asks, with going back to editing as the default and on Esc.
-#[cfg(not(feature = "e2e"))]
-async fn confirm_discard<R: Runtime>(window: tauri::WebviewWindow<R>) -> bool {
-    let (sender, receiver) = std::sync::mpsc::channel();
-    let owner = window.clone();
-    // The dialog belongs to the window's thread, so it stays modal to the window.
-    let asked = window.run_on_main_thread(move || {
-        let answer = rfd::MessageDialog::new()
-            .set_level(rfd::MessageLevel::Warning)
-            .set_title("未保存の編集があります")
-            .set_description("編集内容を破棄して更新しますか？\n\n保存する場合は「編集に戻る」を選び、保存後にもう一度更新してください。")
-            .set_buttons(rfd::MessageButtons::OkCancelCustom(BACK_TO_EDITING.to_string(), DISCARD.to_string()))
-            .set_parent(&owner)
-            .show();
-        let _ = sender.send(answer == rfd::MessageDialogResult::Custom(DISCARD.to_string()));
-    });
-    if asked.is_err() {
-        return false;
-    }
-    tauri::async_runtime::spawn_blocking(move || receiver.recv().unwrap_or(false)).await.unwrap_or(false)
-}
-
-/// The automated checks cannot answer a dialog, so they say beforehand which button is chosen.
-#[cfg(feature = "e2e")]
-async fn confirm_discard<R: Runtime>(_window: tauri::WebviewWindow<R>) -> bool {
-    crate::trace("update-dialog");
-    let _ = (BACK_TO_EDITING, DISCARD);
-    std::env::var("CIPHER_VAULT_E2E_UPDATE_ANSWER").is_ok_and(|answer| answer == "discard")
 }
 
 /// shell.openExternal in Electron: the default browser opens the fixed releases page.

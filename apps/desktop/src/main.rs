@@ -373,9 +373,9 @@ async fn update_download(updates: State<'_, Updates>) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn update_install(app: AppHandle, updates: State<'_, Updates>, desktop: State<'_, SharedDesktop>, has_unsaved_changes: Option<Value>) -> Result<Option<bool>, String> {
+async fn update_install(updates: State<'_, Updates>, desktop: State<'_, SharedDesktop>, has_unsaved_changes: Option<Value>) -> Result<Option<bool>, String> {
     let desktop = Arc::clone(&desktop);
-    updates.install(&app, &desktop, has_unsaved_changes).await
+    updates.install(&desktop, has_unsaved_changes).await
 }
 
 #[tauri::command]
@@ -624,7 +624,7 @@ fn with_debugging_port<'a, R: tauri::Runtime, M: tauri::Manager<R>>(builder: Web
 /// environment, so the update check passes the e2e build's settings as arguments as well.
 #[cfg(feature = "e2e")]
 fn apply_e2e_arguments() {
-    const NAMES: [&str; 6] = ["CIPHER_VAULT_DATA_DIR", "CIPHER_VAULT_E2E_DEBUG_PORT", "CIPHER_VAULT_E2E_PROFILE", "CIPHER_VAULT_E2E_DOWNLOADS", "CIPHER_VAULT_E2E_UPDATE_ANSWER", "CIPHER_VAULT_E2E_SUMMON_FILE"];
+    const NAMES: [&str; 5] = ["CIPHER_VAULT_DATA_DIR", "CIPHER_VAULT_E2E_DEBUG_PORT", "CIPHER_VAULT_E2E_PROFILE", "CIPHER_VAULT_E2E_DOWNLOADS", "CIPHER_VAULT_E2E_SUMMON_FILE"];
     for argument in std::env::args().skip(1) {
         if let Some((name, value)) = argument.strip_prefix("--e2e-env=").and_then(|setting| setting.split_once('='))
             && NAMES.contains(&name)

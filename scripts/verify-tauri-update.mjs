@@ -3,8 +3,9 @@
 // signs them with a key made for this run only. Version 0.0.1 is installed into a temporary folder
 // and a vault with one synthetic entry is set up. A local server then offers the same version
 // (nothing to do), the new version with the old version's signature and the new version with its own
-// signature but one byte added (both refused after the download), and the new version as signed. Declining the unsaved-edits question keeps the app as it is; accepting
-// it locks the vault, runs the installer and exits. The installer must restart the app as 0.0.2,
+// signature but one byte added (both refused after the download), and the new version as signed. With
+// unsaved edits the desktop side refuses to install, and the screen asks in its own dialog: going back to
+// editing keeps the app as it is, and discarding locks the vault, runs the installer and exits. The installer must restart the app as 0.0.2,
 // and the same password must open the same entry. The test install is removed at the end.
 // Usage: node scripts/verify-tauri-update.mjs (after npm run build:web)
 import assert from "node:assert/strict";
@@ -172,24 +173,47 @@ try {
   result.signed = await downloadFrom(app.page, signed);
   assert.deepEqual(result.signed.after, { status: "downloaded", currentVersion: OLD_VERSION, latestVersion: NEW_VERSION, releaseNotes: NOTES, progress: 100 });
   result.declined = await settle(app.page, "window.passwordManager.installUpdate(true)");
-  assert.deepEqual(result.declined, { value: false });
-  assert.ok(app.events.includes("update-dialog"));
+  assert.deepEqual(result.declined, { value: false }, "unsaved edits are never dropped by the desktop side");
   assert.equal((await updateState(app.page)).status, "downloaded");
-  assert.equal((await api(app.page, "fetchVaultStatus()")).isUnlocked, true, "going back to editing keeps the vault open");
+  assert.equal((await api(app.page, "fetchVaultStatus()")).isUnlocked, true, "refusing keeps the vault open");
   app.page.close();
   await closeApp();
 
-  // ---- Second run: discarding the edits installs the update.
-  app = await launch({ CIPHER_VAULT_E2E_UPDATE_ANSWER: "discard" });
+  // ---- Second run: through the screen, with a new item being typed. The version dialog asks in the
+  // app's own dialog; going back to editing keeps everything, and discarding installs the update.
+  app = await launch();
   await unlock(app.page);
   result.reinstall = await downloadFrom(app.page, signed);
   assert.equal(result.reinstall.after.status, "downloaded");
-  const installer = settle(app.page, "window.passwordManager.installUpdate(true)");
+  const screen = (script) => app.page.evaluate(script);
+  await until("the unlocked screen", () => screen(`!!document.querySelector(".vault-sidebar")`));
+  await screen(`window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyN", ctrlKey: true }))`);
+  await until("the new item form", () => screen(`!!document.querySelector(".editor-fields input")`));
+  await screen(`document.querySelector(".editor-fields input").focus()`);
+  await app.page.send("Input.insertText", { text: "Unsaved item" });
+  const askToInstall = async () => {
+    await screen(`document.querySelector('.app-menu-trigger[aria-label="バージョンと更新"]').click()`);
+    await until("the restart button", () => screen(`!![...document.querySelectorAll(".app-info-dialog[open] button")].find((node) => node.textContent === "再起動して更新")`));
+    await screen(`[...document.querySelectorAll(".app-info-dialog[open] button")].find((node) => node.textContent === "再起動して更新").click()`);
+    await until("the unsaved-edits question", () => screen(`document.querySelector(".confirm-dialog[open] h2")?.textContent === "保存していない変更があります"`));
+  };
+  await askToInstall();
+  await screen(`document.querySelector(".confirm-dialog[open] [data-confirm-cancel]").click()`);
+  await until("the question closed", () => screen(`!document.querySelector(".confirm-dialog")`));
+  result.backToEditing = {
+    state: (await updateState(app.page)).status,
+    unlocked: (await api(app.page, "fetchVaultStatus()")).isUnlocked,
+    typed: await screen(`document.querySelector(".editor-fields input")?.value`)
+  };
+  assert.deepEqual(result.backToEditing, { state: "downloaded", unlocked: true, typed: "Unsaved item" });
+  await screen(`document.querySelector(".app-info-dialog[open] .vault-tool-heading .icon-btn")?.click()`);
+  await until("the version dialog closed", () => screen(`!document.querySelector(".app-info-dialog[open]")`));
+  await askToInstall();
+  await screen(`document.querySelector(".confirm-dialog[open] [data-confirm-accept]").click()`);
   await until("the app to exit for the installer", () => child.exitCode !== null, 60000);
-  void installer.catch(() => undefined);
-  const exitReports = [...new Set(app.events.filter((event) => event.startsWith("vault-locked ") || event === "exit-complete" || event === "update-dialog"))];
+  const exitReports = [...new Set(app.events.filter((event) => event.startsWith("vault-locked ") || event === "exit-complete"))];
   result.installExit = { exitCode: child.exitCode, reports: exitReports };
-  assert.deepEqual(result.installExit, { exitCode: 0, reports: ["update-dialog", "vault-locked update", "vault-locked window-closed", "exit-complete"] });
+  assert.deepEqual(result.installExit, { exitCode: 0, reports: ["vault-locked update", "vault-locked window-closed", "exit-complete"] });
   assert.ok(served.includes(servedPath(newer.setup)));
   app.page.close();
   child = null;

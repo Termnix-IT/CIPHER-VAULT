@@ -18,6 +18,8 @@ import { Tooltip } from "./components/Tooltip";
 import { readSidebarCollapsed, saveSidebarCollapsed } from "./lib/layout-prefs";
 import { loginIdOf, primarySecretOf } from "./lib/entry-list";
 import { shortcutOf } from "./lib/shortcuts";
+import { askDiscard, dismissConfirms } from "./lib/confirm";
+import { ConfirmHost } from "./components/ConfirmDialog";
 
 type UnlockVeil = { shell: DOMRect; mark: DOMRect };
 const UNLOCK_VEIL_MS = 480;
@@ -76,7 +78,7 @@ export function App() {
       setIsFormOpen(false); setIsEditingEntry(false); setHasUnsavedChanges(false);
       setIsLoadingEntries(false); setIsLoadingEntryDetail(false);
       setIsCreatingEntry(false); setIsUpdatingEntry(false); setIsDeletingEntry(false); setIsGeneratingPassword(false);
-      setErrorMessage(""); setSettingsOpen(false); lastUseRecord.current.clear();
+      setErrorMessage(""); setSettingsOpen(false); lastUseRecord.current.clear(); dismissConfirms();
       const minutes = state.autoLockMinutes ?? previous?.autoLockMinutes;
       const idleFor = typeof minutes === "number" ? `${autoLockText(minutes)}間` : "しばらく";
       setLockNotice(state.lockReason === "idle" ? `${idleFor}操作がなかったのでロックしました`
@@ -210,7 +212,7 @@ export function App() {
   }
 
   async function handleLockVault() {
-    if (hasUnsavedChanges && !window.confirm("保存していない変更を破棄してロックしますか？")) return;
+    if (hasUnsavedChanges && !await askDiscard("破棄してロック", "ロックします")) return;
     try { await lockVault(); }
     catch (error) {
       if (statusRef.current?.isUnlocked) setErrorMessage(error instanceof Error ? error.message : "ロックできませんでした");
@@ -372,7 +374,8 @@ export function App() {
   async function handleCompactChange(compact: boolean) {
     if (compact === isCompact) return true;
     if (compact && (isFormOpen || isEditingEntry)) {
-      if (hasUnsavedChanges && !window.confirm("保存していない変更を破棄して、コンパクト表示にしますか？")) return false;
+      const epoch = viewEpoch.current;
+      if (hasUnsavedChanges && (!await askDiscard("破棄して切り替える", "コンパクト表示に切り替えます") || !isCurrent(epoch))) return false;
       setIsFormOpen(false); setIsEditingEntry(false); setHasUnsavedChanges(false);
     }
     try { await windowControls.setCompact(compact); }
@@ -396,7 +399,8 @@ export function App() {
   // Making and editing entries happen in the normal layout, so the compact one steps aside first.
   async function handleOpenCreateForm() {
     if (isFormOpen || isCreatingEntry || isUpdatingEntry || isDeletingEntry || isLoadingEntryDetail) return;
-    if (hasUnsavedChanges && !window.confirm("保存していない変更を破棄して、新しい項目を作りますか？")) return;
+    const epoch = viewEpoch.current;
+    if (hasUnsavedChanges && (!await askDiscard("破棄して作成", "新しい項目を作ります") || !isCurrent(epoch))) return;
     if (!await handleCompactChange(false)) return;
     setHasUnsavedChanges(false);
     setIsEditingEntry(false);
@@ -488,9 +492,10 @@ export function App() {
     return () => window.removeEventListener("cipher-vault-summon", listener);
   }, []);
 
-  function handleOpenMaintenance(operation: VaultMaintenanceOperation) {
+  async function handleOpenMaintenance(operation: VaultMaintenanceOperation) {
     if (!statusRef.current?.isUnlocked || isCreatingEntry || isUpdatingEntry || isDeletingEntry || isLoadingEntryDetail || isGeneratingPassword) return;
-    if (hasUnsavedChanges && !window.confirm("保存していない変更を破棄して続けますか？")) return;
+    const epoch = viewEpoch.current;
+    if (hasUnsavedChanges && (!await askDiscard("破棄して続ける", "続けます") || !isCurrent(epoch))) return;
     setHasUnsavedChanges(false); setIsFormOpen(false); setIsEditingEntry(false);
     setMaintenanceRequest(operation);
     setMaintenanceOpened(true);
@@ -615,6 +620,7 @@ export function App() {
         />
       )}
       <SettingsDialog open={settingsOpen} autoLockMinutes={vaultStatus.autoLockMinutes} onClose={() => setSettingsOpen(false)} onSaved={showNotice} />
+      <ConfirmHost />
       <VaultMaintenance status={vaultStatus} requested={maintenanceRequest} opened={maintenanceOpened || maintenanceRequired} onClose={() => setMaintenanceOpened(false)} />
       {unlockVeil && <div className="unlock-veil" aria-hidden="true"
         style={{ top: unlockVeil.shell.top, left: unlockVeil.shell.left, width: unlockVeil.shell.width, height: unlockVeil.shell.height }}>

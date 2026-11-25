@@ -507,6 +507,9 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .group-pick-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .group-pick-group { flex-shrink: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); font-size: 12px; }
 .group-dialog-actions { display: flex; gap: 12px; }
+/* The questions asked with askConfirm (lib/confirm.ts): as tall as the message, not a fixed frame. */
+.confirm-dialog { width: min(400px, calc(100vw - 32px)); height: fit-content; }
+.confirm-dialog-message { padding: 16px 12px; color: var(--text); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
 .vault-tool-heading {
   height: 36px; flex-shrink: 0; padding: 0 4px 0 12px; display: flex; align-items: center; gap: 12px;
   border-bottom: 1px solid var(--border); background: var(--bg);

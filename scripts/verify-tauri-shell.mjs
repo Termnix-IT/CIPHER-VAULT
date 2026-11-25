@@ -7,7 +7,8 @@
 // folder exits, and that closing the window locks, clears and exits. This build is not the setup, so the
 // version dialog offers only the releases page and checking for updates does nothing. The call-up shortcut
 // is set through the screen and pressed through the e2e build's marker file, so no real key is needed;
-// the compact window is resized and its size is kept for the next time. The window keeps
+// the compact window is resized and its size is kept for the next time. Questions are the app's own
+// dialogs, never window.confirm, and a lock answers them with "no". The window keeps
 // refusing outside connections, navigation, new windows, downloads it did not make and ungranted
 // commands, the updater plugin's own commands included. Only synthetic passwords are used.
 // Usage: node scripts/verify-tauri-shell.mjs <e2e-exe> <screenshot-directory>
@@ -621,6 +622,53 @@ try {
   await until("unlocked again", async () => (await status(page)).isUnlocked);
   await page.evaluate(`window.passwordManager.setGlobalShortcut({ shortcut: null, summonCompact: true }, ${JSON.stringify((await status(page)).sessionId)})`);
   assert.equal(JSON.parse(readFileSync(prefsFile, "utf8")).globalShortcut, null);
+
+  // ---- Questions are the app's own dialogs: window.confirm is never called, the safe answer has the
+  // focus, Escape and "編集に戻る" keep everything, and a lock answers an open question with "no".
+  await page.evaluate(`window.nativeConfirms = 0; window.confirm = () => { window.nativeConfirms++; return true; }`);
+  const asked = (title) => until(`the question "${title}"`, () => page.evaluate(`document.querySelector(".confirm-dialog[open] h2")?.textContent === ${JSON.stringify(title)}`));
+  const answered = () => until("the question closed", () => page.evaluate(`!document.querySelector(".confirm-dialog")`));
+  const doomed = await page.evaluate(`window.passwordManager.createEntry({ serviceName: "削除の確認", loginId: "synthetic-delete-id", password: "synthetic-delete-password" }, ${JSON.stringify((await status(page)).sessionId)})`);
+  await menu(page, "項目", "一覧を更新");
+  await until("the new row", () => page.evaluate(`!!document.querySelector('button[data-entry-id="${doomed.id}"]')`));
+  await click(page, `button[data-entry-id="${doomed.id}"]`);
+  await until("the entry to delete", () => page.evaluate(`document.querySelector(".inspector-title")?.textContent === "削除の確認"`));
+  const inspectorButton = (label) => `[...document.querySelectorAll(".inspector-actions button")].find((node) => node.textContent === ${JSON.stringify(label)}).click()`;
+  await page.evaluate(inspectorButton("削除"));
+  await asked("項目を削除しますか？");
+  result.question = await page.evaluate(`({
+    message: document.querySelector(".confirm-dialog[open] .confirm-dialog-message").textContent,
+    focused: document.activeElement?.textContent,
+    behindIsInert: !!document.querySelector(".vault-sidebar").closest("[inert]")
+  })`);
+  await screenshot(page, screenshotDirectory, "tauri-shell-confirm-delete");
+  await press(page, "Escape", "Escape", 27, 0);
+  await answered();
+  assert.ok(await page.evaluate(`!!document.querySelector('button[data-entry-id="${doomed.id}"]')`), "Escape keeps the entry");
+  await page.evaluate(inspectorButton("削除"));
+  await asked("項目を削除しますか？");
+  await click(page, ".confirm-dialog[open] [data-confirm-accept]");
+  await until("the deleted row", () => page.evaluate(`!document.querySelector('button[data-entry-id="${doomed.id}"]')`));
+  assert.deepEqual(result.question, { message: "「削除の確認」を削除します。元に戻せません。", focused: "キャンセル", behindIsInert: true });
+  await click(page, `button[data-entry-id="${carried.id}"]`);
+  await until("the entry to edit", () => page.evaluate(`document.querySelector(".inspector-title")?.textContent === "画面で追加"`));
+  await page.evaluate(inspectorButton("編集"));
+  await fill(page, "サービス", "画面で追加（変更）");
+  await click(page, '.app-menu-bar button[aria-label="ロック"]');
+  await asked("保存していない変更があります");
+  await click(page, ".confirm-dialog[open] [data-confirm-cancel]");
+  await answered();
+  result.backToEditing = { unlocked: (await status(page)).isUnlocked, typed: await page.evaluate(`${field("サービス")}?.value`) };
+  assert.deepEqual(result.backToEditing, { unlocked: true, typed: "画面で追加（変更）" });
+  await click(page, '.app-menu-bar button[aria-label="ロック"]');
+  await asked("保存していない変更があります");
+  await page.evaluate(`window.passwordManager.lockVault(${JSON.stringify((await status(page)).sessionId)})`);
+  await until("the lock screen", () => lockScreenShown(page));
+  await answered();
+  assert.equal(await page.evaluate("window.nativeConfirms"), 0, "window.confirm is never used");
+  await submitPassword(page, NEW_PASSWORD, false);
+  await until("unlocked again", async () => (await status(page)).isUnlocked);
+  await until("the list again", () => page.evaluate(`!!document.querySelector('button[data-entry-id="${carried.id}"]')`));
 
   const reportsSince = (mark) => events.slice(mark).filter((event) => event.startsWith("vault-locked ") || event.startsWith("clipboard-"));
   const copy = async () => settle(page, `window.passwordManager.copyText("synthetic-clipboard-value", ${JSON.stringify((await status(page)).sessionId)})`);

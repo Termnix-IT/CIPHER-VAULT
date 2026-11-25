@@ -7,6 +7,7 @@ import { GroupDialog } from "../components/GroupDialog";
 import { EntryIconBadge } from "../components/EntryIconBadge";
 import { EntryIconPicker } from "../components/EntryIconPicker";
 import { FeedbackToast } from "../components/FeedbackToast";
+import { askConfirm, askDiscard } from "../lib/confirm";
 import { SIDEBAR_DEFAULT_WIDTH, clampSidebarWidth, readFavoritesOnly, readListSort, readSidebarWidth, saveFavoritesOnly, saveListSort, saveSidebarWidth } from "../lib/layout-prefs";
 import { ChevronIcon, CloseIcon, FolderPlusIcon, PlusIcon, SearchIcon, StarIcon } from "../components/Icons";
 import { type SortOrder, entrySubtitle, entryType, entryTypeLabel, matchesSearch, normalizeSearch, sectionLabel, sections, sortFor } from "../lib/entry-list";
@@ -177,24 +178,26 @@ export function VaultDashboard(props: VaultDashboardProps) {
     return () => { cancel(); reducedMotion.removeEventListener("change", preferenceChanged); };
   }, [selectedEntry?.id, isFormOpen, props.isLoadingDetail]);
 
-  function canDiscard() {
-    return !props.hasUnsavedChanges || window.confirm("保存していない変更を破棄しますか？");
+  // The questions are the app's dialogs (lib/confirm.ts), so the answers arrive later; locking
+  // answers them with "no", and the dialog keeps the rest of the screen still while it is open.
+  async function canDiscard() {
+    return !props.hasUnsavedChanges || askDiscard("破棄する");
   }
-  function openCreate() {
-    if (busy || isFormOpen || !canDiscard()) return;
+  async function openCreate() {
+    if (busy || isFormOpen || !await canDiscard()) return;
     props.onDirtyChange(false);
     props.onEditingChange(false);
     props.onFormOpenChange(true);
   }
-  function cancelEditing() {
-    if (busy || !canDiscard()) return;
+  async function cancelEditing() {
+    if (busy || !await canDiscard()) return;
     props.onDirtyChange(false);
     props.onEditingChange(false);
     props.onFormOpenChange(false);
   }
   /** Asks before an action that would drop unsaved input, and leaves the form only when there was some. */
-  function confirmDiscard() {
-    if (!canDiscard()) return false;
+  async function confirmDiscard() {
+    if (!await canDiscard()) return false;
     if (props.hasUnsavedChanges) {
       props.onDirtyChange(false);
       props.onEditingChange(false);
@@ -202,20 +205,20 @@ export function VaultDashboard(props: VaultDashboardProps) {
     }
     return true;
   }
-  function deleteTarget(target: Pick<VaultEntrySummary, "id" | "serviceName">) {
-    if (busy || !window.confirm(`「${target.serviceName}」を削除しますか？元に戻せません。`)) return;
+  async function deleteTarget(target: Pick<VaultEntrySummary, "id" | "serviceName">) {
+    if (busy || !await askConfirm({ title: "項目を削除しますか？", message: `「${target.serviceName}」を削除します。元に戻せません。`, confirmLabel: "削除" })) return;
     // Deleting the item being edited already answers what happens to its edits.
-    if (!(props.isEditingEntry && selectedEntry?.id === target.id) && !confirmDiscard()) return;
+    if (!(props.isEditingEntry && selectedEntry?.id === target.id) && !await confirmDiscard()) return;
     void props.onDeleteEntry(target.id).catch(() => {});
   }
   function deleteSelected() {
-    if (selectedEntry) deleteTarget(selectedEntry);
+    if (selectedEntry) void deleteTarget(selectedEntry);
   }
-  function setGroup(id: string, group: string | null) {
-    if (!busy && confirmDiscard()) void props.onSetEntriesGroup([id], group).catch(() => {});
+  async function setGroup(id: string, group: string | null) {
+    if (!busy && await confirmDiscard()) void props.onSetEntriesGroup([id], group).catch(() => {});
   }
-  function openGroupDialog(initialIds: string[]) {
-    if (!busy && confirmDiscard()) setGroupDialogIds(initialIds);
+  async function openGroupDialog(initialIds: string[]) {
+    if (!busy && await confirmDiscard()) setGroupDialogIds(initialIds);
   }
   async function submitGroup(ids: string[], group: string) {
     await props.onSetEntriesGroup(ids, group);
@@ -288,7 +291,7 @@ export function VaultDashboard(props: VaultDashboardProps) {
       onContextMenu={(event) => openEntryMenu(event, entry.id)}
       onClick={() => {
         if (active) return;
-        if (canDiscard()) { setSavedNotice(false); void props.onSelectEntry(entry.id); }
+        void canDiscard().then((discard) => { if (discard) { setSavedNotice(false); void props.onSelectEntry(entry.id); } });
       }}>
       <EntryIconBadge name={entry.serviceName} icon={entryIcons[entry.id]} />
       {!collapsed && <span className="entry-info">

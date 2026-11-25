@@ -3,6 +3,7 @@ import type { AppUpdateState } from "@password-manager/shared/types";
 import { releaseNotesToText } from "../lib/release-notes";
 import { CloseIcon } from "./Icons";
 import { showModalDialog } from "../lib/modal";
+import { askConfirm } from "../lib/confirm";
 
 export function AppInfo({ hasUnsavedChanges, isSaving, renderTrigger, onClose }: {
   hasUnsavedChanges: boolean;
@@ -67,7 +68,14 @@ export function AppInfo({ hasUnsavedChanges, isSaving, renderTrigger, onClose }:
           {api && status === "available" && <button className="btn btn--primary" onClick={() => void run(api.downloadUpdate)}>ダウンロード</button>}
           {api && status === "downloaded" && <>
             <button className="btn btn--primary" disabled={isSaving} onClick={() => void run(async () => {
-              if (await api.installUpdate(hasUnsavedChanges) === false) close();
+              if (hasUnsavedChanges && !await askConfirm({
+                title: "保存していない変更があります",
+                message: "変更を破棄して更新しますか？保存する場合は「編集に戻る」を選び、保存してからもう一度更新してください。",
+                confirmLabel: "破棄して更新",
+                cancelLabel: "編集に戻る"
+              })) return;
+              // The question was answered here, so the desktop side is told there is nothing left to keep.
+              if (await api.installUpdate(false) === false) close();
             })}>再起動して更新</button>
             <button className="btn" onClick={close}>あとで</button>
           </>}
