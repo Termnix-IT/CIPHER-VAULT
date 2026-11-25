@@ -16,7 +16,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{HRESULT, w};
 
 const MODIFIERS: &[(&str, HOT_KEY_MODIFIERS)] = &[("Ctrl", MOD_CONTROL), ("Alt", MOD_ALT), ("Shift", MOD_SHIFT)];
-pub const INVALID_SHORTCUT: &str = "ショートカットは Ctrl・Alt・Shift のうち2つ以上と、英数字・F1〜F11・Space の組み合わせにしてください";
+pub const INVALID_SHORTCUT: &str = "呼び出しキーは、Ctrl・Alt・Shiftのうち2つ以上と、英数字・F1〜F11・Spaceのいずれかを組み合わせてください";
 const RESERVED_SHORTCUT: &str = "このキーはアプリの中で使っているため選べません";
 const HOTKEY_ID: i32 = 1;
 const SET_HOTKEY: u32 = WM_APP + 1;
@@ -80,8 +80,8 @@ pub enum HotkeyError {
 impl HotkeyError {
     pub fn message(&self) -> &'static str {
         match self {
-            Self::InUse => "このショートカットはほかのアプリかWindowsが使っているため登録できませんでした",
-            Self::Failed => "ショートカットを登録できませんでした",
+            Self::InUse => "このキーはほかのアプリかWindowsが使っているため登録できませんでした",
+            Self::Failed => "呼び出しキーを登録できませんでした",
         }
     }
 }

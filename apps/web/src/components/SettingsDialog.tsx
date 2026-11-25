@@ -69,14 +69,14 @@ export function SettingsDialog({ open, autoLockMinutes, onClose, onSaved }: Sett
       if (hotkeyChanged) {
         const saved = await setGlobalShortcut({ shortcut, summonCompact });
         setHotkey(saved);
-        messages.push(saved.shortcut ? `${saved.shortcut}で呼び出せます` : "呼び出しキーをなしにしました");
+        messages.push(saved.shortcut ? `${saved.shortcut}で呼び出せます` : "呼び出しキーを「なし」にしました");
       }
       dialogRef.current?.close();
       onSaved(messages.join("。"));
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "設定を保存できませんでした";
       // The auto-lock time may already be saved when the key is not; say which part took effect.
-      setError(messages.length ? `自動ロックの時間は保存しました（${messages[0]}）。呼び出しキーは保存できませんでした: ${message}` : message);
+      setError(messages.length ? `自動ロックの時間は保存しました（${messages[0]}）。呼び出しキーは保存できませんでした。${message}。` : message);
     } finally { setSaving(false); }
   }
 
@@ -134,7 +134,7 @@ export function SettingsDialog({ open, autoLockMinutes, onClose, onSaved }: Sett
         呼び出したときはコンパクト表示で開く
       </label>
       <p className="vault-tool-note" id="settings-hotkey-note">
-        ほかのアプリを使っているときも、このキーでCIPHER VAULTを手前に出して検索欄へ移ります。もう一度押すと元のアプリへ戻ります。ロック中はロック画面を出すだけで、コピーや表示はしません。
+        ほかのアプリを使っているときも、このキーを押すとCIPHER VAULTが手前に出て、検索欄にカーソルが移ります。もう一度押すと元のアプリへ戻ります。ロック中はロック画面を出すだけで、パスワードなどのコピーや表示はしません。
       </p>
       {keyProblem && <p className="form-error" role="alert">{keyProblem}</p>}
       {hotkey && hotkey.shortcut && !hotkey.registered && shortcut === hotkey.shortcut && <p className="settings-warning" role="alert">

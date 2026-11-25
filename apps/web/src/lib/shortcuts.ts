@@ -25,7 +25,7 @@ export function shortcutOf(event: Keys): Shortcut | null {
 }
 
 /** The same messages as apps/desktop/src/global_hotkey.rs, which checks the key again before registering it. */
-export const GLOBAL_SHORTCUT_FORM = "ショートカットは Ctrl・Alt・Shift のうち2つ以上と、英数字・F1〜F11・Space の組み合わせにしてください";
+export const GLOBAL_SHORTCUT_FORM = "呼び出しキーは、Ctrl・Alt・Shiftのうち2つ以上と、英数字・F1〜F11・Spaceのいずれかを組み合わせてください";
 export const GLOBAL_SHORTCUT_IN_APP = "このキーはアプリの中で使っているため選べません";
 const IN_APP = ["Ctrl+Shift+C", "Ctrl+Shift+M"];
 

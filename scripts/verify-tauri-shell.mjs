@@ -545,9 +545,9 @@ try {
     result.hotkey.refused[name] = await settle(page, `window.passwordManager.setGlobalShortcut(${JSON.stringify({ shortcut, summonCompact: true })}, ${hotkeySession})`);
   }
   assert.deepEqual(result.hotkey.refused, {
-    oneModifier: { error: "ショートカットは Ctrl・Alt・Shift のうち2つ以上と、英数字・F1〜F11・Space の組み合わせにしてください" },
+    oneModifier: { error: "呼び出しキーは、Ctrl・Alt・Shiftのうち2つ以上と、英数字・F1〜F11・Spaceのいずれかを組み合わせてください" },
     inApp: { error: "このキーはアプリの中で使っているため選べません" },
-    spelling: { error: "ショートカットは Ctrl・Alt・Shift のうち2つ以上と、英数字・F1〜F11・Space の組み合わせにしてください" }
+    spelling: { error: "呼び出しキーは、Ctrl・Alt・Shiftのうち2つ以上と、英数字・F1〜F11・Spaceのいずれかを組み合わせてください" }
   });
   result.hotkey.staleSession = await settle(page, `window.passwordManager.setGlobalShortcut({ shortcut: "Ctrl+Alt+Shift+F11", summonCompact: true }, "00000000-0000-4000-8000-000000000000")`);
   assert.ok(result.hotkey.staleSession.error, "another session cannot change the key");
@@ -564,7 +564,7 @@ try {
     return false;
   })()`));
   await press(page, "KeyK", "K", 75, CTRL);
-  await until("the refused key", () => screenHas(page, "Ctrl・Alt・Shift のうち2つ以上"));
+  await until("the refused key", () => screenHas(page, "Ctrl・Alt・Shiftのうち2つ以上"));
   await press(page, "F11", "F11", 122, CTRL | ALT | SHIFT);
   await until("the recorded key", () => page.evaluate(`document.querySelector(".shortcut-recorder").textContent === "Ctrl+Alt+Shift+F11"`));
   await screenshot(page, screenshotDirectory, "tauri-shell-settings-shortcut");

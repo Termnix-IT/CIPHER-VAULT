@@ -298,14 +298,14 @@ async fn settings_global_shortcut_set(
     run(vault, move |vault| {
         let mut settings = settings.lock().map_err(|_| VaultError::new(500, window_prefs::SAVE_FAILED))?;
         vault.require_session(session_id.as_ref())?;
-        let payload = payload.as_ref().ok_or_else(|| VaultError::bad_request("ショートカットの設定が正しくありません"))?;
+        let payload = payload.as_ref().ok_or_else(|| VaultError::bad_request("呼び出しキーの設定が正しくありません"))?;
         let shortcut = match payload.get("shortcut") {
             Some(Value::Null) => None,
             Some(Value::String(text)) => Some(Hotkey::parse(text).map_err(VaultError::bad_request)?),
             _ => return Err(VaultError::bad_request(global_hotkey::INVALID_SHORTCUT)),
         };
         let summon_compact = payload.get("summonCompact").and_then(Value::as_bool)
-            .ok_or_else(|| VaultError::bad_request("ショートカットの設定が正しくありません"))?;
+            .ok_or_else(|| VaultError::bad_request("呼び出しキーの設定が正しくありません"))?;
         settings.set_shortcut(shortcut, summon_compact).map_err(|message| VaultError::new(500, message))
     }).await
 }
