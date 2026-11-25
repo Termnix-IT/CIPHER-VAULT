@@ -555,8 +555,14 @@ try {
   await menu(page, "ツール", "設定…");
   await until("the shortcut setting", () => page.evaluate(`document.querySelector(".settings-dialog[open] .shortcut-recorder")?.textContent === "なし"`));
   // A mouse click also focuses the button, which then reads the keys; element.click() alone does not.
-  await page.evaluate(`document.querySelector(".shortcut-recorder").focus(); document.querySelector(".shortcut-recorder").click()`);
-  await until("the recorder waiting for a key", () => page.evaluate(`document.activeElement?.matches(".shortcut-recorder--recording") === true`));
+  // Recording stops when the window loses the focus, so it is started again until it holds.
+  await until("the recorder waiting for a key", () => page.evaluate(`(() => {
+    const recorder = document.querySelector(".shortcut-recorder");
+    if (document.activeElement === recorder && recorder.matches(".shortcut-recorder--recording")) return true;
+    recorder.focus();
+    if (!recorder.matches(".shortcut-recorder--recording")) recorder.click();
+    return false;
+  })()`));
   await press(page, "KeyK", "K", 75, CTRL);
   await until("the refused key", () => screenHas(page, "Ctrl・Alt・Shift のうち2つ以上"));
   await press(page, "F11", "F11", 122, CTRL | ALT | SHIFT);
