@@ -46,7 +46,7 @@ Windowsのデスクトップアプリで、Tauri 2 + Rust、React + Vite、SQLit
 - コード変更は対象ビルドを実行する。Rustの変更は `npm run test:rust` と `cargo clippy --workspace --all-targets -- -D warnings`、画面・共通型の変更は `npm run test:web` と `npm run test:tauri-shell` を実行する。一覧・検索・表示の処理を変えたときは `npm run test:large-vault` も実行する。
 - 更新・配布の変更は `npm run test:tauri-update` と `npm run package:tauri` を実行する。
 - `installer-hooks.nsh`（Electron版の削除）を変えたときは、タグ `v0.9.0` の作業ツリーに変更したフックを置いて `npm run test:tauri-migration` を実行し、移行を確かめる。
-- UI変更は影響する操作を確認し、ビルド成功と画面確認を区別して報告する。実際の画面ロック・スリープ、貼り付け、Win+V、保存ダイアログは自動試験で確かめられないので、手で確認したかどうかを区別して報告する。
+- UIを変更したときは、影響を受ける操作を確認し、ビルドが成功したことと画面を確認したことを区別して報告する。見た目が変わる変更では、合成データを使い、変更前と変更後にシンプルとルミナスの両方のデザインで同じ画面のスクリーンショットを撮り、変わった点を報告で挙げる（スクリーンショットはコミットしない）。実際の画面ロック・スリープ、貼り付け、Win+V、保存ダイアログは自動試験で確かめられないので、手で確認したかどうかを区別して報告する。
 - テストは一時フォルダを使う。利用中の `%APPDATA%\CIPHER VAULT`、残っている `apps/api/data`・`release/data` を初期化・上書きしない。
 - DB、ジャーナル、個人情報、検証用ログをコミットしない。内部資料は `docs/private/` に置く（README以外はGit対象外）。
 - パスワード・メモは一覧に含めない。
